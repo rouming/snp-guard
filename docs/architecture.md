@@ -15,6 +15,8 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 │                         Guest VM                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Initrd (initramfs-tools or dracut)                      │  │
+│  │  - initramfs-tools: scripts/local-top/snpguard_attest  │  │
+│  │  - dracut: lib/dracut/hooks/pre-mount/99-snpguard.sh   │  │
 │  │  ┌────────────────────────────────────────────────────┐  │  │
 │  │  │  snpguard-client (static binary, musl)             │  │  │
 │  │  │  - Requests nonce                                  │  │  │

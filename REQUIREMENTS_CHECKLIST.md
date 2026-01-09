@@ -119,10 +119,18 @@
 - [x] Takes initrd image as input
 - [x] Repacks with attestation client
 - [x] Installs attestation hook
-- [x] Works with initramfs-tools
-- [x] Works with dracut
+- [x] Works with initramfs-tools (Ubuntu, Debian)
+  - [x] Auto-detects initramfs-tools format
+  - [x] Installs hook at `scripts/local-top/snpguard_attest`
+  - [x] Runs in `local-top` phase (after network, before root mount)
+- [x] Works with dracut (RedHat, CentOS, Fedora, etc.)
+  - [x] Auto-detects dracut format
+  - [x] Installs hook at `lib/dracut/hooks/pre-mount/99-snpguard.sh`
+  - [x] Runs in `pre-mount` phase (before root mount)
+- [x] Supports both mechanisms simultaneously if needed
 - [x] Attestation happens after network setup
 - [x] Attestation happens before drive unsealing
+- [x] Reads `rd.attest.url` from kernel command line
 
 ### 14. Documentation
 - [x] API documentation in `docs/api.md`

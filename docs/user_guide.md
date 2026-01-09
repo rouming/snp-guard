@@ -106,7 +106,7 @@ These artifacts need to be provided to your VM boot process.
 
 ### Step 1: Repack Initrd
 
-The initrd needs to include the `snpguard-client` binary and the attestation hook.
+The initrd needs to include the `snpguard-client` binary and the attestation hook. The repack script automatically detects the initrd format and installs the appropriate hook.
 
 ```bash
 make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img
@@ -118,9 +118,26 @@ Or manually:
 ./scripts/repack-initrd.sh /path/to/original-initrd.img /path/to/new-initrd.img
 ```
 
+**Supported Initrd Formats**:
+
+1. **initramfs-tools** (Ubuntu, Debian):
+   - Automatically detected by presence of `scripts/` directory
+   - Hook installed at: `scripts/local-top/snpguard_attest`
+   - Runs in `local-top` phase: after network setup, before root mounting
+   - Compatible with: Ubuntu, Debian, and derivatives
+
+2. **dracut** (RedHat, CentOS, Fedora, etc.):
+   - Automatically detected by presence of `lib/dracut/hooks` or `usr/lib/dracut/hooks`
+   - Hook installed at: `lib/dracut/hooks/pre-mount/99-snpguard.sh`
+   - Runs in `pre-mount` phase: before root filesystem mounting
+   - Compatible with: RedHat Enterprise Linux, CentOS, Fedora, Rocky Linux, AlmaLinux
+
+The script will detect which format is being used and install the appropriate hook. If both formats are detected (rare), both hooks will be installed for maximum compatibility.
+
 **Prerequisites**:
 - The client binary must be built: `make build-client`
 - `snpguest` tool must be available in the initrd's PATH
+- The original initrd image must be in cpio+gzip format (standard for both systems)
 
 ### Step 2: Configure Kernel Parameters
 
@@ -248,8 +265,15 @@ echo -n "$SECRET" | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 **Solutions**:
 - Ensure `snpguest` is available in the initrd
 - Verify the client binary is built for the correct architecture
-- Check that the initrd format is supported (initramfs-tools or dracut)
+- Check that the initrd format is supported:
+  - **initramfs-tools**: Look for `scripts/` directory in unpacked initrd
+  - **dracut**: Look for `lib/dracut/hooks` or `usr/lib/dracut/hooks` directory
+- Verify the hook was installed:
+  - **initramfs-tools**: Check for `scripts/local-top/snpguard_attest`
+  - **dracut**: Check for `lib/dracut/hooks/pre-mount/99-snpguard.sh`
+- Ensure the hook has execute permissions
 - Test the repacked initrd in a VM before production use
+- Check boot logs for hook execution messages
 
 ## Best Practices
 

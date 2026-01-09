@@ -52,14 +52,11 @@ cp "$CLIENT_BIN" "$WORKDIR/initrd/bin/snpguard-client"
 chmod +x "$WORKDIR/initrd/bin/snpguard-client"
 
 echo "Installing attestation hook..."
-# For initramfs-tools
-if [ -d "$WORKDIR/initrd/scripts" ]; then
-    mkdir -p "$WORKDIR/initrd/scripts/local-top"
-    cat <<'HOOK' > "$WORKDIR/initrd/scripts/local-top/snpguard_attest"
-#!/bin/sh
-PREREQ=""
-prereqs() { echo "$PREREQ"; }
-case $1 in prereqs) prereqs; exit 0 ;; esac
+
+# Common hook script content (same for both initramfs-tools and dracut)
+HOOK_SCRIPT='#!/bin/sh
+# SnpGuard attestation hook
+# Supports both initramfs-tools and dracut
 
 # Parse kernel cmdline for attestation URL
 ATTEST_URL=""
@@ -75,6 +72,7 @@ if [ -n "$ATTEST_URL" ]; then
     echo "SnpGuard: Starting attestation with $ATTEST_URL..."
     
     # Ensure network is up (wait a bit if needed)
+    # Network should be available at this point in boot process
     sleep 2
     
     # Run attestation and capture secret
@@ -88,41 +86,59 @@ if [ -n "$ATTEST_URL" ]; then
         cat /tmp/attest-err >&2
         exit 1
     fi
-fi
-HOOK
+fi'
+
+# For initramfs-tools (Ubuntu, Debian)
+# Hook runs in "local-top" phase: after network setup, before root mounting
+if [ -d "$WORKDIR/initrd/scripts" ]; then
+    echo "  Detected initramfs-tools format (Ubuntu/Debian)"
+    mkdir -p "$WORKDIR/initrd/scripts/local-top"
+    cat <<INITRAMFS_HOOK > "$WORKDIR/initrd/scripts/local-top/snpguard_attest"
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in prereqs) prereqs; exit 0 ;; esac
+
+$HOOK_SCRIPT
+INITRAMFS_HOOK
     chmod +x "$WORKDIR/initrd/scripts/local-top/snpguard_attest"
+    echo "  Installed hook: scripts/local-top/snpguard_attest"
 fi
 
-# For dracut
-if [ -d "$WORKDIR/initrd/usr/lib/dracut/hooks" ] || [ -d "$WORKDIR/initrd/lib/dracut/hooks" ]; then
+# For dracut (RedHat, CentOS, Fedora, etc.)
+# Hook runs in "pre-mount" phase: before root filesystem mounting
+DRACUT_HOOK_DIR=""
+if [ -d "$WORKDIR/initrd/lib/dracut/hooks" ]; then
     DRACUT_HOOK_DIR="$WORKDIR/initrd/lib/dracut/hooks"
-    [ ! -d "$DRACUT_HOOK_DIR" ] && DRACUT_HOOK_DIR="$WORKDIR/initrd/usr/lib/dracut/hooks"
+elif [ -d "$WORKDIR/initrd/usr/lib/dracut/hooks" ]; then
+    DRACUT_HOOK_DIR="$WORKDIR/initrd/usr/lib/dracut/hooks"
+fi
+
+if [ -n "$DRACUT_HOOK_DIR" ]; then
+    echo "  Detected dracut format (RedHat/CentOS/Fedora)"
     mkdir -p "$DRACUT_HOOK_DIR/pre-mount"
-    cat <<'HOOK' > "$DRACUT_HOOK_DIR/pre-mount/99-snpguard.sh"
+    cat <<DRACUT_HOOK > "$DRACUT_HOOK_DIR/pre-mount/99-snpguard.sh"
 #!/bin/bash
 # SnpGuard attestation hook for dracut
 
-ATTEST_URL=""
-for x in $(cat /proc/cmdline); do
-    case $x in
-        rd.attest.url=*)
-            ATTEST_URL=${x#rd.attest.url=}
-            ;;
-    esac
-done
-
-if [ -n "$ATTEST_URL" ]; then
-    echo "SnpGuard: Starting attestation..."
-    if /bin/snpguard-client --url "$ATTEST_URL" > /tmp/disk-secret 2>/tmp/attest-err; then
-        echo "SnpGuard: Attestation successful"
-    else
-        echo "SnpGuard: Attestation failed!"
-        cat /tmp/attest-err >&2
-        exit 1
-    fi
-fi
-HOOK
+$HOOK_SCRIPT
+DRACUT_HOOK
     chmod +x "$DRACUT_HOOK_DIR/pre-mount/99-snpguard.sh"
+    echo "  Installed hook: $(basename $DRACUT_HOOK_DIR)/pre-mount/99-snpguard.sh"
+fi
+
+# If neither format detected, warn but continue (might work with manual extraction)
+if [ ! -d "$WORKDIR/initrd/scripts" ] && [ -z "$DRACUT_HOOK_DIR" ]; then
+    echo "  Warning: Could not detect initramfs-tools or dracut format"
+    echo "  Attempting to install both hooks..."
+    mkdir -p "$WORKDIR/initrd/scripts/local-top"
+    echo "$HOOK_SCRIPT" > "$WORKDIR/initrd/scripts/local-top/snpguard_attest"
+    chmod +x "$WORKDIR/initrd/scripts/local-top/snpguard_attest"
+    
+    mkdir -p "$WORKDIR/initrd/lib/dracut/hooks/pre-mount"
+    echo "#!/bin/bash" > "$WORKDIR/initrd/lib/dracut/hooks/pre-mount/99-snpguard.sh"
+    echo "$HOOK_SCRIPT" >> "$WORKDIR/initrd/lib/dracut/hooks/pre-mount/99-snpguard.sh"
+    chmod +x "$WORKDIR/initrd/lib/dracut/hooks/pre-mount/99-snpguard.sh"
 fi
 
 echo "Repacking initrd..."

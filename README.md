@@ -194,6 +194,12 @@ Or manually:
 ./scripts/repack-initrd.sh /path/to/original-initrd.img /path/to/new-initrd.img
 ```
 
+The repack script automatically detects and supports both:
+- **initramfs-tools** (Ubuntu, Debian): Installs hook at `scripts/local-top/snpguard_attest`
+- **dracut** (RedHat, CentOS, Fedora): Installs hook at `lib/dracut/hooks/pre-mount/99-snpguard.sh`
+
+Both hooks run after network initialization but before root filesystem mounting, ensuring attestation happens at the correct boot phase.
+
 2. **Ensure `snpguest` is in initrd**: The script expects `snpguest` to be available in the initrd's PATH
 
 3. **Configure Kernel Parameters**: Add to your kernel command line:
