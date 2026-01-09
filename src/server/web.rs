@@ -201,16 +201,43 @@ pub async fn update_action(
         }
     }
     
+    // Extract existing service URL from kernel_params if not provided in form
+    if service_url.is_empty() {
+        if let Some(url_part) = vm.kernel_params.split("rd.attest.url=").nth(1) {
+            service_url = url_part.split_whitespace().next().unwrap_or("").to_string();
+        }
+    }
+    
     // Rebuild full kernel params with service URL
-    let base_params = kernel_params.replace(&format!("rd.attest.url={}", service_url), "").trim().to_string();
+    // Remove any existing rd.attest.url from kernel_params first
+    let base_params = if kernel_params.contains("rd.attest.url=") {
+        kernel_params.split("rd.attest.url=").next().unwrap_or("").trim().to_string()
+    } else {
+        kernel_params.trim().to_string()
+    };
+    
     let full_params = if base_params.is_empty() {
         format!("rd.attest.url={}", service_url)
     } else {
         format!("{} rd.attest.url={}", base_params, service_url)
     };
     
-    // If files were updated or service URL changed, regenerate blocks
-    if files_updated || !service_url.is_empty() {
+    // Always update kernel-params.txt with full_params (including rd.attest.url)
+    fs::write(artifact_dir.join("kernel-params.txt"), &full_params).unwrap();
+    
+    // Check if we need to regenerate blocks (files updated OR kernel params/service URL changed)
+    let old_base_params = vm.kernel_params.split("rd.attest.url=").next().unwrap_or("").trim();
+    let old_service_url = vm.kernel_params.split("rd.attest.url=").nth(1)
+        .unwrap_or("")
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    
+    let needs_regeneration = files_updated || 
+        base_params != old_base_params ||
+        service_url != old_service_url;
+    
+    if needs_regeneration {
         if let Err(e) = snpguest_wrapper::generate_measurement_and_block(
             &artifact_dir.join("firmware-code.fd"),
             &artifact_dir.join("vmlinuz"),
@@ -232,7 +259,7 @@ pub async fn update_action(
                     let mut active: vm::ActiveModel = vm.clone().into();
                     active.id_key_digest = Set(id_digest);
                     active.auth_key_digest = Set(auth_digest);
-                    active.kernel_params = Set(full_params);
+                    active.kernel_params = Set(full_params.clone());
                     active.update(&db).await.unwrap();
                     return Redirect::to(&format!("/view/{}", id)).into_response();
                 }
