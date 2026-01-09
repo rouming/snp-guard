@@ -54,7 +54,8 @@ chmod +x "$WORKDIR/initrd/bin/snpguard-client"
 echo "Installing attestation hook..."
 
 # Common hook script content (same for both initramfs-tools and dracut)
-HOOK_SCRIPT='#!/bin/sh
+# Note: Shebang is added separately for each hook type
+HOOK_SCRIPT='
 # SnpGuard attestation hook
 # Supports both initramfs-tools and dracut
 
