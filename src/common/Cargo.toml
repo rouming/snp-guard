@@ -1,0 +1,11 @@
+[package]
+name = "common"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prost = "0.12"
+bytes = "1.5"
+
+[build-dependencies]
+prost-build = "0.12"

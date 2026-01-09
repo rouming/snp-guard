@@ -1,0 +1,40 @@
+[package]
+name = "snpguard-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Internal crates
+entity = { path = "../../entity" }
+migration = { path = "../../migration" }
+common = { path = "../common" }
+
+# Web / Async
+tokio = { version = "1.0", features = ["full"] }
+axum = { version = "0.7", features = ["multipart", "macros"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "auth", "validate_request"] }
+askama = "0.12"
+askama_axum = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+
+# Protobuf
+prost = "0.12"
+
+# TLS
+axum-server = { version = "0.6", features = ["tls-rustls"] }
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls-pemfile = "1.0"
+
+# DB
+sea-orm = { version = "1.0", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+
+# Utilities
+anyhow = "1.0"
+rand = "0.8"
+hex = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = "0.4"
+base64 = "0.21"
+tempfile = "3.8"
+tokio-util = { version = "0.7", features = ["io"] }
+sha2 = "0.10"

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex justify-between items-center mb-8">
+    <h2 class="text-3xl font-bold text-slate-800">Attestation Records</h2>
+    <a href="/create" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow transition font-medium">+ Create New Record</a>
+</div>
+<div class="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+    <table class="min-w-full">
+        <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">Status</th>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">OS Name</th>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">Requests</th>
+                <th class="py-4 px-6 text-right text-sm font-semibold text-slate-600 uppercase">Actions</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for vm in vms %}
+            <tr class="hover:bg-slate-50 transition {% if !vm.enabled %} opacity-60 bg-slate-50 {% endif %}">
+                <td class="py-4 px-6">
+                    {% if vm.enabled %}
+                        <div class="flex items-center"><span class="w-2.5 h-2.5 bg-green-500 rounded-full mr-2"></span> Active</div>
+                    {% else %}
+                        <div class="flex items-center"><span class="w-2.5 h-2.5 bg-gray-400 rounded-full mr-2"></span> Disabled</div>
+                    {% endif %}
+                </td>
+                <td class="py-4 px-6 font-medium text-slate-900"><a href="/view/{{ vm.id }}" class="hover:text-blue-600">{{ vm.os_name }}</a></td>
+                <td class="py-4 px-6 text-slate-600">{{ vm.request_count }}</td>
+                <td class="py-4 px-6 text-right space-x-4">
+                    <a href="/view/{{ vm.id }}" class="text-blue-600 hover:text-blue-800 font-medium">Edit</a>
+                    <a href="/delete/{{ vm.id }}" class="text-red-500 hover:text-red-700 font-medium" onclick="return confirm('Delete?')">Delete</a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

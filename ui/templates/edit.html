@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-md border border-slate-200">
+    <div class="flex justify-between items-center mb-8 border-b pb-4">
+        <h2 class="text-2xl font-bold text-slate-800">Edit Attestation Record</h2>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm font-mono text-slate-500 bg-slate-100 px-3 py-1 rounded">ID: {{ vm.id }}</span>
+            <a href="/toggle/{{ vm.id }}" class="px-4 py-2 rounded-lg {% if vm.enabled %}bg-red-600 hover:bg-red-700{% else %}bg-green-600 hover:bg-green-700{% endif %} text-white font-medium">
+                {% if vm.enabled %}Disable{% else %}Enable{% endif %}
+            </a>
+        </div>
+    </div>
+    
+    <form action="/view/{{ vm.id }}" method="POST" enctype="multipart/form-data" class="space-y-8">
+        <div class="flex items-center space-x-3 p-4 rounded-lg {% if vm.enabled %}bg-green-50 border border-green-200{% else %}bg-red-50 border border-red-200{% endif %}">
+            <input type="checkbox" name="enabled" id="enabled" class="w-5 h-5 text-blue-600 rounded" {% if vm.enabled %}checked{% endif %}>
+            <label for="enabled" class="text-slate-800 font-bold cursor-pointer select-none">Enable Attestation</label>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <label class="block text-sm font-medium mb-1">OS Name</label>
+                <input type="text" name="os_name" value="{{ vm.os_name }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" required>
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Disk Secret</label>
+                <input type="text" name="secret" value="{{ vm.secret }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" required>
+            </div>
+        </div>
+        
+        <div class="border-t pt-6">
+            <h3 class="font-bold text-lg text-slate-700 mb-4">Keys</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">ID Block Key (PEM)</label>
+                    <input type="file" name="id_key" accept=".pem" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <p class="text-xs text-slate-400 mt-1">Leave empty to keep current key</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Auth Block Key (PEM)</label>
+                    <input type="file" name="auth_key" accept=".pem" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <p class="text-xs text-slate-400 mt-1">Leave empty to keep current key</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="border-t pt-6">
+            <h3 class="font-bold text-lg text-slate-700 mb-4">Boot Artifacts</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Firmware Image</label>
+                    <input type="file" name="firmware" accept=".fd" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <a href="/download/{{ vm.id }}/firmware-code.fd" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Kernel Binary</label>
+                    <input type="file" name="kernel" accept="*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <a href="/download/{{ vm.id }}/vmlinuz" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Initrd Image</label>
+                    <input type="file" name="initrd" accept="*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                    <a href="/download/{{ vm.id }}/initrd.img" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="border-t pt-6">
+            <h3 class="font-bold text-lg text-slate-700 mb-4">Configuration</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">vCPUs</label>
+                    <input type="number" name="vcpus" value="4" min="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">vCPU Type</label>
+                    <select name="vcpu_type" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                        <option value="EPYC" {% if vm.vcpu_type == "EPYC" %}selected{% endif %}>EPYC</option>
+                        <option value="EPYC-Milan" {% if vm.vcpu_type == "EPYC-Milan" %}selected{% endif %}>EPYC-Milan</option>
+                        <option value="EPYC-Rome" {% if vm.vcpu_type == "EPYC-Rome" %}selected{% endif %}>EPYC-Rome</option>
+                        <option value="EPYC-Genoa" {% if vm.vcpu_type == "EPYC-Genoa" %}selected{% endif %}>EPYC-Genoa</option>
+                    </select>
+                </div>
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-1">Kernel Parameters</label>
+                <textarea name="kernel_params" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm font-mono text-sm">{{ vm.kernel_params.split("rd.attest.url=").next().unwrap_or("").trim() }}</textarea>
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Attestation Service URL</label>
+                <input type="text" name="service_url" value="{% if vm.kernel_params.contains('rd.attest.url=') %}{{ vm.kernel_params.split('rd.attest.url=').nth(1).unwrap_or('').split_whitespace().next().unwrap_or('') }}{% endif %}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" placeholder="https://attest.example.com">
+            </div>
+        </div>
+        
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow transition">Save Changes</button>
+    </form>
+    
+    <div class="mt-12 grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-8">
+        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <h4 class="font-bold text-sm text-slate-500 uppercase mb-3">Key Blocks</h4>
+            <a href="/download/{{ vm.id }}/id-block.bin" class="block text-blue-600 hover:underline text-sm mb-2">Download ID-Block</a>
+            <a href="/download/{{ vm.id }}/id-auth.bin" class="block text-blue-600 hover:underline text-sm">Download Auth-Block</a>
+        </div>
+        <div class="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
+            <h4 class="font-bold text-sm text-indigo-500 uppercase mb-3">Packages</h4>
+            <a href="/download/{{ vm.id }}/artifacts.tar.gz" class="block text-indigo-700 font-bold hover:underline text-sm mb-2">Download Tarball</a>
+            <a href="/download/{{ vm.id }}/artifacts.squashfs" class="block text-purple-700 font-bold hover:underline text-sm">Download SquashFS</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

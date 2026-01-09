@@ -1,0 +1,23 @@
+syntax = "proto3";
+package snpguard;
+
+// Step 1: Request a random nonce
+message NonceRequest {
+  string vm_id = 1;
+}
+
+message NonceResponse {
+  bytes nonce = 1;
+}
+
+// Step 2: Submit report for verification
+message AttestationRequest {
+  bytes report_data = 1;
+  string cpu_family_hint = 2; // e.g. "genoa", "milan"
+}
+
+message AttestationResponse {
+  bool success = 1;
+  bytes secret = 2;
+  string error_message = 3;
+}
