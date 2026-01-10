@@ -172,8 +172,18 @@
 - [x] Enable/disable toggle for records
 - [x] Artifact generation (tarball and SquashFS)
 
+## Architecture Summary
+
+**✅ gRPC-First Architecture Achieved:**
+- gRPC services (`AttestationService`, `ManagementService`) are the core backend
+- Web UI acts as a gRPC client, not direct database access
+- Business logic centralized in shared modules
+- Clean separation between API layer and presentation layer
+- Future CLI tools can reuse the same gRPC APIs
+
 ## Notes
 
 - Family-ID and Image-ID are NOT generated from URL (as per clarification)
 - URL from `rd.attest.url` is only used for client connection, not for ID generation
 - All requirements from the original specification have been implemented
+- **Bonus**: gRPC-first architecture provides better scalability and API consistency
