@@ -29,7 +29,7 @@ RUN cd snpguest && cargo build --release
 RUN cargo build --release -p migration
 
 # final stage
-FROM debian:bookworm-slim
+FROM debian:testing-slim
 
 # Install ca-certificates for HTTPS requests and curl for health checks
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
