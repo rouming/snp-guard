@@ -14,7 +14,7 @@ pub fn generate_measurement_and_block(
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
-    image_id: String,
+    image_id_hex: String,
 ) -> Result<()> {
     
     // 1. Calculate Measurement
@@ -41,6 +41,11 @@ pub fn generate_measurement_and_block(
 
     let measurement = String::from_utf8(output.stdout)?.trim().to_string();
 
+    // Validate image_id_hex is exactly 32 characters (representing 16 bytes in hex)
+    if image_id_hex.len() != 32 || !image_id_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow!("image_id must be a 32-character hex string (representing 16 bytes)"));
+    }
+
     // 2. Generate ID-Block and Auth-Block with image-id
     let status = Command::new(&snpguest_path)
         .arg("--quiet")
@@ -49,7 +54,7 @@ pub fn generate_measurement_and_block(
         .arg(id_key)
         .arg(auth_key)
         .arg(measurement)
-        .arg("--image-id").arg(image_id)
+        .arg("--image-id").arg(image_id_hex)
         .arg("--id-file").arg(output_dir.join("id-block.bin"))
         .arg("--auth-file").arg(output_dir.join("id-auth.bin"))
         .status()?;

@@ -88,6 +88,9 @@ pub async fn create_record_logic(
     fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
         .map_err(|e| format!("Failed to save kernel params: {}", e))?;
 
+    // Convert UUID to hex string (32 characters, 16 bytes when decoded)
+    let image_id_hex = hex::encode(image_id.as_bytes());
+
     // Generate Measurements and Blocks
     snpguest_wrapper::generate_measurement_and_block(
         &artifact_dir.join("firmware-code.fd"),
@@ -99,7 +102,7 @@ pub async fn create_record_logic(
         &artifact_dir.join("id-block-key.pem"),
         &artifact_dir.join("id-auth-key.pem"),
         &artifact_dir,
-        image_id.to_string(),
+        image_id_hex,
     ).map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
     // Get Digests
@@ -212,10 +215,8 @@ pub async fn update_record_logic(
         let vcpus = req.vcpus.unwrap_or(vm_model.vcpus as u32);
         let vcpu_type = req.vcpu_type.as_ref().unwrap_or(&vm_model.vcpu_type).clone();
 
-        // Convert image_id bytes back to UUID string
-        let image_id_bytes: [u8; 16] = vm_model.image_id.clone().try_into()
-            .map_err(|_| "Invalid image_id length")?;
-        let image_id_uuid = Uuid::from_bytes(image_id_bytes);
+        // Convert image_id bytes to hex string (32 characters, 16 bytes when decoded)
+        let image_id_hex = hex::encode(&vm_model.image_id);
 
         snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
@@ -227,7 +228,7 @@ pub async fn update_record_logic(
             &id_key_path,
             &auth_key_path,
             &artifact_dir,
-            image_id_uuid.to_string(),
+            image_id_hex,
         ).map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
 
         // Update digests
