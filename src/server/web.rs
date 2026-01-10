@@ -4,18 +4,16 @@ use axum::{
     body::Body,
 };
 use tokio_util::io::ReaderStream;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set};
 use askama::Template;
-use entity::vm;
-use uuid::Uuid;
 use std::path::PathBuf;
 use std::fs;
 use std::process::Command;
-use crate::snpguest_wrapper;
+use crate::grpc_client;
+use common::snpguard::AttestationRecord;
 
 #[derive(Template)]
 #[template(path = "index.html")]
-struct IndexTemplate { vms: Vec<vm::Model> }
+struct IndexTemplate { vms: Vec<AttestationRecord> }
 
 #[derive(Template)]
 #[template(path = "create.html")]
@@ -23,41 +21,48 @@ struct CreateTemplate {}
 
 #[derive(Template)]
 #[template(path = "edit.html")]
-struct EditTemplate { vm: vm::Model }
+struct EditTemplate { vm: AttestationRecord }
 
-pub async fn index(Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
-    let vms = vm::Entity::find().order_by_asc(vm::Column::OsName).all(&db).await.unwrap_or_default();
-    match (IndexTemplate { vms }).render() {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!("Template error: {}", e)),
+pub async fn index() -> impl IntoResponse {
+    match grpc_client::list_records().await {
+        Ok(vms) => {
+            let template = IndexTemplate { vms };
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(e) => Html(format!("Template error: {}", e)).into_response(),
+            }
+        },
+        Err(e) => Html(format!("Failed to load records: {}", e)).into_response(),
     }
 }
 
 pub async fn create_form() -> impl IntoResponse {
-    match (CreateTemplate {}).render() {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!("Template error: {}", e)),
+    let template = CreateTemplate {};
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => Html(format!("Template error: {}", e)).into_response(),
     }
 }
 
-pub async fn create_action(Extension(db): Extension<DatabaseConnection>, mut multipart: Multipart) -> impl IntoResponse {
-    let new_id = Uuid::new_v4().to_string();
-    let artifact_dir = PathBuf::from("artifacts").join(&new_id);
-    fs::create_dir_all(&artifact_dir).unwrap();
-
-    #[derive(Default)]
-    struct FormData {
-        os_name: String, secret: String, vcpus: u32, vcpu_type: String,
-        kernel_params: String, service_url: String,
-    }
-    let mut fd = FormData::default();
+pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
+    let mut os_name = String::new();
+    let mut secret = String::new();
+    let mut vcpus: u32 = 1;
+    let mut vcpu_type = String::new();
+    let mut kernel_params = String::new();
+    let mut service_url = String::new();
+    let mut id_key: Option<Vec<u8>> = None;
+    let mut auth_key: Option<Vec<u8>> = None;
+    let mut firmware: Option<Vec<u8>> = None;
+    let mut kernel: Option<Vec<u8>> = None;
+    let mut initrd: Option<Vec<u8>> = None;
 
     while let Some(field) = multipart.next_field().await.unwrap() {
         let name = field.name().unwrap().to_string();
         if let Some(_) = field.file_name() {
              let data = field.bytes().await.unwrap();
              if data.is_empty() { continue; }
-             
+
              // Enforce file size limits
              let max_size = match name.as_str() {
                 "firmware" => 10 * 1024 * 1024, // 10 MB
@@ -66,113 +71,109 @@ pub async fn create_action(Extension(db): Extension<DatabaseConnection>, mut mul
                 "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
                 _ => continue,
              };
-             
+
              if data.len() > max_size {
                  return Html(format!("<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>", name, max_size)).into_response();
              }
-             
-             let target = match name.as_str() {
-                "id_key" => "id-block-key.pem",
-                "auth_key" => "id-auth-key.pem",
-                "firmware" => "firmware-code.fd",
-                "kernel" => "vmlinuz",
-                "initrd" => "initrd.img",
-                _ => continue,
-             };
-             fs::write(artifact_dir.join(target), data).unwrap();
+
+            match name.as_str() {
+                "id_key" => id_key = Some(data.to_vec()),
+                "auth_key" => auth_key = Some(data.to_vec()),
+                "firmware" => firmware = Some(data.to_vec()),
+                "kernel" => kernel = Some(data.to_vec()),
+                "initrd" => initrd = Some(data.to_vec()),
+                _ => {}
+            }
         } else {
             let txt = field.text().await.unwrap();
             match name.as_str() {
-                "os_name" => fd.os_name = txt,
-                "secret" => fd.secret = txt,
-                "vcpus" => fd.vcpus = txt.parse().unwrap_or(1),
-                "vcpu_type" => fd.vcpu_type = txt,
-                "kernel_params" => fd.kernel_params = txt,
-                "service_url" => fd.service_url = txt,
+                "os_name" => os_name = txt,
+                "secret" => secret = txt,
+                "vcpus" => vcpus = txt.parse().unwrap_or(1),
+                "vcpu_type" => vcpu_type = txt,
+                "kernel_params" => kernel_params = txt,
+                "service_url" => service_url = txt,
                 _ => {}
             }
         }
     }
 
-    let full_params = format!("{} rd.attest.url={}", fd.kernel_params, fd.service_url);
-    fs::write(artifact_dir.join("kernel-params.txt"), &full_params).unwrap();
-
-    // Generate Measurements
-    if let Err(e) = snpguest_wrapper::generate_measurement_and_block(
-        &artifact_dir.join("firmware-code.fd"),
-        &artifact_dir.join("vmlinuz"),
-        &artifact_dir.join("initrd.img"),
-        &full_params,
-        fd.vcpus,
-        &fd.vcpu_type,
-        &artifact_dir.join("id-block-key.pem"),
-        &artifact_dir.join("id-auth-key.pem"),
-        &artifact_dir,
-    ) {
-        return Html(format!("<h1>Error Generating Measurement</h1><p>{}</p>", e)).into_response();
+    // Validate required fields
+    if os_name.is_empty() || secret.is_empty() || service_url.is_empty() ||
+       id_key.is_none() || auth_key.is_none() || firmware.is_none() ||
+       kernel.is_none() || initrd.is_none() {
+        return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
-    // Get Digests
-    let id_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-block-key.pem")).unwrap();
-    let auth_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-auth-key.pem")).unwrap();
-
-    // Save DB
-    let new_vm = vm::ActiveModel {
-        id: Set(new_id),
-        os_name: Set(fd.os_name),
-        secret: Set(fd.secret),
-        vcpu_type: Set(fd.vcpu_type),
-        id_key_digest: Set(id_digest),
-        auth_key_digest: Set(auth_digest),
-        created_at: Set(chrono::Utc::now().naive_utc()),
-        enabled: Set(true),
-        kernel_params: Set(full_params),
-        request_count: Set(0),
-        firmware_path: Set("firmware-code.fd".into()),
-        kernel_path: Set("vmlinuz".into()),
-        initrd_path: Set("initrd.img".into()),
-    };
-    new_vm.insert(&db).await.unwrap();
-    Redirect::to("/").into_response()
+    match grpc_client::create_record(
+        os_name,
+        Some(id_key.unwrap()),
+        Some(auth_key.unwrap()),
+        Some(firmware.unwrap()),
+        Some(kernel.unwrap()),
+        Some(initrd.unwrap()),
+        kernel_params,
+        vcpus,
+        vcpu_type,
+        service_url,
+        secret,
+    ).await {
+        Ok(_) => Redirect::to("/").into_response(),
+        Err(e) => Html(format!("<h1>Error Creating Record</h1><p>{}</p>", e)).into_response(),
+    }
 }
 
-pub async fn view_record(Path(id): Path<String>, Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
-    let vm = vm::Entity::find_by_id(id.clone()).one(&db).await.unwrap().unwrap();
-    match (EditTemplate { vm }).render() {
-        Ok(html) => Html(html),
-        Err(e) => Html(format!("Template error: {}", e)),
+pub async fn view_record(Path(id): Path<String>) -> impl IntoResponse {
+    match grpc_client::get_record(id).await {
+        Ok(Some(vm)) => {
+            let template = EditTemplate { vm };
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(e) => Html(format!("Template error: {}", e)).into_response(),
+            }
+        },
+        Ok(None) => Html("<h1>Not Found</h1><p>Record not found</p>").into_response(),
+        Err(e) => Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response(),
     }
 }
 
 pub async fn update_action(
     Path(id): Path<String>,
-    Extension(db): Extension<DatabaseConnection>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let id_clone = id.clone();
-    let vm = vm::Entity::find_by_id(id.clone()).one(&db).await.unwrap().unwrap();
-    let artifact_dir = PathBuf::from("artifacts").join(&id_clone);
-    
-    let mut os_name = vm.os_name.clone();
-    let mut secret = vm.secret.clone();
-    let mut enabled = vm.enabled;
-    let mut vcpus = 4u32;
-    let mut vcpu_type = vm.vcpu_type.clone();
-    let mut kernel_params = vm.kernel_params.clone();
-    let mut service_url = String::new();
-    let mut files_updated = false;
-    
-    // Extract service URL from kernel params
-    if let Some(url_part) = kernel_params.split("rd.attest.url=").nth(1) {
-        service_url = url_part.split_whitespace().next().unwrap_or("").to_string();
+    // Get current record first to populate defaults
+    let current_record = match grpc_client::get_record(id.clone()).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return Html("<h1>Not Found</h1><p>Record not found</p>").into_response(),
+        Err(e) => return Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response(),
+    };
+
+    let mut os_name = Some(current_record.os_name);
+    let mut secret = Some(current_record.secret);
+    let mut enabled = Some(true); // Default to enabled unless explicitly disabled
+    let mut vcpus = Some(4u32);
+    let mut vcpu_type = Some(current_record.vcpu_type);
+    let mut kernel_params = Some(current_record.kernel_params.clone());
+    let mut service_url = None;
+    let mut id_key: Option<Vec<u8>> = None;
+    let mut auth_key: Option<Vec<u8>> = None;
+    let mut firmware: Option<Vec<u8>> = None;
+    let mut kernel: Option<Vec<u8>> = None;
+    let mut initrd: Option<Vec<u8>> = None;
+
+    // Extract existing service URL from kernel params
+    if let Some(params) = &kernel_params {
+        if let Some(url_part) = params.split("rd.attest.url=").nth(1) {
+            service_url = Some(url_part.split_whitespace().next().unwrap_or("").to_string());
+        }
     }
-    
+
     while let Some(field) = multipart.next_field().await.unwrap() {
         let name = field.name().unwrap().to_string();
         if let Some(_) = field.file_name() {
             let data = field.bytes().await.unwrap();
             if data.is_empty() { continue; }
-            
+
             // Enforce file size limits
             let max_size = match name.as_str() {
                 "firmware" => 10 * 1024 * 1024, // 10 MB
@@ -181,130 +182,66 @@ pub async fn update_action(
                 "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
                 _ => continue,
             };
-            
+
             if data.len() > max_size {
                 return Html(format!("<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>", name, max_size)).into_response();
             }
-            
-            files_updated = true;
-            let target = match name.as_str() {
-                "id_key" => "id-block-key.pem",
-                "auth_key" => "id-auth-key.pem",
-                "firmware" => "firmware-code.fd",
-                "kernel" => "vmlinuz",
-                "initrd" => "initrd.img",
-                _ => continue,
-            };
-            fs::write(artifact_dir.join(target), data).unwrap();
+
+            match name.as_str() {
+                "id_key" => id_key = Some(data.to_vec()),
+                "auth_key" => auth_key = Some(data.to_vec()),
+                "firmware" => firmware = Some(data.to_vec()),
+                "kernel" => kernel = Some(data.to_vec()),
+                "initrd" => initrd = Some(data.to_vec()),
+                _ => {}
+            }
         } else {
             let txt = field.text().await.unwrap();
             match name.as_str() {
-                "os_name" => os_name = txt,
-                "secret" => secret = txt,
-                "enabled" => enabled = true,
-                "vcpus" => vcpus = txt.parse().unwrap_or(4),
-                "vcpu_type" => vcpu_type = txt,
-                "kernel_params" => kernel_params = txt,
-                "service_url" => service_url = txt,
+                "os_name" => os_name = Some(txt),
+                "secret" => secret = Some(txt),
+                "enabled" => enabled = Some(true),
+                "vcpus" => vcpus = Some(txt.parse().unwrap_or(4)),
+                "vcpu_type" => vcpu_type = Some(txt),
+                "kernel_params" => kernel_params = Some(txt),
+                "service_url" => service_url = Some(txt),
                 _ => {}
             }
         }
     }
-    
-    // Extract existing service URL from kernel_params if not provided in form
-    if service_url.is_empty() {
-        if let Some(url_part) = vm.kernel_params.split("rd.attest.url=").nth(1) {
-            service_url = url_part.split_whitespace().next().unwrap_or("").to_string();
-        }
+
+    match grpc_client::update_record(
+        id.clone(),
+        os_name,
+        id_key,
+        auth_key,
+        firmware,
+        kernel,
+        initrd,
+        kernel_params,
+        vcpus,
+        vcpu_type,
+        service_url,
+        secret,
+        enabled,
+    ).await {
+        Ok(_) => Redirect::to(&format!("/view/{}", id)).into_response(),
+        Err(e) => Html(format!("<h1>Error Updating Record</h1><p>{}</p>", e)).into_response(),
     }
-    
-    // Rebuild full kernel params with service URL
-    // Remove any existing rd.attest.url from kernel_params first
-    let base_params = if kernel_params.contains("rd.attest.url=") {
-        kernel_params.split("rd.attest.url=").next().unwrap_or("").trim().to_string()
-    } else {
-        kernel_params.trim().to_string()
-    };
-    
-    let full_params = if base_params.is_empty() {
-        format!("rd.attest.url={}", service_url)
-    } else {
-        format!("{} rd.attest.url={}", base_params, service_url)
-    };
-    
-    // Always update kernel-params.txt with full_params (including rd.attest.url)
-    fs::write(artifact_dir.join("kernel-params.txt"), &full_params).unwrap();
-    
-    // Check if we need to regenerate blocks (files updated OR kernel params/service URL changed)
-    let old_base_params = vm.kernel_params.split("rd.attest.url=").next().unwrap_or("").trim();
-    let old_service_url = vm.kernel_params.split("rd.attest.url=").nth(1)
-        .unwrap_or("")
-        .split_whitespace()
-        .next()
-        .unwrap_or("");
-    
-    let needs_regeneration = files_updated || 
-        base_params != old_base_params ||
-        service_url != old_service_url;
-    
-    if needs_regeneration {
-        if let Err(e) = snpguest_wrapper::generate_measurement_and_block(
-            &artifact_dir.join("firmware-code.fd"),
-            &artifact_dir.join("vmlinuz"),
-            &artifact_dir.join("initrd.img"),
-            &full_params,
-            vcpus,
-            &vcpu_type,
-            &artifact_dir.join("id-block-key.pem"),
-            &artifact_dir.join("id-auth-key.pem"),
-            &artifact_dir,
-        ) {
-            return Html(format!("<h1>Error Regenerating Measurement</h1><p>{}</p>", e)).into_response();
-        }
-        
-        // Update key digests if keys were changed
-        if files_updated {
-            if let Ok(id_digest) = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-block-key.pem")) {
-                if let Ok(auth_digest) = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-auth-key.pem")) {
-                    let mut active: vm::ActiveModel = vm.clone().into();
-                    active.id_key_digest = Set(id_digest);
-                    active.auth_key_digest = Set(auth_digest);
-                    active.kernel_params = Set(full_params.clone());
-                    active.update(&db).await.unwrap();
-                    return Redirect::to(&format!("/view/{}", id_clone)).into_response();
-                }
-            }
-        }
-    }
-    
-    // Update DB
-    let mut active: vm::ActiveModel = vm.into();
-    active.os_name = Set(os_name);
-    active.secret = Set(secret);
-    active.enabled = Set(enabled);
-    active.kernel_params = Set(full_params);
-    active.update(&db).await.unwrap();
-    Redirect::to(&format!("/view/{}", id_clone)).into_response()
 }
 
-pub async fn toggle_enabled(
-    Path(id): Path<String>,
-    Extension(db): Extension<DatabaseConnection>,
-) -> impl IntoResponse {
-    if let Some(vm) = vm::Entity::find_by_id(id).one(&db).await.unwrap() {
-        let current_enabled = vm.enabled;
-        let mut active: vm::ActiveModel = vm.into();
-        active.enabled = Set(!current_enabled);
-        active.update(&db).await.unwrap();
+pub async fn toggle_enabled(Path(id): Path<String>) -> impl IntoResponse {
+    match grpc_client::toggle_enabled(id).await {
+        Ok(_) => Redirect::to("/").into_response(),
+        Err(e) => Html(format!("<h1>Error</h1><p>Failed to toggle enabled status: {}</p>", e)).into_response(),
     }
-    Redirect::to("/")
 }
 
-pub async fn delete_action(Path(id): Path<String>, Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
-    let id_clone = id.clone();
-    vm::Entity::delete_by_id(&id).exec(&db).await.unwrap();
-    let _ = fs::remove_dir_all(PathBuf::from("artifacts").join(id_clone));
-    Redirect::to("/")
+pub async fn delete_action(Path(id): Path<String>) -> impl IntoResponse {
+    match grpc_client::delete_record(id).await {
+        Ok(_) => Redirect::to("/").into_response(),
+        Err(e) => Html(format!("<h1>Error Deleting Record</h1><p>{}</p>", e)).into_response(),
+    }
 }
 
 pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) -> impl IntoResponse {

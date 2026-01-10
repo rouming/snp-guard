@@ -14,6 +14,7 @@ impl MigrationTrait for Migration {
                 .col(ColumnDef::new(Alias::new("os_name")).string().not_null())
                 .col(ColumnDef::new(Alias::new("request_count")).integer().not_null().default(0))
                 .col(ColumnDef::new(Alias::new("secret")).string().not_null())
+                .col(ColumnDef::new(Alias::new("vcpus")).integer().not_null().default(4))
                 .col(ColumnDef::new(Alias::new("vcpu_type")).string().not_null())
                 .col(ColumnDef::new(Alias::new("enabled")).boolean().not_null().default(true))
                 .col(ColumnDef::new(Alias::new("id_key_digest")).binary().not_null())

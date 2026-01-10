@@ -16,6 +16,7 @@ use common::snpguard::{
 };
 use crate::attestation::{AttestationState, NonceEntry};
 use crate::snpguest_wrapper;
+use crate::business_logic;
 // snpguest wrapper not used directly in gRPC service paths
 
 pub struct GrpcServiceState {
@@ -297,22 +298,64 @@ impl ManagementService for ManagementServiceImpl {
         Ok(Response::new(GetRecordResponse { record: proto_record }))
     }
 
-    async fn create_record(&self, _request: Request<CreateRecordRequest>) -> Result<Response<CreateRecordResponse>, Status> {
-        let _req = _request.into_inner();
-        
-        // Implementation similar to web::create_action but via gRPC
-        // This would need to handle file uploads, generate blocks, etc.
-        
-        Err(Status::unimplemented("CreateRecord via gRPC not yet implemented - use HTTP endpoint"))
+    async fn create_record(&self, request: Request<CreateRecordRequest>) -> Result<Response<CreateRecordResponse>, Status> {
+        let req = request.into_inner();
+
+        let create_req = business_logic::CreateRecordRequest {
+            os_name: req.os_name,
+            id_key_pem: if req.id_key.is_empty() { None } else { Some(req.id_key) },
+            auth_key_pem: if req.auth_key.is_empty() { None } else { Some(req.auth_key) },
+            firmware_data: if req.firmware.is_empty() { None } else { Some(req.firmware) },
+            kernel_data: if req.kernel.is_empty() { None } else { Some(req.kernel) },
+            initrd_data: if req.initrd.is_empty() { None } else { Some(req.initrd) },
+            kernel_params: req.kernel_params,
+            vcpus: req.vcpus as u32,
+            vcpu_type: req.vcpu_type,
+            service_url: req.service_url,
+            secret: req.secret,
+        };
+
+        match business_logic::create_record_logic(&self.state.attestation_state.db, create_req).await {
+            Ok(response) => Ok(Response::new(CreateRecordResponse {
+                id: response.id,
+                error_message: response.error_message,
+            })),
+            Err(e) => Ok(Response::new(CreateRecordResponse {
+                id: String::new(),
+                error_message: Some(e),
+            })),
+        }
     }
 
-    async fn update_record(&self, _request: Request<UpdateRecordRequest>) -> Result<Response<UpdateRecordResponse>, Status> {
-        let _req = _request.into_inner();
-        let _id = _req.id.clone();
-        
-        // Implementation similar to web::update_action but via gRPC
-        
-        Err(Status::unimplemented("UpdateRecord via gRPC not yet implemented - use HTTP endpoint"))
+    async fn update_record(&self, request: Request<UpdateRecordRequest>) -> Result<Response<UpdateRecordResponse>, Status> {
+        let req = request.into_inner();
+
+        let update_req = business_logic::UpdateRecordRequest {
+            id: req.id,
+            os_name: req.os_name,
+            id_key_pem: req.id_key,
+            auth_key_pem: req.auth_key,
+            firmware_data: req.firmware,
+            kernel_data: req.kernel,
+            initrd_data: req.initrd,
+            kernel_params: req.kernel_params,
+            vcpus: req.vcpus.map(|v| v as u32),
+            vcpu_type: req.vcpu_type,
+            service_url: req.service_url,
+            secret: req.secret,
+            enabled: req.enabled,
+        };
+
+        match business_logic::update_record_logic(&self.state.attestation_state.db, update_req).await {
+            Ok(response) => Ok(Response::new(UpdateRecordResponse {
+                success: response.success,
+                error_message: response.error_message,
+            })),
+            Err(e) => Ok(Response::new(UpdateRecordResponse {
+                success: false,
+                error_message: Some(e),
+            })),
+        }
     }
 
     async fn delete_record(&self, request: Request<DeleteRecordRequest>) -> Result<Response<DeleteRecordResponse>, Status> {

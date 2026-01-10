@@ -155,6 +155,14 @@
 - [x] File upload size limits enforced (firmware <10MB, kernel/initrd <50MB)
 - [x] Path traversal protection in download endpoint
 
+## Architecture Improvements
+
+- [x] **gRPC as Main Backend API**: All business logic moved to gRPC services
+- [x] **Web UI as gRPC Client**: Management frontend calls gRPC services instead of direct DB access
+- [x] **Shared Business Logic**: Common logic extracted to reusable modules
+- [x] **Clean Separation**: Database access isolated to gRPC service layer
+- [x] **API Consistency**: Both HTTP endpoints and future CLI tools use same gRPC APIs
+
 ## Additional Features
 
 - [x] CPU family auto-detection from attestation reports

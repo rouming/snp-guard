@@ -15,6 +15,8 @@ mod web;
 mod snpguest_wrapper;
 mod auth;
 mod grpc_service;
+mod business_logic;
+mod grpc_client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     println!("gRPC Service listening on {}", grpc_addr);
     
-    // 4. Web UI (Management) - will call gRPC internally
+    // 4. Web UI (Management) - calls gRPC internally
     let management_app = Router::new()
         .route("/", get(web::index))
         .route("/create", get(web::create_form).post(web::create_action))
@@ -66,7 +68,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/download/:id/:file", get(web::download_artifact))
         .route("/toggle/:id", post(web::toggle_enabled))
         .nest_service("/static", ServeDir::new("ui/static"))
-        .layer(Extension(conn.clone()))
         .layer(Extension(grpc_state.clone()))
         .layer(middleware::from_fn(auth::basic_auth_middleware))
         .layer(TraceLayer::new_for_http());

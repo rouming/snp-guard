@@ -9,6 +9,7 @@ pub struct Model {
     pub os_name: String,
     pub request_count: i32,
     pub secret: String,
+    pub vcpus: i32,
     pub vcpu_type: String,
     pub enabled: bool,           // Enable/Disable flag
 
