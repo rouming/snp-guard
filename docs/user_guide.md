@@ -5,12 +5,13 @@
 ### 1. Build the Project
 
 ```bash
-# Build everything
+# Build everything (server, client, snpguest)
 make build
 
 # Or build separately
 make build-server
 make build-client
+make build-snpguest
 ```
 
 ### 2. Initialize Database
@@ -136,7 +137,7 @@ The script will detect which format is being used and install the appropriate ho
 
 **Prerequisites**:
 - The client binary must be built: `make build-client`
-- `snpguest` tool must be available in the initrd's PATH
+- The `snpguest` tool must be available in the initrd's PATH (can be built from the included submodule: `make build-snpguest`)
 - The original initrd image must be in cpio+gzip format (standard for both systems)
 
 ### Step 2: Configure Kernel Parameters
@@ -241,10 +242,11 @@ echo -n "$SECRET" | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 **Problem**: Server cannot verify the attestation report
 
 **Solutions**:
-- Ensure `snpguest` is installed and in PATH on the server
+- The server uses the integrated `snpguest` binary built from the submodule
 - Check network connectivity to AMD KDS (for certificate fetching)
 - Verify the attestation report is not corrupted
 - Check that the CPU family detection is correct
+- Ensure the snpguest binary was built successfully: `make build-snpguest`
 
 ### File Upload Issues
 

@@ -86,7 +86,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 
 **Responsibilities**:
 - Generate random nonces for attestation
-- Verify attestation reports using AMD's certificate chain
+- Verify attestation reports using AMD's certificate chain (via integrated `snpguest`)
 - Look up attestation records by key digests
 - Release secrets upon successful verification
 
@@ -116,7 +116,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 **Responsibilities**:
 - Provide web UI for managing attestation records
 - Handle file uploads (firmware, kernel, initrd, keys)
-- Generate ID-Block and Auth-Block using `snpguest`
+- Generate ID-Block and Auth-Block using integrated `snpguest`
 - Serve artifact downloads
 
 **Key Features**:
@@ -182,7 +182,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
        │   family-id = first 16 bytes of SHA256(URL)
        │   image-id = last 16 bytes of SHA256(URL)
        │
-       ├─> Runs snpguest generate measurement
+       ├─> Runs integrated snpguest generate measurement
        │   --ovmf firmware-code.fd
        │   --kernel vmlinuz
        │   --initrd initrd.img
@@ -190,9 +190,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
        │   --vcpus N
        │   --vcpu-type EPYC-*
        │
-       ├─> Runs snpguest generate id-block
-       │   --family-id <hex>
-       │   --image-id <hex>
+       ├─> Runs integrated snpguest generate id-block
        │   --id-file id-block.bin
        │   --auth-file id-auth.bin
        │
@@ -283,9 +281,9 @@ artifacts/
 
 ### External Tools
 
-- **snpguest**: Required for both server and client
-  - Server: Generates measurements and blocks
-  - Client: Generates attestation reports
+- **snpguest**: Included as git submodule, built automatically
+  - Server: Generates measurements and blocks using integrated binary
+  - Client: Generates attestation reports (available in guest OS)
 
 - **mksquashfs**: Required for SquashFS artifact generation
 

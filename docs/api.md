@@ -83,9 +83,9 @@ message AttestationResponse {
 
 1. Extract nonce from report (offset 0x50, 64 bytes)
 2. Detect CPU family from report (CPUID_FAM_ID at 0x188, CPUID_MOD_ID at 0x189)
-3. Fetch AMD certificates (CA and VCEK) from AMD KDS
-4. Verify certificate chain
-5. Verify attestation report signature
+3. Fetch AMD certificates (CA and VCEK) from AMD KDS using integrated `snpguest`
+4. Verify certificate chain using integrated `snpguest`
+5. Verify attestation report signature using integrated `snpguest`
 6. Extract key digests:
    - ID_KEY_DIGEST at offset 0xE0 (48 bytes)
    - AUTHOR_KEY_DIGEST at offset 0x110 (48 bytes)

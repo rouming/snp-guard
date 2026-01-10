@@ -56,15 +56,16 @@ SnpGuard addresses these needs by providing:
 ### Server Requirements
 
 - Rust toolchain (1.70+)
-- `snpguest` tool from [virtee/snpguest](https://github.com/virtee/snpguest)
 - SQLite (for database)
 - `mksquashfs` (for SquashFS artifact generation)
 - `tar` and `gzip` (for tarball generation)
 - TLS certificate and key (for production HTTPS)
 
+**Note**: The `snpguest` tool is now included as a git submodule and built automatically as part of the project.
+
 ### Client Requirements (in Guest VM)
 
-- `snpguest` tool in the initrd
+- `snpguest` tool in the initrd (can be built from the included submodule)
 - Network connectivity during boot
 - Kernel parameter: `rd.attest.url=https://your-attestation-service.com`
 
@@ -76,7 +77,7 @@ SnpGuard addresses these needs by providing:
 make build
 ```
 
-This builds both the server and the statically-linked client.
+This builds the server, statically-linked client, and `snpguest` tool.
 
 ### Build Server Only
 
@@ -91,6 +92,14 @@ make build-client
 ```
 
 The client is built for `x86_64-unknown-linux-musl` to avoid glibc dependencies.
+
+### Build snpguest Tool Only (Static, musl)
+
+```bash
+make build-snpguest
+```
+
+The `snpguest` tool is built from the included git submodule for `x86_64-unknown-linux-musl`.
 
 ## Setup
 
@@ -335,6 +344,7 @@ The client:
 
 ```
 snp-guard/
+├── snpguest/            # Git submodule: AMD SEV-SNP tool
 ├── src/
 │   ├── client/          # Attestation client (for initrd)
 │   ├── server/          # Attestation service
@@ -382,7 +392,7 @@ Contributions are welcome! Please:
 ## References
 
 - [AMD SEV-SNP Documentation](https://www.amd.com/en/developer/sev.html)
-- [snpguest Tool](https://github.com/virtee/snpguest)
+- [snpguest Tool](https://github.com/virtee/snpguest) (included as git submodule)
 - [SEV-SNP Attestation Guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html)
 
 ## Support
