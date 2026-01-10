@@ -295,7 +295,7 @@ message AttestationResponse {
 ### Client
 
 ```bash
-snpguard-client --url https://attestation-service.com --image-id 1
+snpguard-client --url https://attestation-service.com
 ```
 
 The client:

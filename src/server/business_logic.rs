@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set, QueryFilter, ColumnTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set, QueryFilter, ColumnTrait, TransactionTrait, QuerySelect};
 use entity::vm;
 use uuid::Uuid;
 use std::path::PathBuf;
@@ -49,27 +49,38 @@ pub struct UpdateRecordResponse {
     pub error_message: Option<String>,
 }
 
+/// Atomically generate the next image_id to prevent duplicates in concurrent scenarios
+async fn generate_next_image_id(db: &DatabaseConnection) -> Result<i64, String> {
+    // Use a transaction to ensure atomicity
+    let txn = db.begin().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
+
+    // Get the current maximum image_id
+    let max_id = vm::Entity::find()
+        .select_only()
+        .column_as(vm::Column::ImageId.max(), "max_id")
+        .into_tuple::<Option<i64>>()
+        .one(&txn)
+        .await
+        .map_err(|e| format!("Failed to get max image_id: {}", e))?
+        .flatten()
+        .unwrap_or(0);
+
+    let next_id = max_id + 1;
+
+    // Commit the transaction
+    txn.commit().await.map_err(|e| format!("Failed to commit transaction: {}", e))?;
+
+    Ok(next_id)
+}
+
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     req: CreateRecordRequest,
 ) -> Result<CreateRecordResponse, String> {
     let new_id = Uuid::new_v4().to_string();
 
-    // Generate next image_id (sequential integer)
-    let next_image_id = {
-        use entity::vm::Entity as Vm;
-        use sea_orm::{EntityTrait, QuerySelect, QueryOrder};
-        let max_id = Vm::find()
-            .select_only()
-            .column_as(entity::vm::Column::ImageId.max(), "max_id")
-            .into_tuple::<Option<i64>>()
-            .one(db)
-            .await
-            .map_err(|e| format!("Failed to get max image_id: {}", e))?
-            .flatten()
-            .unwrap_or(0);
-        max_id + 1
-    };
+    // Generate next image_id atomically (sequential integer)
+    let next_image_id = generate_next_image_id(db).await?;
 
     let artifact_dir = PathBuf::from("artifacts").join(&new_id);
     fs::create_dir_all(&artifact_dir).map_err(|e| format!("Failed to create artifact directory: {}", e))?;

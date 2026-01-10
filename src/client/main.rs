@@ -9,9 +9,6 @@ use sev::firmware::guest::Firmware;
 struct Args {
     #[arg(short, long)]
     url: String,
-
-    #[arg(long)]
-    image_id: i64,
 }
 
 #[tokio::main]
@@ -73,17 +70,8 @@ async fn main() -> Result<()> {
     let mut nonce_array = [0u8; 64];
     nonce_array.copy_from_slice(&nonce[..64]);
 
-    let report_bytes = fw.get_report(None, Some(nonce_array), Some(1))
+    let report_data = fw.get_report(None, Some(nonce_array), Some(1))
         .context("Failed to get attestation report from SEV firmware")?;
-
-    let mut report_data = report_bytes.to_vec();
-
-    // Embed image_id at offset 0x20 (16 bytes, little-endian)
-    if report_data.len() >= 0x20 + 16 {
-        report_data[0x20..0x20 + 16].copy_from_slice(&args.image_id.to_le_bytes());
-    } else {
-        return Err(anyhow::anyhow!("Attestation report too short to embed image_id"));
-    }
     
     // 3. Verify Report
     let verify_request = AttestationRequest {

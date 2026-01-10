@@ -21,7 +21,6 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 │  │  │  snpguard-client (static binary, musl)             │  │  │
 │  │  │  - Requests nonce                                  │  │  │
 │  │  │  - Generates report via sev library               │  │  │
-│  │  │  - Embeds image_id from cmdline param             │  │  │
 │  │  │  - Sends report for verification                  │  │  │
 │  │  │  - Receives secret                                │  │  │
 │  │  └────────────────────────────────────────────────────┘  │  │
