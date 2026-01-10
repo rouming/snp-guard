@@ -137,7 +137,7 @@ The script will detect which format is being used and install the appropriate ho
 
 **Prerequisites**:
 - The client binary must be built: `make build-client`
-- The `snpguest` tool must be available in the initrd's PATH (can be built from the included submodule: `make build-snpguest`)
+- SEV-SNP must be enabled in the guest firmware and hardware
 - The original initrd image must be in cpio+gzip format (standard for both systems)
 
 ### Step 2: Configure Kernel Parameters

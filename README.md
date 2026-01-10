@@ -65,7 +65,7 @@ SnpGuard addresses these needs by providing:
 
 ### Client Requirements (in Guest VM)
 
-- `snpguest` tool in the initrd (can be built from the included submodule)
+- SEV-SNP enabled hardware and guest firmware
 - Network connectivity during boot
 - Kernel parameter: `rd.attest.url=https://your-attestation-service.com`
 

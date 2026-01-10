@@ -84,7 +84,7 @@ Both hooks follow a similar boot sequence:
 3. Network initialization
 4. [SnpGuard Hook Runs Here] ← Attestation happens
    - Reads rd.attest.url from /proc/cmdline
-   - Calls snpguard-client
+   - Calls snpguard-client (uses sev library directly)
    - Receives secret
 5. Root filesystem mounting
 6. Disk decryption (using secret from step 4)
@@ -97,7 +97,7 @@ Both hooks implement the same logic:
 
 1. **Parse kernel command line** for `rd.attest.url=...`
 2. **Wait for network** (2 second delay to ensure network is up)
-3. **Call attestation client**: `/bin/snpguard-client --url "$ATTEST_URL"`
+3. **Call attestation client**: `/bin/snpguard-client --url "$ATTEST_URL"` (uses sev library directly for report generation)
 4. **Capture secret** to `/tmp/disk-secret`
 5. **Handle errors**: Exit with error if attestation fails
 
@@ -155,6 +155,13 @@ ls -la lib/dracut/hooks/pre-mount/99-snpguard.sh
 - Both hooks include a 2-second delay to allow network initialization
 - If network is still not available, the attestation will fail
 - Ensure network is configured in the initrd (standard for both systems)
+
+### SEV-SNP Not Available
+
+- The client requires direct access to SEV-SNP hardware via `/dev/sev-guest`
+- Ensure the guest firmware supports SEV-SNP
+- Ensure SEV-SNP is enabled in the hypervisor configuration
+- The client will fail with a clear error if SEV-SNP is not available
 
 ## Differences Between Systems
 

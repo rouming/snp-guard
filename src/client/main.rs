@@ -1,9 +1,9 @@
 use clap::Parser;
 use anyhow::{Result, Context};
-use std::process::Command;
 use std::io::Write;
 use prost::Message;
 use common::snpguard::{NonceRequest, NonceResponse, AttestationRequest, AttestationResponse};
+use sev::firmware::guest::Firmware;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -62,27 +62,18 @@ async fn main() -> Result<()> {
         anyhow::bail!("Invalid nonce length: expected 64 bytes, got {}", nonce.len());
     }
     
-    // 2. Generate Report using snpguest
-    let nonce_file = std::env::temp_dir().join("snpguard-nonce.bin");
-    let report_file = std::env::temp_dir().join("snpguard-report.bin");
-    
-    std::fs::write(&nonce_file, &nonce)
-        .context("Failed to write nonce file")?;
-    
-    let status = Command::new("snpguest")
-        .arg("report")
-        .arg(&report_file)
-        .arg(&nonce_file)
-        .status()
-        .context("Failed to execute snpguest. Ensure snpguest is installed and in PATH.")?;
-    
-    if !status.success() {
-        eprintln!("snpguest report generation failed");
-        std::process::exit(1);
-    }
-    
-    let report_data = std::fs::read(&report_file)
-        .context("Failed to read attestation report")?;
+    // 2. Generate Report using sev library directly
+    let mut fw = Firmware::open()
+        .context("Failed to open SEV firmware device (/dev/sev-guest). Ensure SEV-SNP is enabled.")?;
+
+    // Convert nonce to [u8; 64] array
+    let mut nonce_array = [0u8; 64];
+    nonce_array.copy_from_slice(&nonce[..64]);
+
+    let report_bytes = fw.get_report(None, Some(nonce_array), Some(1))
+        .context("Failed to get attestation report from SEV firmware")?;
+
+    let report_data = report_bytes.to_vec();
     
     // 3. Verify Report
     let verify_request = AttestationRequest {

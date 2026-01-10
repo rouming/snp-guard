@@ -101,13 +101,14 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 
 **Responsibilities**:
 - Request nonce from attestation service
-- Generate attestation report using `snpguest`
+- Generate attestation report using `sev` library directly
 - Send report for verification
 - Receive and output secret
 
 **Key Features**:
 - Static binary (no glibc dependencies)
 - Built with musl libc for initrd compatibility
+- Direct SEV-SNP hardware access via sev library
 - HTTPS client with certificate verification
 - Protobuf message serialization
 
@@ -143,7 +144,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
    │       Returns: NonceResponse
    │
    ├─> Client generates report
-   │   snpguest report report.bin nonce.bin
+   │   Direct sev library call
    │   │
    │   └─> SEV-SNP hardware generates report
    │
