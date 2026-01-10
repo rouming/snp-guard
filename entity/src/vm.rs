@@ -12,7 +12,8 @@ pub struct Model {
     pub vcpus: i32,
     pub vcpu_type: String,
     pub enabled: bool,           // Enable/Disable flag
-    pub image_id: i64,           // Image ID for attestation report matching
+    #[sea_orm(column_type = "Binary(16)")]
+    pub image_id: Vec<u8>,       // Image ID (UUID as 16 bytes) for attestation report matching
 
     #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,

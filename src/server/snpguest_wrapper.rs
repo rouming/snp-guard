@@ -14,7 +14,7 @@ pub fn generate_measurement_and_block(
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
-    image_id: i64,
+    image_id: String,
 ) -> Result<()> {
     
     // 1. Calculate Measurement
@@ -49,7 +49,7 @@ pub fn generate_measurement_and_block(
         .arg(id_key)
         .arg(auth_key)
         .arg(measurement)
-        .arg("--image-id").arg(image_id.to_string())
+        .arg("--image-id").arg(image_id)
         .arg("--id-file").arg(output_dir.join("id-block.bin"))
         .arg("--auth-file").arg(output_dir.join("id-auth.bin"))
         .status()?;

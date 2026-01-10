@@ -191,8 +191,7 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
             return Ok(Response::new(response));
         }
 
-        let image_id_bytes = &report_data[0x20..0x20 + 16];
-        let image_id = i64::from_le_bytes(image_id_bytes.try_into().unwrap());
+        let image_id: Vec<u8> = report_data[0x20..0x20 + 16].to_vec();
 
         // 7. Extract key digests (0xE0 and 0x110, 48 bytes each)
         if report_data.len() < 0x110 + 48 {

@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set, QueryFilter, ColumnTrait, TransactionTrait, QuerySelect};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set, QueryFilter, ColumnTrait};
 use entity::vm;
 use uuid::Uuid;
 use std::path::PathBuf;
@@ -49,29 +49,6 @@ pub struct UpdateRecordResponse {
     pub error_message: Option<String>,
 }
 
-/// Atomically generate the next image_id to prevent duplicates in concurrent scenarios
-async fn generate_next_image_id(db: &DatabaseConnection) -> Result<i64, String> {
-    // Use a transaction to ensure atomicity
-    let txn = db.begin().await.map_err(|e| format!("Failed to start transaction: {}", e))?;
-
-    // Get the current maximum image_id
-    let max_id = vm::Entity::find()
-        .select_only()
-        .column_as(vm::Column::ImageId.max(), "max_id")
-        .into_tuple::<Option<i64>>()
-        .one(&txn)
-        .await
-        .map_err(|e| format!("Failed to get max image_id: {}", e))?
-        .flatten()
-        .unwrap_or(0);
-
-    let next_id = max_id + 1;
-
-    // Commit the transaction
-    txn.commit().await.map_err(|e| format!("Failed to commit transaction: {}", e))?;
-
-    Ok(next_id)
-}
 
 pub async fn create_record_logic(
     db: &DatabaseConnection,
@@ -79,8 +56,8 @@ pub async fn create_record_logic(
 ) -> Result<CreateRecordResponse, String> {
     let new_id = Uuid::new_v4().to_string();
 
-    // Generate next image_id atomically (sequential integer)
-    let next_image_id = generate_next_image_id(db).await?;
+    // Generate unique image_id as UUID (16 bytes)
+    let image_id = Uuid::new_v4();
 
     let artifact_dir = PathBuf::from("artifacts").join(&new_id);
     fs::create_dir_all(&artifact_dir).map_err(|e| format!("Failed to create artifact directory: {}", e))?;
@@ -122,7 +99,7 @@ pub async fn create_record_logic(
         &artifact_dir.join("id-block-key.pem"),
         &artifact_dir.join("id-auth-key.pem"),
         &artifact_dir,
-        next_image_id,
+        image_id.to_string(),
     ).map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
     // Get Digests
@@ -142,7 +119,7 @@ pub async fn create_record_logic(
         auth_key_digest: Set(auth_digest),
         created_at: Set(chrono::Utc::now().naive_utc()),
         enabled: Set(true),
-        image_id: Set(next_image_id),
+        image_id: Set(image_id.as_bytes().to_vec()),
         kernel_params: Set(full_params),
         request_count: Set(0),
         firmware_path: Set("firmware-code.fd".into()),
@@ -235,6 +212,11 @@ pub async fn update_record_logic(
         let vcpus = req.vcpus.unwrap_or(vm_model.vcpus as u32);
         let vcpu_type = req.vcpu_type.as_ref().unwrap_or(&vm_model.vcpu_type).clone();
 
+        // Convert image_id bytes back to UUID string
+        let image_id_bytes: [u8; 16] = vm_model.image_id.clone().try_into()
+            .map_err(|_| "Invalid image_id length")?;
+        let image_id_uuid = Uuid::from_bytes(image_id_bytes);
+
         snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
             &kernel_path,
@@ -245,7 +227,7 @@ pub async fn update_record_logic(
             &id_key_path,
             &auth_key_path,
             &artifact_dir,
-            vm_model.image_id,
+            image_id_uuid.to_string(),
         ).map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
 
         // Update digests

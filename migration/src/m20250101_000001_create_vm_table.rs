@@ -17,7 +17,7 @@ impl MigrationTrait for Migration {
                 .col(ColumnDef::new(Alias::new("vcpus")).integer().not_null().default(4))
                 .col(ColumnDef::new(Alias::new("vcpu_type")).string().not_null())
                 .col(ColumnDef::new(Alias::new("enabled")).boolean().not_null().default(true))
-                .col(ColumnDef::new(Alias::new("image_id")).big_integer().not_null())
+                .col(ColumnDef::new(Alias::new("image_id")).binary_len(16).not_null())
                 .col(ColumnDef::new(Alias::new("id_key_digest")).binary().not_null())
                 .col(ColumnDef::new(Alias::new("auth_key_digest")).binary().not_null())
                 .col(ColumnDef::new(Alias::new("created_at")).date_time().not_null())
