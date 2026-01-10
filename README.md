@@ -338,6 +338,40 @@ The client:
 - Check network connectivity to AMD KDS (for certificate fetching)
 - Ensure the attestation report is valid and not corrupted
 
+## Deployment
+
+### Docker
+
+Build and run the container:
+
+```bash
+# Build the image
+docker build -t snp-guard .
+
+# Run the container
+docker run -p 3000:3000 -v ./data:/data snp-guard
+```
+
+### Docker Compose
+
+For easier deployment with persistent storage:
+
+```bash
+docker-compose up -d
+```
+
+The application will be available at `http://localhost:3000`.
+
+### Environment Variables
+
+- `DATABASE_URL`: SQLite database path (default: `sqlite:///data/snpguard.db?mode=rwc`)
+- `RUST_LOG`: Log level (default: `info`)
+- `TLS_CERT`/`TLS_KEY`: Optional TLS certificates for HTTPS
+
+### Volumes
+
+- `/data`: Persistent storage for the SQLite database
+
 ## Development
 
 ### Project Structure

@@ -1,0 +1,37 @@
+# Rust build artifacts
+target/
+**/target/
+
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Data and artifacts (will be created at runtime)
+data/
+artifacts/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files (avoid recursive copy)
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Temporary files
+*.tmp
+*.log
