@@ -41,6 +41,10 @@ pub async fn create_record(
     allowed_debug: bool,
     allowed_migrate_ma: bool,
     allowed_smt: bool,
+    min_tcb_bootloader: u32,
+    min_tcb_tee: u32,
+    min_tcb_snp: u32,
+    min_tcb_microcode: u32,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut client = create_management_client().await?;
     let request = tonic::Request::new(CreateRecordRequest {
@@ -58,6 +62,10 @@ pub async fn create_record(
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,
+        min_tcb_bootloader,
+        min_tcb_tee,
+        min_tcb_snp,
+        min_tcb_microcode,
     });
     let response = client.create_record(request).await?;
     let result = response.into_inner();
@@ -84,6 +92,10 @@ pub async fn update_record(
     allowed_debug: Option<bool>,
     allowed_migrate_ma: Option<bool>,
     allowed_smt: Option<bool>,
+    min_tcb_bootloader: Option<u32>,
+    min_tcb_tee: Option<u32>,
+    min_tcb_snp: Option<u32>,
+    min_tcb_microcode: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = create_management_client().await?;
     let request = tonic::Request::new(UpdateRecordRequest {
@@ -103,6 +115,10 @@ pub async fn update_record(
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,
+        min_tcb_bootloader,
+        min_tcb_tee,
+        min_tcb_snp,
+        min_tcb_microcode,
     });
     let response = client.update_record(request).await?;
     let result = response.into_inner();

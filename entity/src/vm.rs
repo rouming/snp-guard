@@ -20,6 +20,12 @@ pub struct Model {
     pub allowed_migrate_ma: bool, // Allow migration with MA
     pub allowed_smt: bool,       // Allow Simultaneous Multithreading
 
+    // TCB minimum version requirements
+    pub min_tcb_bootloader: i32, // Minimum PSP bootloader version
+    pub min_tcb_tee: i32,        // Minimum SNP firmware version
+    pub min_tcb_snp: i32,        // Minimum SNP implementation version
+    pub min_tcb_microcode: i32,  // Minimum CPU microcode version
+
     #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,
     

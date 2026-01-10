@@ -21,6 +21,10 @@ pub struct CreateRecordRequest {
     pub allowed_debug: bool,
     pub allowed_migrate_ma: bool,
     pub allowed_smt: bool,
+    pub min_tcb_bootloader: u32,
+    pub min_tcb_tee: u32,
+    pub min_tcb_snp: u32,
+    pub min_tcb_microcode: u32,
 }
 
 #[derive(Debug)]
@@ -47,6 +51,10 @@ pub struct UpdateRecordRequest {
     pub allowed_debug: Option<bool>,
     pub allowed_migrate_ma: Option<bool>,
     pub allowed_smt: Option<bool>,
+    pub min_tcb_bootloader: Option<u32>,
+    pub min_tcb_tee: Option<u32>,
+    pub min_tcb_snp: Option<u32>,
+    pub min_tcb_microcode: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -132,6 +140,10 @@ pub async fn create_record_logic(
         allowed_debug: Set(req.allowed_debug),
         allowed_migrate_ma: Set(req.allowed_migrate_ma),
         allowed_smt: Set(req.allowed_smt),
+        min_tcb_bootloader: Set(req.min_tcb_bootloader as i32),
+        min_tcb_tee: Set(req.min_tcb_tee as i32),
+        min_tcb_snp: Set(req.min_tcb_snp as i32),
+        min_tcb_microcode: Set(req.min_tcb_microcode as i32),
         kernel_params: Set(full_params),
         request_count: Set(0),
         firmware_path: Set("firmware-code.fd".into()),
@@ -270,7 +282,8 @@ pub async fn update_record_logic(
     } else if req.os_name.is_none() && req.secret.is_none() && req.vcpus.is_none() &&
               req.vcpu_type.is_none() && !id_key_present && !auth_key_present &&
               !firmware_present && !kernel_present && !initrd_present &&
-              req.allowed_debug.is_none() && req.allowed_migrate_ma.is_none() && req.allowed_smt.is_none() {
+              req.allowed_debug.is_none() && req.allowed_migrate_ma.is_none() && req.allowed_smt.is_none() &&
+              req.min_tcb_bootloader.is_none() && req.min_tcb_tee.is_none() && req.min_tcb_snp.is_none() && req.min_tcb_microcode.is_none() {
         // If no other changes, default enabled to false for checkbox behavior
         active_model.enabled = Set(false);
     }
@@ -283,6 +296,18 @@ pub async fn update_record_logic(
     }
     if let Some(allowed_smt) = req.allowed_smt {
         active_model.allowed_smt = Set(allowed_smt);
+    }
+    if let Some(min_tcb_bootloader) = req.min_tcb_bootloader {
+        active_model.min_tcb_bootloader = Set(min_tcb_bootloader as i32);
+    }
+    if let Some(min_tcb_tee) = req.min_tcb_tee {
+        active_model.min_tcb_tee = Set(min_tcb_tee as i32);
+    }
+    if let Some(min_tcb_snp) = req.min_tcb_snp {
+        active_model.min_tcb_snp = Set(min_tcb_snp as i32);
+    }
+    if let Some(min_tcb_microcode) = req.min_tcb_microcode {
+        active_model.min_tcb_microcode = Set(min_tcb_microcode as i32);
     }
 
     if params_changed {

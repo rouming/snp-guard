@@ -54,6 +54,31 @@
             <div><label class="block text-sm font-bold">Kernel</label><input type="file" name="kernel" required class="block w-full text-sm"></div>
             <div><label class="block text-sm font-bold">Initrd</label><input type="file" name="initrd" required class="block w-full text-sm"></div>
         </div>
+        <div class="space-y-5 bg-green-50 p-6 rounded-lg border border-green-200">
+            <h3 class="font-bold text-lg text-slate-700">Minimum TCB Versions</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Bootloader (PSP bootloader)</label>
+                    <input type="number" name="min_tcb_bootloader" min="0" max="255" value="0" class="w-full border-slate-300 rounded-lg shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum PSP bootloader version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">TEE (SNP firmware)</label>
+                    <input type="number" name="min_tcb_tee" min="0" max="255" value="0" class="w-full border-slate-300 rounded-lg shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum SNP firmware version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">SNP (SNP implementation)</label>
+                    <input type="number" name="min_tcb_snp" min="0" max="255" value="0" class="w-full border-slate-300 rounded-lg shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum SNP implementation version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Microcode (CPU microcode)</label>
+                    <input type="number" name="min_tcb_microcode" min="0" max="255" value="0" class="w-full border-slate-300 rounded-lg shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum CPU microcode version (0 = no restriction)</p>
+                </div>
+            </div>
+        </div>
         <div class="md:col-span-2 pt-6"><button type="submit" class="w-full bg-blue-900 hover:bg-blue-800 text-white font-bold py-3 rounded-lg shadow-lg">Generate & Save</button></div>
     </form>
 </div>

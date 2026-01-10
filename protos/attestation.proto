@@ -83,6 +83,10 @@ message CreateRecordRequest {
   bool allowed_debug = 12;   // Allow debug mode (default: false)
   bool allowed_migrate_ma = 13; // Allow migration with MA (default: false)
   bool allowed_smt = 14;     // Allow Simultaneous Multithreading (default: true)
+  uint32 min_tcb_bootloader = 15; // Minimum PSP bootloader version
+  uint32 min_tcb_tee = 16;   // Minimum SNP firmware version
+  uint32 min_tcb_snp = 17;   // Minimum SNP implementation version
+  uint32 min_tcb_microcode = 18; // Minimum CPU microcode version
 }
 
 message CreateRecordResponse {
@@ -107,6 +111,10 @@ message UpdateRecordRequest {
   optional bool allowed_debug = 14;
   optional bool allowed_migrate_ma = 15;
   optional bool allowed_smt = 16;
+  optional uint32 min_tcb_bootloader = 17;
+  optional uint32 min_tcb_tee = 18;
+  optional uint32 min_tcb_snp = 19;
+  optional uint32 min_tcb_microcode = 20;
 }
 
 message UpdateRecordResponse {
@@ -148,4 +156,8 @@ message AttestationRecord {
   bool allowed_debug = 13;   // Allow debug mode
   bool allowed_migrate_ma = 14; // Allow migration with MA
   bool allowed_smt = 15;     // Allow Simultaneous Multithreading
+  uint32 min_tcb_bootloader = 16; // Minimum PSP bootloader version
+  uint32 min_tcb_tee = 17;   // Minimum SNP firmware version
+  uint32 min_tcb_snp = 18;   // Minimum SNP implementation version
+  uint32 min_tcb_microcode = 19; // Minimum CPU microcode version
 }

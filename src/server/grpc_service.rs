@@ -19,6 +19,36 @@ use crate::snpguest_wrapper;
 use crate::business_logic;
 // snpguest wrapper not used directly in gRPC service paths
 
+/// Decode TCB version from attestation report based on CPU family
+/// Returns (microcode, snp, tee, bootloader) versions
+fn decode_tcb_version(tcb_version: u64, cpu_family: &str) -> (u8, u8, u8, u8) {
+    // Extract bytes from the 64-bit TCB version
+    let microcode = ((tcb_version >> 56) & 0xFF) as u8;
+
+    // Check CPU family to determine TCB structure
+    if cpu_family.contains("genoa") || cpu_family.contains("milan") {
+        // Table 4: Genoa and Milan structure
+        // Bits: 63:56 MICROCODE, 55:48 SNP, 47:16 Reserved, 15:8 TEE, 7:0 BOOT_LOADER
+        let snp = ((tcb_version >> 48) & 0xFF) as u8;
+        let tee = ((tcb_version >> 8) & 0xFF) as u8;
+        let bootloader = (tcb_version & 0xFF) as u8;
+        (microcode, snp, tee, bootloader)
+    } else if cpu_family.contains("turin") {
+        // Table 3: Turin structure
+        // Bits: 63:56 MICROCODE, 55:32 Reserved, 31:24 SNP, 23:16 TEE, 15:8 BOOT_LOADER, 7:0 FMC
+        let snp = ((tcb_version >> 24) & 0xFF) as u8;
+        let tee = ((tcb_version >> 16) & 0xFF) as u8;
+        let bootloader = ((tcb_version >> 8) & 0xFF) as u8;
+        (microcode, snp, tee, bootloader)
+    } else {
+        // Default to Genoa/Milan structure as fallback
+        let snp = ((tcb_version >> 48) & 0xFF) as u8;
+        let tee = ((tcb_version >> 8) & 0xFF) as u8;
+        let bootloader = (tcb_version & 0xFF) as u8;
+        (microcode, snp, tee, bootloader)
+    }
+}
+
 pub struct GrpcServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
@@ -267,6 +297,56 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
                 return Ok(Response::new(response));
             }
 
+            // 10. Extract and verify TCB version requirements
+            if report_data.len() < 0x38 + 8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Report too short for TCB version".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+
+            let tcb_bytes = &report_data[0x38..0x38 + 8];
+            let tcb_version = u64::from_le_bytes(tcb_bytes.try_into().unwrap());
+
+            // Decode TCB version based on CPU family
+            let (current_microcode, current_snp, current_tee, current_bootloader) = decode_tcb_version(tcb_version, &cpu_family);
+
+            // Check minimum TCB requirements
+            if current_bootloader < vm.min_tcb_bootloader as u8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: format!("Bootloader TCB version {} below minimum requirement {}", current_bootloader, vm.min_tcb_bootloader),
+                };
+                return Ok(Response::new(response));
+            }
+            if current_tee < vm.min_tcb_tee as u8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: format!("TEE TCB version {} below minimum requirement {}", current_tee, vm.min_tcb_tee),
+                };
+                return Ok(Response::new(response));
+            }
+            if current_snp < vm.min_tcb_snp as u8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: format!("SNP TCB version {} below minimum requirement {}", current_snp, vm.min_tcb_snp),
+                };
+                return Ok(Response::new(response));
+            }
+            if current_microcode < vm.min_tcb_microcode as u8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: format!("Microcode TCB version {} below minimum requirement {}", current_microcode, vm.min_tcb_microcode),
+                };
+                return Ok(Response::new(response));
+            }
+
             if !vm.enabled {
                 let response = AttestationResponse {
                     success: false,
@@ -329,6 +409,10 @@ impl ManagementService for ManagementServiceImpl {
                 allowed_debug: vm.allowed_debug,
                 allowed_migrate_ma: vm.allowed_migrate_ma,
                 allowed_smt: vm.allowed_smt,
+                min_tcb_bootloader: vm.min_tcb_bootloader as u32,
+                min_tcb_tee: vm.min_tcb_tee as u32,
+                min_tcb_snp: vm.min_tcb_snp as u32,
+                min_tcb_microcode: vm.min_tcb_microcode as u32,
             })
             .collect();
         
@@ -358,6 +442,10 @@ impl ManagementService for ManagementServiceImpl {
             allowed_debug: vm.allowed_debug,
             allowed_migrate_ma: vm.allowed_migrate_ma,
             allowed_smt: vm.allowed_smt,
+            min_tcb_bootloader: vm.min_tcb_bootloader as u32,
+            min_tcb_tee: vm.min_tcb_tee as u32,
+            min_tcb_snp: vm.min_tcb_snp as u32,
+            min_tcb_microcode: vm.min_tcb_microcode as u32,
         });
         
         Ok(Response::new(GetRecordResponse { record: proto_record }))
@@ -381,6 +469,10 @@ impl ManagementService for ManagementServiceImpl {
             allowed_debug: req.allowed_debug,
             allowed_migrate_ma: req.allowed_migrate_ma,
             allowed_smt: req.allowed_smt,
+            min_tcb_bootloader: req.min_tcb_bootloader,
+            min_tcb_tee: req.min_tcb_tee,
+            min_tcb_snp: req.min_tcb_snp,
+            min_tcb_microcode: req.min_tcb_microcode,
         };
 
         match business_logic::create_record_logic(&self.state.attestation_state.db, create_req).await {
@@ -415,6 +507,10 @@ impl ManagementService for ManagementServiceImpl {
             allowed_debug: req.allowed_debug,
             allowed_migrate_ma: req.allowed_migrate_ma,
             allowed_smt: req.allowed_smt,
+            min_tcb_bootloader: req.min_tcb_bootloader,
+            min_tcb_tee: req.min_tcb_tee,
+            min_tcb_snp: req.min_tcb_snp,
+            min_tcb_microcode: req.min_tcb_microcode,
         };
 
         match business_logic::update_record_logic(&self.state.attestation_state.db, update_req).await {

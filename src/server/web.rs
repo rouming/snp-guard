@@ -54,6 +54,10 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
     let mut allowed_debug = false;
     let mut allowed_migrate_ma = false;
     let mut allowed_smt = true; // Default to true
+    let mut min_tcb_bootloader = 0u32;
+    let mut min_tcb_tee = 0u32;
+    let mut min_tcb_snp = 0u32;
+    let mut min_tcb_microcode = 0u32;
     let mut id_key: Option<Vec<u8>> = None;
     let mut auth_key: Option<Vec<u8>> = None;
     let mut firmware: Option<Vec<u8>> = None;
@@ -99,6 +103,10 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
                 "allowed_debug" => allowed_debug = txt == "true",
                 "allowed_migrate_ma" => allowed_migrate_ma = txt == "true",
                 "allowed_smt" => allowed_smt = txt == "true",
+                "min_tcb_bootloader" => min_tcb_bootloader = txt.parse().unwrap_or(0),
+                "min_tcb_tee" => min_tcb_tee = txt.parse().unwrap_or(0),
+                "min_tcb_snp" => min_tcb_snp = txt.parse().unwrap_or(0),
+                "min_tcb_microcode" => min_tcb_microcode = txt.parse().unwrap_or(0),
                 _ => {}
             }
         }
@@ -126,6 +134,10 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,
+        min_tcb_bootloader,
+        min_tcb_tee,
+        min_tcb_snp,
+        min_tcb_microcode,
     ).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Creating Record</h1><p>{}</p>", e)).into_response(),
@@ -167,6 +179,10 @@ pub async fn update_action(
     let mut allowed_debug = Some(current_record.allowed_debug);
     let mut allowed_migrate_ma = Some(current_record.allowed_migrate_ma);
     let mut allowed_smt = Some(current_record.allowed_smt);
+    let mut min_tcb_bootloader = Some(current_record.min_tcb_bootloader as u32);
+    let mut min_tcb_tee = Some(current_record.min_tcb_tee as u32);
+    let mut min_tcb_snp = Some(current_record.min_tcb_snp as u32);
+    let mut min_tcb_microcode = Some(current_record.min_tcb_microcode as u32);
     let mut id_key: Option<Vec<u8>> = None;
     let mut auth_key: Option<Vec<u8>> = None;
     let mut firmware: Option<Vec<u8>> = None;
@@ -220,6 +236,10 @@ pub async fn update_action(
                 "allowed_debug" => allowed_debug = Some(txt == "true"),
                 "allowed_migrate_ma" => allowed_migrate_ma = Some(txt == "true"),
                 "allowed_smt" => allowed_smt = Some(txt == "true"),
+                "min_tcb_bootloader" => min_tcb_bootloader = Some(txt.parse().unwrap_or(0)),
+                "min_tcb_tee" => min_tcb_tee = Some(txt.parse().unwrap_or(0)),
+                "min_tcb_snp" => min_tcb_snp = Some(txt.parse().unwrap_or(0)),
+                "min_tcb_microcode" => min_tcb_microcode = Some(txt.parse().unwrap_or(0)),
                 _ => {}
             }
         }
@@ -242,6 +262,10 @@ pub async fn update_action(
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,
+        min_tcb_bootloader,
+        min_tcb_tee,
+        min_tcb_snp,
+        min_tcb_microcode,
     ).await {
         Ok(_) => Redirect::to(&format!("/view/{}", id)).into_response(),
         Err(e) => Html(format!("<h1>Error Updating Record</h1><p>{}</p>", e)).into_response(),

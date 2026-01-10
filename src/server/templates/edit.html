@@ -119,6 +119,32 @@
             </div>
         </div>
 
+        <div class="border-t pt-6">
+            <h3 class="font-bold text-lg text-slate-700 mb-4">Minimum TCB Versions</h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Bootloader (PSP bootloader)</label>
+                    <input type="number" name="min_tcb_bootloader" min="0" max="255" value="{{ vm.min_tcb_bootloader }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum PSP bootloader version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">TEE (SNP firmware)</label>
+                    <input type="number" name="min_tcb_tee" min="0" max="255" value="{{ vm.min_tcb_tee }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum SNP firmware version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">SNP (SNP implementation)</label>
+                    <input type="number" name="min_tcb_snp" min="0" max="255" value="{{ vm.min_tcb_snp }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum SNP implementation version (0 = no restriction)</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Microcode (CPU microcode)</label>
+                    <input type="number" name="min_tcb_microcode" min="0" max="255" value="{{ vm.min_tcb_microcode }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <p class="text-xs text-slate-400 mt-1">Minimum CPU microcode version (0 = no restriction)</p>
+                </div>
+            </div>
+        </div>
+
         <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow transition">Save Changes</button>
     </form>
     
