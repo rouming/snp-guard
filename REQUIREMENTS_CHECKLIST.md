@@ -21,11 +21,11 @@
 - [x] Can be included in initrd image
 
 ### 4. Attestation Service
-- [x] Verifies attestation reports from guests
+- [x] Verifies attestation reports from guests (via gRPC)
 - [x] Responds with success/failure
 - [x] Returns SECRET on successful attestation
 - [x] Management frontend for managing attestations
-- [x] API for future management tool integration
+- [x] API for future management tool integration (gRPC)
 
 ### 5. Communication Protocol
 - [x] HTTPS/TLS communication
@@ -36,7 +36,7 @@
 
 ### 6. Endpoints
 - [x] Management endpoint (web UI)
-- [x] Attestation endpoint (HTTPS API)
+- [x] Attestation endpoint (gRPC API)
 
 ### 7. Management Authentication
 - [x] Basic authorization (username/password)
@@ -96,7 +96,7 @@
 - [x] HTTPS/TLS connection (verified certificates)
 - [x] Service sends 64-byte nonce in first response
 - [x] Client generates report with nonce
-- [x] Service verifies report:
+- [x] Service verifies report (via gRPC):
   - [x] Extracts nonce from report (offset 0x50)
   - [x] Verifies nonce (matches stored, not expired)
   - [x] Detects CPU family from report (CPUID_FAM_ID/CPUID_MOD_ID)

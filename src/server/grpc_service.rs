@@ -1,5 +1,5 @@
 use tonic::{Request, Response, Status};
-use sea_orm::{DatabaseConnection, EntityTrait, Set, ActiveModelTrait, QueryOrder};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, QueryOrder, ColumnTrait};
 use entity::vm;
 use rand::RngCore;
 use rand::rngs::OsRng;
@@ -15,6 +15,7 @@ use common::snpguard::{
     *,
 };
 use crate::attestation::{AttestationState, NonceEntry};
+use crate::snpguest_wrapper;
 // snpguest wrapper not used directly in gRPC service paths
 
 pub struct GrpcServiceState {
@@ -72,11 +73,170 @@ impl AttestationService for AttestationServiceImpl {
         Ok(Response::new(NonceResponse { nonce }))
     }
 
-    async fn verify_report(&self, _request: Request<AttestationRequest>) -> Result<Response<AttestationResponse>, Status> {
-        // Delegate to HTTP handler's verify_report logic
-        // The HTTP endpoint already implements full verification
-        // For now, return unimplemented - HTTP endpoint should be used
-        Err(Status::unimplemented("Use HTTP /attestation/verify endpoint. Full gRPC implementation coming soon."))
+    async fn verify_report(&self, request: Request<AttestationRequest>) -> Result<Response<AttestationResponse>, Status> {
+
+const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
+        use tempfile::NamedTempFile;
+        use std::io::Write;
+        use std::path::Path;
+
+        let req = request.into_inner();
+        let report_data = req.report_data;
+
+        // 1. Check report length
+        if report_data.len() < 0x50 + 64 {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Report too short".to_string(),
+            };
+            return Ok(Response::new(response));
+        }
+
+        // 2. Extract and verify nonce (offset 0x50, 64 bytes)
+        let report_nonce = &report_data[0x50..0x50 + 64];
+
+        // Verify nonce was issued by us and not expired
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        {
+            let mut nonces = self.state.attestation_state.nonces.lock().unwrap();
+            let mut nonce_found = false;
+
+            // Find matching nonce
+            nonces.retain(|_, entry| {
+                if entry.nonce == report_nonce {
+                    let age = now.saturating_sub(entry.created_at);
+                    if age <= NONCE_EXPIRY_SECONDS {
+                        nonce_found = true;
+                        false // Remove after use (one-time nonce)
+                    } else {
+                        false // Expired, remove
+                    }
+                } else {
+                    // Keep non-expired nonces
+                    now.saturating_sub(entry.created_at) <= NONCE_EXPIRY_SECONDS
+                }
+            });
+
+            if !nonce_found {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Invalid or expired nonce".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+        }
+
+        // 3. Detect CPU family from report
+        let cpu_family = match crate::attestation::detect_cpu_family(&report_data) {
+            Ok(family) => {
+                // Use hint if provided, otherwise use detected
+                if !req.cpu_family_hint.is_empty() {
+                    req.cpu_family_hint.clone()
+                } else {
+                    family
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to detect CPU family: {}", e);
+                if !req.cpu_family_hint.is_empty() {
+                    req.cpu_family_hint.clone()
+                } else {
+                    "genoa".to_string() // Default fallback
+                }
+            }
+        };
+
+        // 4. Dump report to disk for verification tools
+        let mut temp_report = match NamedTempFile::new() {
+            Ok(f) => f,
+            Err(_) => return Ok(Response::new(AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Failed to create temporary file".to_string(),
+            })),
+        };
+        if temp_report.write_all(&report_data).is_err() {
+            return Ok(Response::new(AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Failed to write report to temporary file".to_string(),
+            }));
+        }
+        let report_path = temp_report.path();
+
+        // 5. Verify signature (uses temporary certs directory internally)
+        if let Err(e) = snpguest_wrapper::verify_report_signature(report_path, Path::new(""), &cpu_family) {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!("Signature verification failed: {}", e),
+            };
+            return Ok(Response::new(response));
+        }
+
+        // 6. Extract key digests (0xE0 and 0x110, 48 bytes each)
+        if report_data.len() < 0x110 + 48 {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Report too short for key digests".to_string(),
+            };
+            return Ok(Response::new(response));
+        }
+
+        let id_digest = &report_data[0xE0..0xE0 + 48];
+        let auth_digest = &report_data[0x110..0x110 + 48];
+
+        // 7. DB lookup
+        let record = match vm::Entity::find()
+            .filter(vm::Column::IdKeyDigest.eq(id_digest))
+            .filter(vm::Column::AuthKeyDigest.eq(auth_digest))
+            .one(&self.state.attestation_state.db)
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => return Ok(Response::new(AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Database error".to_string(),
+            })),
+        };
+
+        if let Some(vm) = record {
+            if !vm.enabled {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Attestation record is disabled".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+
+            // Success! Update request count
+            let mut active: vm::ActiveModel = vm.clone().into();
+            active.request_count = Set(vm.request_count + 1);
+            let _ = active.update(&self.state.attestation_state.db).await;
+
+            let response = AttestationResponse {
+                success: true,
+                secret: vm.secret.into_bytes(),
+                error_message: String::new(),
+            };
+            Ok(Response::new(response))
+        } else {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "No matching attestation record found".to_string(),
+            };
+            Ok(Response::new(response))
+        }
     }
 }
 

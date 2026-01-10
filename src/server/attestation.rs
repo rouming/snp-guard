@@ -60,7 +60,7 @@ where
 /// Extract CPU family from attestation report
 /// Based on CPUID_FAM_ID (offset 0x188, 8 bits) and CPUID_MOD_ID (offset 0x189, 8 bits)
 #[allow(unused)]
-fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
+pub fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
     if report_data.len() < 0x18A {
         return Err("Report too short".to_string());
     }
@@ -100,7 +100,11 @@ pub async fn get_nonce_handler(
 
     let req = match NonceRequest::decode(&body_bytes[..]) {
         Ok(r) => r,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Failed to decode request").into_response(),
+        Err(_) => return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("Failed to decode request"))
+            .unwrap(),
     };
     
     // Use cryptographically secure RNG
@@ -144,22 +148,36 @@ pub async fn get_nonce_handler(
     let response = NonceResponse { nonce };
     let mut response_bytes = Vec::new();
     if response.encode(&mut response_bytes).is_err() {
-        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response();
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("Internal server error"))
+            .unwrap();
     }
-    
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/x-protobuf")],
-        response_bytes,
-    ).into_response()
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-protobuf")
+        .body(Body::from(response_bytes))
+        .unwrap()
 }
 
 /// Handler for /attestation/verify - Verify attestation report
-#[allow(unused)]
 pub async fn verify_report_handler(
     Extension(state): Extension<Arc<AttestationState>>,
-    RawBody(body_bytes): RawBody,
-) -> impl IntoResponse {
+    req: Request<Body>,
+) -> Response<Body> {
+    use axum::body::to_bytes;
+
+    let (_parts, body) = req.into_parts();
+    let body_bytes = match to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(_) => return encode_response(AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Failed to read request body".to_string(),
+        }),
+    };
 
     let req = match AttestationRequest::decode(&body_bytes[..]) {
         Ok(r) => r,

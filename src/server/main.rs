@@ -74,7 +74,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Attestation API (HTTPS/TLS with protobuf) - calls gRPC internally
     let attestation_app = Router::new()
         .route("/attestation/nonce", post(attestation::get_nonce_handler))
-        // .route("/attestation/verify", post(attestation::verify_report_handler)) // TODO: Handler trait issue
         .layer(Extension(attestation_state))
         .layer(TraceLayer::new_for_http());
 
@@ -94,14 +93,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("WARNING: Direct TLS in axum is complex. Consider using a reverse proxy for production.");
         println!("For now, falling back to HTTP. Set up nginx/caddy for TLS termination.");
         println!("Management UI listening on http://{}", addr);
-        println!("Attestation endpoints: POST /attestation/nonce, POST /attestation/verify");
+                println!("Attestation endpoints: POST /attestation/nonce (verify via gRPC)");
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
     } else {
         // HTTP mode (for development)
         println!("WARNING: Running in HTTP mode (no TLS). Set TLS_CERT and TLS_KEY for production.");
         println!("Management UI listening on http://{}", addr);
-        println!("Attestation endpoints: POST /attestation/nonce, POST /attestation/verify");
+                println!("Attestation endpoints: POST /attestation/nonce (verify via gRPC)");
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
     }
