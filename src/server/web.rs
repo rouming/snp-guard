@@ -1,14 +1,12 @@
 use axum::{
     extract::{Extension, Path, Multipart},
     response::{Html, IntoResponse, Redirect},
-    Form,
     body::Body,
 };
 use tokio_util::io::ReaderStream;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryOrder, ActiveModelTrait, Set};
 use askama::Template;
 use entity::vm;
-use serde::Deserialize;
 use uuid::Uuid;
 use std::path::PathBuf;
 use std::fs;
@@ -29,10 +27,18 @@ struct EditTemplate { vm: vm::Model }
 
 pub async fn index(Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
     let vms = vm::Entity::find().order_by_asc(vm::Column::OsName).all(&db).await.unwrap_or_default();
-    Html(IndexTemplate { vms }.render().unwrap())
+    match (IndexTemplate { vms }).render() {
+        Ok(html) => Html(html),
+        Err(e) => Html(format!("Template error: {}", e)),
+    }
 }
 
-pub async fn create_form() -> impl IntoResponse { Html(CreateTemplate {}.render().unwrap()) }
+pub async fn create_form() -> impl IntoResponse {
+    match (CreateTemplate {}).render() {
+        Ok(html) => Html(html),
+        Err(e) => Html(format!("Template error: {}", e)),
+    }
+}
 
 pub async fn create_action(Extension(db): Extension<DatabaseConnection>, mut multipart: Multipart) -> impl IntoResponse {
     let new_id = Uuid::new_v4().to_string();
@@ -131,8 +137,11 @@ pub async fn create_action(Extension(db): Extension<DatabaseConnection>, mut mul
 }
 
 pub async fn view_record(Path(id): Path<String>, Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
-    let vm = vm::Entity::find_by_id(id).one(&db).await.unwrap().unwrap();
-    Html(EditTemplate { vm }.render().unwrap())
+    let vm = vm::Entity::find_by_id(id.clone()).one(&db).await.unwrap().unwrap();
+    match (EditTemplate { vm }).render() {
+        Ok(html) => Html(html),
+        Err(e) => Html(format!("Template error: {}", e)),
+    }
 }
 
 pub async fn update_action(
@@ -140,8 +149,9 @@ pub async fn update_action(
     Extension(db): Extension<DatabaseConnection>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let vm = vm::Entity::find_by_id(id).one(&db).await.unwrap().unwrap();
-    let artifact_dir = PathBuf::from("artifacts").join(&id);
+    let id_clone = id.clone();
+    let vm = vm::Entity::find_by_id(id.clone()).one(&db).await.unwrap().unwrap();
+    let artifact_dir = PathBuf::from("artifacts").join(&id_clone);
     
     let mut os_name = vm.os_name.clone();
     let mut secret = vm.secret.clone();
@@ -261,7 +271,7 @@ pub async fn update_action(
                     active.auth_key_digest = Set(auth_digest);
                     active.kernel_params = Set(full_params.clone());
                     active.update(&db).await.unwrap();
-                    return Redirect::to(&format!("/view/{}", id)).into_response();
+                    return Redirect::to(&format!("/view/{}", id_clone)).into_response();
                 }
             }
         }
@@ -274,7 +284,7 @@ pub async fn update_action(
     active.enabled = Set(enabled);
     active.kernel_params = Set(full_params);
     active.update(&db).await.unwrap();
-    Redirect::to(&format!("/view/{}", id)).into_response()
+    Redirect::to(&format!("/view/{}", id_clone)).into_response()
 }
 
 pub async fn toggle_enabled(
@@ -282,16 +292,18 @@ pub async fn toggle_enabled(
     Extension(db): Extension<DatabaseConnection>,
 ) -> impl IntoResponse {
     if let Some(vm) = vm::Entity::find_by_id(id).one(&db).await.unwrap() {
+        let current_enabled = vm.enabled;
         let mut active: vm::ActiveModel = vm.into();
-        active.enabled = Set(!active.enabled.clone().unwrap_or(true));
+        active.enabled = Set(!current_enabled);
         active.update(&db).await.unwrap();
     }
     Redirect::to("/")
 }
 
 pub async fn delete_action(Path(id): Path<String>, Extension(db): Extension<DatabaseConnection>) -> impl IntoResponse {
+    let id_clone = id.clone();
     vm::Entity::delete_by_id(&id).exec(&db).await.unwrap();
-    let _ = fs::remove_dir_all(PathBuf::from("artifacts").join(id));
+    let _ = fs::remove_dir_all(PathBuf::from("artifacts").join(id_clone));
     Redirect::to("/")
 }
 
@@ -335,7 +347,11 @@ pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) ->
         Ok(file) => {
             let stream = ReaderStream::new(file);
             let body = Body::from_stream(stream);
-            let headers = [("Content-Type", "application/octet-stream"), ("Content-Disposition", format!("attachment; filename=\"{}\"", file_name).as_str())];
+            let content_disposition = format!("attachment; filename=\"{}\"", file_name);
+            use axum::http::HeaderMap;
+            let mut headers = HeaderMap::new();
+            headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
+            headers.insert("Content-Disposition", content_disposition.parse().unwrap());
             (headers, body).into_response()
         },
         Err(_) => "File not found".into_response()

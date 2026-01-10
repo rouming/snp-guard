@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="flex justify-between items-center mb-8">
+    <h2 class="text-3xl font-bold text-slate-800">Attestation Records</h2>
+    <a href="/create" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg shadow transition font-medium">+ Create New Record</a>
+</div>
+<div class="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+    <table class="min-w-full">
+        <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">Status</th>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">OS Name</th>
+                <th class="py-4 px-6 text-left text-sm font-semibold text-slate-600 uppercase">Requests</th>
+                <th class="py-4 px-6 text-right text-sm font-semibold text-slate-600 uppercase">Actions</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+        {% for vm in vms %}
+            <tr class="hover:bg-slate-50 transition">
+                <td class="py-4 px-6">
+                    {% if vm.enabled %}
+                        <span class="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold">Enabled</span>
+                    {% else %}
+                        <span class="inline-flex items-center px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold">Disabled</span>
+                    {% endif %}
+                </td>
+                <td class="py-4 px-6 font-semibold text-slate-800">{{ vm.os_name }}</td>
+                <td class="py-4 px-6 text-slate-600">{{ vm.request_count }}</td>
+                <td class="py-4 px-6 text-right">
+                    <a href="/view/{{ vm.id }}" class="text-blue-600 hover:underline font-semibold text-sm mr-4">View</a>
+                    <a href="/delete/{{ vm.id }}" class="text-red-600 hover:underline font-semibold text-sm">Delete</a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -83,25 +83,58 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-pub fn verify_report_signature(report_path: &Path, certs_dir: &Path, cpu_family: &str) -> Result<()> {
+pub fn verify_report_signature(report_path: &Path, _certs_dir: &Path, cpu_family: &str) -> Result<()> {
+    // Create temporary directory for certificates
+    let temp_dir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
+    let certs_dir = temp_dir.path();
+    
     // Requires snpguest 0.4+ 
-    let _ = std::fs::create_dir_all(certs_dir);
-
     // 1. Fetch CA
-    let status = Command::new("snpguest").arg("fetch").arg("ca").arg("pem").arg(cpu_family).arg(certs_dir).status()?;
-    if !status.success() { return Err(anyhow!("Failed to fetch CA")); }
+    let status = Command::new("snpguest")
+        .arg("fetch")
+        .arg("ca")
+        .arg("pem")
+        .arg(cpu_family)
+        .arg(certs_dir)
+        .status()?;
+    if !status.success() { 
+        return Err(anyhow!("Failed to fetch CA certificates")); 
+    }
 
     // 2. Fetch VCEK (Needs report to identify chip)
-    let status = Command::new("snpguest").arg("fetch").arg("vcek").arg("pem").arg(cpu_family).arg(certs_dir).arg(report_path).status()?;
-    if !status.success() { return Err(anyhow!("Failed to fetch VCEK")); }
+    let status = Command::new("snpguest")
+        .arg("fetch")
+        .arg("vcek")
+        .arg("pem")
+        .arg(cpu_family)
+        .arg(certs_dir)
+        .arg(report_path)
+        .status()?;
+    if !status.success() { 
+        return Err(anyhow!("Failed to fetch VCEK certificate")); 
+    }
 
     // 3. Verify Certs
-    let status = Command::new("snpguest").arg("verify").arg("certs").arg(certs_dir).status()?;
-    if !status.success() { return Err(anyhow!("Failed to verify certs")); }
+    let status = Command::new("snpguest")
+        .arg("verify")
+        .arg("certs")
+        .arg(certs_dir)
+        .status()?;
+    if !status.success() { 
+        return Err(anyhow!("Failed to verify certificate chain")); 
+    }
 
     // 4. Verify Attestation
-    let status = Command::new("snpguest").arg("verify").arg("attestation").arg(certs_dir).arg(report_path).status()?;
-    if !status.success() { return Err(anyhow!("Failed to verify attestation signature")); }
+    let status = Command::new("snpguest")
+        .arg("verify")
+        .arg("attestation")
+        .arg(certs_dir)
+        .arg(report_path)
+        .status()?;
+    if !status.success() { 
+        return Err(anyhow!("Failed to verify attestation report signature")); 
+    }
 
+    // Temp directory will be automatically cleaned up when dropped
     Ok(())
 }

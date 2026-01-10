@@ -1,9 +1,12 @@
 use axum::{
-    extract::Extension,
-    response::Response,
+    async_trait,
+    extract::{Extension, FromRequest},
+    response::{IntoResponse, Response},
+    http::{StatusCode, header, Request},
     body::Body,
-    http::{StatusCode, header},
 };
+use axum::body::Bytes;
+use axum::body::to_bytes;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
 use entity::vm;
 use rand::RngCore;
@@ -12,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use prost::Message;
@@ -21,9 +23,9 @@ use common::snpguard::{NonceRequest, NonceResponse, AttestationRequest, Attestat
 use crate::snpguest_wrapper;
 
 #[derive(Clone)]
-struct NonceEntry {
-    nonce: Vec<u8>,
-    created_at: u64, // Unix timestamp
+pub struct NonceEntry {
+    pub nonce: Vec<u8>,
+    pub created_at: u64, // Unix timestamp
 }
 
 pub struct AttestationState {
@@ -33,6 +35,24 @@ pub struct AttestationState {
 
 const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
 const MAX_NONCES: usize = 10000; // Prevent memory exhaustion
+
+/// Custom extractor to capture full request body as bytes
+struct RawBytes(Bytes);
+
+#[axum::async_trait]
+impl<S> FromRequest<S, Body> for RawBytes
+where
+    S: Send + Sync,
+{
+    type Rejection = StatusCode;
+
+    async fn from_request(req: Request<Body>, _state: &S) -> Result<Self, Self::Rejection> {
+        match to_bytes(req.into_body(), usize::MAX).await {
+            Ok(b) => Ok(RawBytes(b)),
+            Err(_) => Err(StatusCode::BAD_REQUEST),
+        }
+    }
+}
 
 /// Extract CPU family from attestation report
 /// Based on CPUID_FAM_ID (offset 0x188, 8 bits) and CPUID_MOD_ID (offset 0x189, 8 bits)
@@ -52,30 +72,38 @@ fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
         (0x1A, 0x90..=0xAF) | (0x1A, 0xC0..=0xCF) => Ok("turin".to_string()),
         (0x19, 0x00..=0x0F) => Ok("milan".to_string()),
         _ => {
-            // Default to genoa if unknown
-            eprintln!("Unknown CPU family: {:02x} model: {:02x}, defaulting to genoa", family_id, model_id);
-            Ok("genoa".to_string())
+            // Fallback: try to detect from family/model ranges
+            if family_id == 0x1A {
+                if (model_id >= 0x90 && model_id <= 0xAF) || (model_id >= 0xC0 && model_id <= 0xCF) {
+                    Ok("turin".to_string())
+                } else {
+                    Ok("genoa".to_string())
+                }
+            } else if family_id == 0x19 {
+                Ok("milan".to_string())
+            } else {
+                Ok("genoa".to_string())
+            }
         }
     }
 }
 
-/// POST /attestation/nonce - Get a random 64-byte nonce
-pub async fn get_nonce(
+/// Handler for /attestation/nonce - Get a random 64-byte nonce
+pub async fn get_nonce_handler(
     Extension(state): Extension<Arc<AttestationState>>,
-    body: Body,
-) -> Result<Response<Body>, StatusCode> {
-    let body_bytes = axum::body::to_bytes(body, usize::MAX).await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    
-    let request = NonceRequest::decode(&body_bytes[..])
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    RawBytes(body_bytes): RawBytes,
+) -> impl IntoResponse {
+    let req = match NonceRequest::decode(&body_bytes[..]) {
+        Ok(r) => r,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Failed to decode request").into_response(),
+    };
     
     // Use cryptographically secure RNG
     let mut rng = OsRng;
     let mut nonce = vec![0u8; 64];
     rng.fill_bytes(&mut nonce);
     
-    let vm_id = request.vm_id;
+    let vm_id = req.vm_id;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -110,28 +138,32 @@ pub async fn get_nonce(
     
     let response = NonceResponse { nonce };
     let mut response_bytes = Vec::new();
-    response.encode(&mut response_bytes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if response.encode(&mut response_bytes).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response();
+    }
     
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/x-protobuf")
-        .body(Body::from(response_bytes))
-        .unwrap())
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/x-protobuf")],
+        response_bytes,
+    ).into_response()
 }
 
-/// POST /attestation/verify - Verify attestation report
-pub async fn verify_report(
+/// Handler for /attestation/verify - Verify attestation report
+pub async fn verify_report_handler(
     Extension(state): Extension<Arc<AttestationState>>,
-    body: Body,
-) -> Result<Response<Body>, StatusCode> {
-    let body_bytes = axum::body::to_bytes(body, usize::MAX).await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    RawBytes(body_bytes): RawBytes,
+) -> impl IntoResponse {
+    let req = match AttestationRequest::decode(&body_bytes[..]) {
+        Ok(r) => r,
+        Err(_) => return encode_response(AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Failed to decode request".to_string(),
+        }),
+    };
     
-    let request = AttestationRequest::decode(&body_bytes[..])
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    
-    let report_data = request.report_data;
+    let report_data = req.report_data;
     
     // 1. Check report length
     if report_data.len() < 0x50 + 64 {
@@ -184,16 +216,16 @@ pub async fn verify_report(
     let cpu_family = match detect_cpu_family(&report_data) {
         Ok(family) => {
             // Use hint if provided, otherwise use detected
-            if !request.cpu_family_hint.is_empty() {
-                request.cpu_family_hint.clone()
+            if !req.cpu_family_hint.is_empty() {
+                req.cpu_family_hint.clone()
             } else {
                 family
             }
         }
         Err(e) => {
             eprintln!("Failed to detect CPU family: {}", e);
-            if !request.cpu_family_hint.is_empty() {
-                request.cpu_family_hint.clone()
+            if !req.cpu_family_hint.is_empty() {
+                req.cpu_family_hint.clone()
             } else {
                 "genoa".to_string() // Default fallback
             }
@@ -201,15 +233,25 @@ pub async fn verify_report(
     };
     
     // 4. Dump report to disk for verification tools
-    let mut temp_report = NamedTempFile::new()
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    temp_report.write_all(&report_data)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut temp_report = match NamedTempFile::new() {
+        Ok(f) => f,
+        Err(_) => return encode_response(AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Failed to create temporary file".to_string(),
+        }),
+    };
+    if temp_report.write_all(&report_data).is_err() {
+        return encode_response(AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Failed to write report to temporary file".to_string(),
+        });
+    }
     let report_path = temp_report.path();
     
-    // 5. Verify signature
-    let certs_dir = Path::new("./certs");
-    if let Err(e) = snpguest_wrapper::verify_report_signature(report_path, certs_dir, &cpu_family) {
+    // 5. Verify signature (uses temporary certs directory internally)
+    if let Err(e) = snpguest_wrapper::verify_report_signature(report_path, Path::new(""), &cpu_family) {
         let response = AttestationResponse {
             success: false,
             secret: vec![],
@@ -232,12 +274,19 @@ pub async fn verify_report(
     let auth_digest = &report_data[0x110..0x110 + 48];
     
     // 7. DB lookup
-    let record = vm::Entity::find()
+    let record = match vm::Entity::find()
         .filter(vm::Column::IdKeyDigest.eq(id_digest))
         .filter(vm::Column::AuthKeyDigest.eq(auth_digest))
         .one(&state.db)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        Ok(r) => r,
+        Err(_) => return encode_response(AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Database error".to_string(),
+        }),
+    };
     
     if let Some(vm) = record {
         if !vm.enabled {
@@ -270,14 +319,19 @@ pub async fn verify_report(
     encode_response(response)
 }
 
-fn encode_response(response: AttestationResponse) -> Result<Response<Body>, StatusCode> {
+fn encode_response(response: AttestationResponse) -> Response<Body> {
     let mut response_bytes = Vec::new();
-    response.encode(&mut response_bytes)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if response.encode(&mut response_bytes).is_err() {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("Internal server error"))
+            .unwrap();
+    }
     
-    Ok(Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/x-protobuf")
         .body(Body::from(response_bytes))
-        .unwrap())
+        .unwrap()
 }

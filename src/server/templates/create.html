@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-md border border-slate-200">
+    <h2 class="text-2xl font-bold mb-8 text-slate-800 border-b pb-4">Create Attestation Record</h2>
+    <form action="/create" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="space-y-5">
+            <h3 class="font-bold text-lg text-slate-700">Configuration</h3>
+            <div><label class="block text-sm font-medium mb-1">OS Name</label><input type="text" name="os_name" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
+            <div><label class="block text-sm font-medium mb-1">Service URL</label><input type="text" name="service_url" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
+            <div><label class="block text-sm font-medium mb-1">Disk Secret</label><input type="text" name="secret" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
+            <div class="grid grid-cols-2 gap-4">
+                <div><label class="block text-sm font-medium mb-1">vCPUs</label><input type="number" name="vcpus" value="4" class="w-full border-slate-300 rounded-lg shadow-sm"></div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Type</label>
+                    <select name="vcpu_type" class="w-full border-slate-300 rounded-lg shadow-sm">
+                        <option value="EPYC">EPYC</option><option value="EPYC-Milan">EPYC-Milan</option><option value="EPYC-Rome">EPYC-Rome</option><option value="EPYC-Genoa">EPYC-Genoa</option>
+                    </select>
+                </div>
+            </div>
+            <div><label class="block text-sm font-medium mb-1">Kernel Params</label><textarea name="kernel_params" rows="3" class="w-full border-slate-300 rounded-lg shadow-sm font-mono text-sm">console=ttyS0</textarea></div>
+        </div>
+        <div class="space-y-5 bg-slate-50 p-6 rounded-lg border border-slate-200">
+            <h3 class="font-bold text-lg text-slate-700">Artifacts</h3>
+            <div><label class="block text-sm font-bold">ID Block Key</label><input type="file" name="id_key" required class="block w-full text-sm"></div>
+            <div><label class="block text-sm font-bold">Auth Block Key</label><input type="file" name="auth_key" required class="block w-full text-sm"></div>
+            <hr>
+            <div><label class="block text-sm font-bold">Firmware</label><input type="file" name="firmware" required class="block w-full text-sm"></div>
+            <div><label class="block text-sm font-bold">Kernel</label><input type="file" name="kernel" required class="block w-full text-sm"></div>
+            <div><label class="block text-sm font-bold">Initrd</label><input type="file" name="initrd" required class="block w-full text-sm"></div>
+        </div>
+        <div class="md:col-span-2 pt-6"><button type="submit" class="w-full bg-blue-900 hover:bg-blue-800 text-white font-bold py-3 rounded-lg shadow-lg">Generate & Save</button></div>
+    </form>
+</div>
+{% endblock %}

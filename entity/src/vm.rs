@@ -12,10 +12,10 @@ pub struct Model {
     pub vcpu_type: String,
     pub enabled: bool,           // Enable/Disable flag
 
-    #[sea_orm(column_type = "Binary")]
+    #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,
     
-    #[sea_orm(column_type = "Binary")]
+    #[sea_orm(column_type = "Binary(48)")]
     pub auth_key_digest: Vec<u8>,
     
     pub created_at: DateTime,

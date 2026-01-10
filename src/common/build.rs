@@ -1,7 +1,11 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Compiles proto to OUT_DIR using prost
-    prost_build::Config::new()
-        .out_dir("src")
-        .compile_protos(&["../../protos/attestation.proto"], &["../../protos"])?;
+    // Generate both prost messages and tonic gRPC services
+    // tonic-build generates both the gRPC service traits and prost message types
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(false)  // Only build server code
+        .out_dir(std::env::var("OUT_DIR")?)
+        .compile(&["../../protos/attestation.proto"], &["../../protos"])?;
+    
     Ok(())
 }
