@@ -223,6 +223,50 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
         };
 
         if let Some(vm) = record {
+            // 9. Extract and verify policy flags
+            if report_data.len() < 0x08 + 8 {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Report too short for policy".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+
+            let policy_bytes = &report_data[0x08..0x08 + 8];
+            let policy = u64::from_le_bytes(policy_bytes.try_into().unwrap());
+
+            // Extract policy bits (bit 19 = debug, bit 18 = migrate_ma, bit 16 = smt)
+            let report_debug = (policy & (1 << 19)) != 0;
+            let report_migrate_ma = (policy & (1 << 18)) != 0;
+            let report_smt = (policy & (1 << 16)) != 0;
+
+            // Check policy flags against allowed settings
+            if report_debug && !vm.allowed_debug {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Debug mode not allowed by policy".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+            if report_migrate_ma && !vm.allowed_migrate_ma {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Migration with MA not allowed by policy".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+            if report_smt && !vm.allowed_smt {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Simultaneous Multithreading not allowed by policy".to_string(),
+                };
+                return Ok(Response::new(response));
+            }
+
             if !vm.enabled {
                 let response = AttestationResponse {
                     success: false,
@@ -282,6 +326,9 @@ impl ManagementService for ManagementServiceImpl {
                 kernel_path: vm.kernel_path,
                 initrd_path: vm.initrd_path,
                 image_id: vm.image_id,
+                allowed_debug: vm.allowed_debug,
+                allowed_migrate_ma: vm.allowed_migrate_ma,
+                allowed_smt: vm.allowed_smt,
             })
             .collect();
         
@@ -308,6 +355,9 @@ impl ManagementService for ManagementServiceImpl {
             kernel_path: vm.kernel_path,
             initrd_path: vm.initrd_path,
             image_id: vm.image_id,
+            allowed_debug: vm.allowed_debug,
+            allowed_migrate_ma: vm.allowed_migrate_ma,
+            allowed_smt: vm.allowed_smt,
         });
         
         Ok(Response::new(GetRecordResponse { record: proto_record }))
@@ -328,6 +378,9 @@ impl ManagementService for ManagementServiceImpl {
             vcpu_type: req.vcpu_type,
             service_url: req.service_url,
             secret: req.secret,
+            allowed_debug: req.allowed_debug,
+            allowed_migrate_ma: req.allowed_migrate_ma,
+            allowed_smt: req.allowed_smt,
         };
 
         match business_logic::create_record_logic(&self.state.attestation_state.db, create_req).await {
@@ -359,6 +412,9 @@ impl ManagementService for ManagementServiceImpl {
             service_url: req.service_url,
             secret: req.secret,
             enabled: req.enabled,
+            allowed_debug: req.allowed_debug,
+            allowed_migrate_ma: req.allowed_migrate_ma,
+            allowed_smt: req.allowed_smt,
         };
 
         match business_logic::update_record_logic(&self.state.attestation_state.db, update_req).await {

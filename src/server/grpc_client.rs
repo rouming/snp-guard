@@ -38,6 +38,9 @@ pub async fn create_record(
     vcpu_type: String,
     service_url: String,
     secret: String,
+    allowed_debug: bool,
+    allowed_migrate_ma: bool,
+    allowed_smt: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut client = create_management_client().await?;
     let request = tonic::Request::new(CreateRecordRequest {
@@ -52,6 +55,9 @@ pub async fn create_record(
         vcpu_type,
         service_url,
         secret,
+        allowed_debug,
+        allowed_migrate_ma,
+        allowed_smt,
     });
     let response = client.create_record(request).await?;
     let result = response.into_inner();
@@ -75,6 +81,9 @@ pub async fn update_record(
     service_url: Option<String>,
     secret: Option<String>,
     enabled: Option<bool>,
+    allowed_debug: Option<bool>,
+    allowed_migrate_ma: Option<bool>,
+    allowed_smt: Option<bool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = create_management_client().await?;
     let request = tonic::Request::new(UpdateRecordRequest {
@@ -91,6 +100,9 @@ pub async fn update_record(
         service_url,
         secret,
         enabled,
+        allowed_debug,
+        allowed_migrate_ma,
+        allowed_smt,
     });
     let response = client.update_record(request).await?;
     let result = response.into_inner();

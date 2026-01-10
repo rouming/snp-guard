@@ -51,6 +51,9 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
     let mut vcpu_type = String::new();
     let mut kernel_params = String::new();
     let mut service_url = String::new();
+    let mut allowed_debug = false;
+    let mut allowed_migrate_ma = false;
+    let mut allowed_smt = true; // Default to true
     let mut id_key: Option<Vec<u8>> = None;
     let mut auth_key: Option<Vec<u8>> = None;
     let mut firmware: Option<Vec<u8>> = None;
@@ -93,6 +96,9 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
                 "vcpu_type" => vcpu_type = txt,
                 "kernel_params" => kernel_params = txt,
                 "service_url" => service_url = txt,
+                "allowed_debug" => allowed_debug = txt == "true",
+                "allowed_migrate_ma" => allowed_migrate_ma = txt == "true",
+                "allowed_smt" => allowed_smt = txt == "true",
                 _ => {}
             }
         }
@@ -117,6 +123,9 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
         vcpu_type,
         service_url,
         secret,
+        allowed_debug,
+        allowed_migrate_ma,
+        allowed_smt,
     ).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Creating Record</h1><p>{}</p>", e)).into_response(),
@@ -155,6 +164,9 @@ pub async fn update_action(
     let mut vcpu_type = Some(current_record.vcpu_type);
     let mut kernel_params = Some(current_record.kernel_params.clone());
     let mut service_url = None;
+    let mut allowed_debug = Some(current_record.allowed_debug);
+    let mut allowed_migrate_ma = Some(current_record.allowed_migrate_ma);
+    let mut allowed_smt = Some(current_record.allowed_smt);
     let mut id_key: Option<Vec<u8>> = None;
     let mut auth_key: Option<Vec<u8>> = None;
     let mut firmware: Option<Vec<u8>> = None;
@@ -205,6 +217,9 @@ pub async fn update_action(
                 "vcpu_type" => vcpu_type = Some(txt),
                 "kernel_params" => kernel_params = Some(txt),
                 "service_url" => service_url = Some(txt),
+                "allowed_debug" => allowed_debug = Some(txt == "true"),
+                "allowed_migrate_ma" => allowed_migrate_ma = Some(txt == "true"),
+                "allowed_smt" => allowed_smt = Some(txt == "true"),
                 _ => {}
             }
         }
@@ -224,6 +239,9 @@ pub async fn update_action(
         service_url,
         secret,
         enabled,
+        allowed_debug,
+        allowed_migrate_ma,
+        allowed_smt,
     ).await {
         Ok(_) => Redirect::to(&format!("/view/{}", id)).into_response(),
         Err(e) => Html(format!("<h1>Error Updating Record</h1><p>{}</p>", e)).into_response(),

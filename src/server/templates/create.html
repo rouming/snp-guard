@@ -19,6 +19,32 @@
             </div>
             <div><label class="block text-sm font-medium mb-1">Kernel Params</label><textarea name="kernel_params" rows="3" class="w-full border-slate-300 rounded-lg shadow-sm font-mono text-sm">console=ttyS0</textarea></div>
         </div>
+        <div class="space-y-5 bg-amber-50 p-6 rounded-lg border border-amber-200">
+            <h3 class="font-bold text-lg text-slate-700">Policy Flags</h3>
+            <div class="grid grid-cols-1 gap-4">
+                <div class="flex items-center">
+                    <input type="checkbox" id="allowed_debug" name="allowed_debug" value="true" class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    <label for="allowed_debug" class="text-sm font-medium text-gray-700">
+                        Allow Debug Mode
+                        <span class="text-xs text-gray-500 block">Permits VM debug operations</span>
+                    </label>
+                </div>
+                <div class="flex items-center">
+                    <input type="checkbox" id="allowed_migrate_ma" name="allowed_migrate_ma" value="true" class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    <label for="allowed_migrate_ma" class="text-sm font-medium text-gray-700">
+                        Allow Migration with MA
+                        <span class="text-xs text-gray-500 block">Permits VM migration with Migration Agent</span>
+                    </label>
+                </div>
+                <div class="flex items-center">
+                    <input type="checkbox" id="allowed_smt" name="allowed_smt" value="true" checked class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    <label for="allowed_smt" class="text-sm font-medium text-gray-700">
+                        Allow Simultaneous Multithreading
+                        <span class="text-xs text-gray-500 block">Permits SMT/hyperthreading</span>
+                    </label>
+                </div>
+            </div>
+        </div>
         <div class="space-y-5 bg-slate-50 p-6 rounded-lg border border-slate-200">
             <h3 class="font-bold text-lg text-slate-700">Artifacts</h3>
             <div><label class="block text-sm font-bold">ID Block Key</label><input type="file" name="id_key" required class="block w-full text-sm"></div>

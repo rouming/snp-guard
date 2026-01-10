@@ -15,6 +15,11 @@ pub struct Model {
     #[sea_orm(column_type = "Binary(16)")]
     pub image_id: Vec<u8>,       // Image ID (UUID as 16 bytes) for attestation report matching
 
+    // Policy flags
+    pub allowed_debug: bool,     // Allow debug mode
+    pub allowed_migrate_ma: bool, // Allow migration with MA
+    pub allowed_smt: bool,       // Allow Simultaneous Multithreading
+
     #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,
     

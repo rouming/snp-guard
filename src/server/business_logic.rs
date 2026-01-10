@@ -18,6 +18,9 @@ pub struct CreateRecordRequest {
     pub vcpu_type: String,
     pub service_url: String,
     pub secret: String,
+    pub allowed_debug: bool,
+    pub allowed_migrate_ma: bool,
+    pub allowed_smt: bool,
 }
 
 #[derive(Debug)]
@@ -41,6 +44,9 @@ pub struct UpdateRecordRequest {
     pub service_url: Option<String>,
     pub secret: Option<String>,
     pub enabled: Option<bool>,
+    pub allowed_debug: Option<bool>,
+    pub allowed_migrate_ma: Option<bool>,
+    pub allowed_smt: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -123,6 +129,9 @@ pub async fn create_record_logic(
         created_at: Set(chrono::Utc::now().naive_utc()),
         enabled: Set(true),
         image_id: Set(image_id.as_bytes().to_vec()),
+        allowed_debug: Set(req.allowed_debug),
+        allowed_migrate_ma: Set(req.allowed_migrate_ma),
+        allowed_smt: Set(req.allowed_smt),
         kernel_params: Set(full_params),
         request_count: Set(0),
         firmware_path: Set("firmware-code.fd".into()),
@@ -260,9 +269,20 @@ pub async fn update_record_logic(
         active_model.enabled = Set(enabled);
     } else if req.os_name.is_none() && req.secret.is_none() && req.vcpus.is_none() &&
               req.vcpu_type.is_none() && !id_key_present && !auth_key_present &&
-              !firmware_present && !kernel_present && !initrd_present {
+              !firmware_present && !kernel_present && !initrd_present &&
+              req.allowed_debug.is_none() && req.allowed_migrate_ma.is_none() && req.allowed_smt.is_none() {
         // If no other changes, default enabled to false for checkbox behavior
         active_model.enabled = Set(false);
+    }
+
+    if let Some(allowed_debug) = req.allowed_debug {
+        active_model.allowed_debug = Set(allowed_debug);
+    }
+    if let Some(allowed_migrate_ma) = req.allowed_migrate_ma {
+        active_model.allowed_migrate_ma = Set(allowed_migrate_ma);
+    }
+    if let Some(allowed_smt) = req.allowed_smt {
+        active_model.allowed_smt = Set(allowed_smt);
     }
 
     if params_changed {
