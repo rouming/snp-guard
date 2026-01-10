@@ -1,0 +1,53 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Database files (SQLite)
+*.db
+*.db-*
+
+# Temporary files
+*.tmp
+*.temp
+
+# Artifacts directory (generated VM artifacts)
+artifacts/
+
+# Node modules (if any frontend tools are added later)
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Secrets and certificates (don't commit real ones)
+certs/*.pem
+certs/*.key
+!certs/README.md
+
+# Data directory (SQLite databases)
+data/
+
+# Backup files
+*.bak
+*.backup
