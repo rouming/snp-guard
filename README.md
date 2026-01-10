@@ -26,7 +26,7 @@ SnpGuard addresses these needs by providing:
 │                 │ <─────────────────────────────────── │  - Verifies     │
 │  snpguard-client│         Nonce + Attestation Report    │    Reports      │
 │                 │                                       │  - Releases     │
-│  Uses snpguest  │                                       │    Secrets      │
+│  Uses sev lib   │                                       │    Secrets      │
 │  tool           │                                       │  - Manages      │
 └─────────────────┘                                       │    Records      │
                                                           └──────────────────┘
@@ -295,7 +295,7 @@ message AttestationResponse {
 ### Client
 
 ```bash
-snpguard-client --url https://attestation-service.com
+snpguard-client --url https://attestation-service.com --image-id 1
 ```
 
 The client:

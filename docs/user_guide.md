@@ -198,19 +198,20 @@ Click **"Delete"** on the main page or record view page. This permanently remove
 You can also use the client tool directly (useful for testing):
 
 ```bash
-snpguard-client --url https://attest.example.com
+snpguard-client --url https://attest.example.com --image-id 1
 ```
 
 The client will:
 1. Request a nonce
 2. Generate an attestation report
-3. Send it for verification
-4. Output the secret to stdout on success
+3. Embed the specified image_id in the report
+4. Send it for verification
+5. Output the secret to stdout on success
 
 **Example** (piping secret to cryptsetup):
 
 ```bash
-SECRET=$(snpguard-client --url https://attest.example.com)
+SECRET=$(snpguard-client --url https://attest.example.com --image-id 1)
 echo -n "$SECRET" | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 ```
 

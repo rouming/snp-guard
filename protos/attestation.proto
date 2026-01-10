@@ -138,4 +138,5 @@ message AttestationRecord {
   string firmware_path = 9;
   string kernel_path = 10;
   string initrd_path = 11;
+  int64 image_id = 12;       // Image ID for attestation report matching
 }

@@ -14,6 +14,7 @@ pub fn generate_measurement_and_block(
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
+    image_id: i64,
 ) -> Result<()> {
     
     // 1. Calculate Measurement
@@ -40,7 +41,7 @@ pub fn generate_measurement_and_block(
 
     let measurement = String::from_utf8(output.stdout)?.trim().to_string();
 
-    // 2. Generate ID-Block and Auth-Block (without family-id and image-id)
+    // 2. Generate ID-Block and Auth-Block with image-id
     let status = Command::new(&snpguest_path)
         .arg("--quiet")
         .arg("generate")
@@ -48,6 +49,7 @@ pub fn generate_measurement_and_block(
         .arg(id_key)
         .arg(auth_key)
         .arg(measurement)
+        .arg("--image-id").arg(image_id.to_string())
         .arg("--id-file").arg(output_dir.join("id-block.bin"))
         .arg("--auth-file").arg(output_dir.join("id-auth.bin"))
         .status()?;

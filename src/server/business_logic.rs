@@ -54,6 +54,23 @@ pub async fn create_record_logic(
     req: CreateRecordRequest,
 ) -> Result<CreateRecordResponse, String> {
     let new_id = Uuid::new_v4().to_string();
+
+    // Generate next image_id (sequential integer)
+    let next_image_id = {
+        use entity::vm::Entity as Vm;
+        use sea_orm::{EntityTrait, QuerySelect, QueryOrder};
+        let max_id = Vm::find()
+            .select_only()
+            .column_as(entity::vm::Column::ImageId.max(), "max_id")
+            .into_tuple::<Option<i64>>()
+            .one(db)
+            .await
+            .map_err(|e| format!("Failed to get max image_id: {}", e))?
+            .flatten()
+            .unwrap_or(0);
+        max_id + 1
+    };
+
     let artifact_dir = PathBuf::from("artifacts").join(&new_id);
     fs::create_dir_all(&artifact_dir).map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 
@@ -94,6 +111,7 @@ pub async fn create_record_logic(
         &artifact_dir.join("id-block-key.pem"),
         &artifact_dir.join("id-auth-key.pem"),
         &artifact_dir,
+        next_image_id,
     ).map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
     // Get Digests
@@ -113,6 +131,7 @@ pub async fn create_record_logic(
         auth_key_digest: Set(auth_digest),
         created_at: Set(chrono::Utc::now().naive_utc()),
         enabled: Set(true),
+        image_id: Set(next_image_id),
         kernel_params: Set(full_params),
         request_count: Set(0),
         firmware_path: Set("firmware-code.fd".into()),
@@ -215,6 +234,7 @@ pub async fn update_record_logic(
             &id_key_path,
             &auth_key_path,
             &artifact_dir,
+            vm_model.image_id,
         ).map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
 
         // Update digests

@@ -181,7 +181,20 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
             return Ok(Response::new(response));
         }
 
-        // 6. Extract key digests (0xE0 and 0x110, 48 bytes each)
+        // 6. Extract image_id (0x20, 16 bytes)
+        if report_data.len() < 0x20 + 16 {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Report too short for image_id".to_string(),
+            };
+            return Ok(Response::new(response));
+        }
+
+        let image_id_bytes = &report_data[0x20..0x20 + 16];
+        let image_id = i64::from_le_bytes(image_id_bytes.try_into().unwrap());
+
+        // 7. Extract key digests (0xE0 and 0x110, 48 bytes each)
         if report_data.len() < 0x110 + 48 {
             let response = AttestationResponse {
                 success: false,
@@ -194,8 +207,9 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
         let id_digest = &report_data[0xE0..0xE0 + 48];
         let auth_digest = &report_data[0x110..0x110 + 48];
 
-        // 7. DB lookup
+        // 8. DB lookup by image_id and key digests
         let record = match vm::Entity::find()
+            .filter(vm::Column::ImageId.eq(image_id))
             .filter(vm::Column::IdKeyDigest.eq(id_digest))
             .filter(vm::Column::AuthKeyDigest.eq(auth_digest))
             .one(&self.state.attestation_state.db)
@@ -268,6 +282,7 @@ impl ManagementService for ManagementServiceImpl {
                 firmware_path: vm.firmware_path,
                 kernel_path: vm.kernel_path,
                 initrd_path: vm.initrd_path,
+                image_id: vm.image_id,
             })
             .collect();
         
@@ -293,6 +308,7 @@ impl ManagementService for ManagementServiceImpl {
             firmware_path: vm.firmware_path,
             kernel_path: vm.kernel_path,
             initrd_path: vm.initrd_path,
+            image_id: vm.image_id,
         });
         
         Ok(Response::new(GetRecordResponse { record: proto_record }))
