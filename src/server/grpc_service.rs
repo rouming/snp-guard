@@ -1,5 +1,5 @@
 use tonic::{Request, Response, Status};
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, QueryOrder};
+use sea_orm::{DatabaseConnection, EntityTrait, Set, ActiveModelTrait, QueryOrder};
 use entity::vm;
 use rand::RngCore;
 use rand::rngs::OsRng;
@@ -10,8 +10,8 @@ use std::fs;
 
 // Import service definitions
 use common::snpguard::{
-    attestation_service_server::{AttestationService, AttestationServiceServer},
-    management_service_server::{ManagementService, ManagementServiceServer},
+    attestation_service_server::{AttestationService},
+    management_service_server::{ManagementService},
     *,
 };
 use crate::attestation::{AttestationState, NonceEntry};
@@ -24,7 +24,7 @@ pub struct GrpcServiceState {
 
 // Attestation Service Implementation
 pub struct AttestationServiceImpl {
-    state: Arc<GrpcServiceState>,
+    pub state: Arc<GrpcServiceState>,
 }
 
 #[tonic::async_trait]
@@ -72,7 +72,7 @@ impl AttestationService for AttestationServiceImpl {
         Ok(Response::new(NonceResponse { nonce }))
     }
 
-    async fn verify_report(&self, request: Request<AttestationRequest>) -> Result<Response<AttestationResponse>, Status> {
+    async fn verify_report(&self, _request: Request<AttestationRequest>) -> Result<Response<AttestationResponse>, Status> {
         // Delegate to HTTP handler's verify_report logic
         // The HTTP endpoint already implements full verification
         // For now, return unimplemented - HTTP endpoint should be used
@@ -82,7 +82,7 @@ impl AttestationService for AttestationServiceImpl {
 
 // Management Service Implementation
 pub struct ManagementServiceImpl {
-    state: Arc<GrpcServiceState>,
+    pub state: Arc<GrpcServiceState>,
 }
 
 #[tonic::async_trait]
@@ -137,8 +137,8 @@ impl ManagementService for ManagementServiceImpl {
         Ok(Response::new(GetRecordResponse { record: proto_record }))
     }
 
-    async fn create_record(&self, request: Request<CreateRecordRequest>) -> Result<Response<CreateRecordResponse>, Status> {
-        let req = request.into_inner();
+    async fn create_record(&self, _request: Request<CreateRecordRequest>) -> Result<Response<CreateRecordResponse>, Status> {
+        let _req = _request.into_inner();
         
         // Implementation similar to web::create_action but via gRPC
         // This would need to handle file uploads, generate blocks, etc.
@@ -146,9 +146,9 @@ impl ManagementService for ManagementServiceImpl {
         Err(Status::unimplemented("CreateRecord via gRPC not yet implemented - use HTTP endpoint"))
     }
 
-    async fn update_record(&self, request: Request<UpdateRecordRequest>) -> Result<Response<UpdateRecordResponse>, Status> {
-        let req = request.into_inner();
-        let id = req.id.clone();
+    async fn update_record(&self, _request: Request<UpdateRecordRequest>) -> Result<Response<UpdateRecordResponse>, Status> {
+        let _req = _request.into_inner();
+        let _id = _req.id.clone();
         
         // Implementation similar to web::update_action but via gRPC
         

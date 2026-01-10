@@ -2,14 +2,14 @@ CARGO := cargo
 DB_URL := sqlite://data/snpguard.db?mode=rwc
 CLIENT_TARGET := x86_64-unknown-linux-musl
 
-.PHONY: all build build-server build-client db-setup clean repack help
+.PHONY: all build build-server build-client build-snpguest db-setup clean repack help
 
 all: build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-build: build-server build-client ## Build Client and Server
+build: build-server build-client build-snpguest ## Build Server, Client and snpguest tool
 
 build-server: ## Build Management Server
 	$(CARGO) build --release --bin snpguard-server
@@ -18,6 +18,11 @@ build-client: ## Build Guest Client (Static)
 	@echo "Ensuring MUSL target..."
 	rustup target add $(CLIENT_TARGET) || true
 	$(CARGO) build --release --bin snpguard-client --target $(CLIENT_TARGET)
+
+build-snpguest: ## Build snpguest tool (Static)
+	@echo "Ensuring MUSL target..."
+	rustup target add $(CLIENT_TARGET) || true
+	cd snpguest && $(CARGO) build --release --target $(CLIENT_TARGET)
 
 db-setup: ## Initialize SQLite Database
 	mkdir -p data

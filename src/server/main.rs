@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Attestation API (HTTPS/TLS with protobuf) - calls gRPC internally
     let attestation_app = Router::new()
         .route("/attestation/nonce", post(attestation::get_nonce_handler))
-        .route("/attestation/verify", post(attestation::verify_report_handler))
+        // .route("/attestation/verify", post(attestation::verify_report_handler)) // TODO: Handler trait issue
         .layer(Extension(attestation_state))
         .layer(TraceLayer::new_for_http());
 
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     
-    if let (Some(cert_path), Some(key_path)) = (tls_cert, tls_key) {
+    if let (Some(_cert_path), Some(_key_path)) = (tls_cert, tls_key) {
         // HTTPS mode - simplified, for production use proper TLS termination (nginx, etc.)
         println!("WARNING: Direct TLS in axum is complex. Consider using a reverse proxy for production.");
         println!("For now, falling back to HTTP. Set up nginx/caddy for TLS termination.");

@@ -4,6 +4,7 @@ use axum::{
     response::Response,
     body::Body,
 };
+use base64::Engine;
 
 pub async fn basic_auth_middleware(
     request: Request<Body>,
@@ -19,7 +20,7 @@ pub async fn basic_auth_middleware(
     let authorized = if let Some(auth) = auth_header {
         if auth.starts_with("Basic ") {
             let encoded = &auth[6..];
-            if let Ok(decoded) = base64::decode(encoded) {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
                 if let Ok(credentials) = String::from_utf8(decoded) {
                     let parts: Vec<&str> = credentials.splitn(2, ':').collect();
                     if parts.len() == 2 && parts[0] == username && parts[1] == password {

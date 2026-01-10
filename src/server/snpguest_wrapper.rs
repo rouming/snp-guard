@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::path::Path;
 use anyhow::{Context, Result, anyhow};
+use base64::Engine;
 
 /// Wraps 'snpguest generate measurement' then 'snpguest generate id-block'
 pub fn generate_measurement_and_block(
@@ -16,7 +17,12 @@ pub fn generate_measurement_and_block(
 ) -> Result<()> {
     
     // 1. Calculate Measurement
-    let output = Command::new("snpguest")
+    let snpguest_path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
+        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+
+    let output = Command::new(&snpguest_path)
         .arg("generate")
         .arg("measurement")
         .arg("--ovmf").arg(ovmf)
@@ -35,7 +41,7 @@ pub fn generate_measurement_and_block(
     let measurement = String::from_utf8(output.stdout)?.trim().to_string();
 
     // 2. Generate ID-Block and Auth-Block (without family-id and image-id)
-    let status = Command::new("snpguest")
+    let status = Command::new(&snpguest_path)
         .arg("--quiet")
         .arg("generate")
         .arg("id-block")
@@ -61,13 +67,18 @@ fn decode_base64_file(path: &Path) -> Result<()> {
     if !path.exists() { return Ok(()); }
     let content = std::fs::read(path)?;
     let content_str = String::from_utf8(content)?.replace('\n', "");
-    let decoded = base64::decode(&content_str).context("Failed to decode base64 block")?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(&content_str).context("Failed to decode base64 block")?;
     std::fs::write(path, decoded)?;
     Ok(())
 }
 
 pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
-    let output = Command::new("snpguest")
+    let snpguest_path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
+        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+
+    let output = Command::new(&snpguest_path)
         .arg("generate")
         .arg("key-digest")
         .arg(key_path)
@@ -83,26 +94,32 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[allow(unused)]
 pub fn verify_report_signature(report_path: &Path, _certs_dir: &Path, cpu_family: &str) -> Result<()> {
+    let snpguest_path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
+        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+
     // Create temporary directory for certificates
     let temp_dir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
     let certs_dir = temp_dir.path();
-    
-    // Requires snpguest 0.4+ 
+
+    // Requires snpguest 0.4+
     // 1. Fetch CA
-    let status = Command::new("snpguest")
+    let status = Command::new(&snpguest_path)
         .arg("fetch")
         .arg("ca")
         .arg("pem")
         .arg(cpu_family)
         .arg(certs_dir)
         .status()?;
-    if !status.success() { 
-        return Err(anyhow!("Failed to fetch CA certificates")); 
+    if !status.success() {
+        return Err(anyhow!("Failed to fetch CA certificates"));
     }
 
     // 2. Fetch VCEK (Needs report to identify chip)
-    let status = Command::new("snpguest")
+    let status = Command::new(&snpguest_path)
         .arg("fetch")
         .arg("vcek")
         .arg("pem")
@@ -110,22 +127,22 @@ pub fn verify_report_signature(report_path: &Path, _certs_dir: &Path, cpu_family
         .arg(certs_dir)
         .arg(report_path)
         .status()?;
-    if !status.success() { 
-        return Err(anyhow!("Failed to fetch VCEK certificate")); 
+    if !status.success() {
+        return Err(anyhow!("Failed to fetch VCEK certificate"));
     }
 
     // 3. Verify Certs
-    let status = Command::new("snpguest")
+    let status = Command::new(&snpguest_path)
         .arg("verify")
         .arg("certs")
         .arg(certs_dir)
         .status()?;
-    if !status.success() { 
-        return Err(anyhow!("Failed to verify certificate chain")); 
+    if !status.success() {
+        return Err(anyhow!("Failed to verify certificate chain"));
     }
 
     // 4. Verify Attestation
-    let status = Command::new("snpguest")
+    let status = Command::new(&snpguest_path)
         .arg("verify")
         .arg("attestation")
         .arg(certs_dir)

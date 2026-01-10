@@ -16,9 +16,10 @@ common = { path = "../common" }
 # Web / Async (latest stable)
 tokio = { version = "1.0", features = ["full"] }
 axum = { version = "0.7", features = ["multipart", "macros"] }
+axum-macros = "0.4"
+axum-extra = { version = "0.9", features = ["typed-header"] }
 tower-http = { version = "0.5", features = ["fs", "trace"] }
 askama = "0.12"
-axum-macros = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 
 # Protobuf

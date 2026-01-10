@@ -6,6 +6,7 @@ members = [
     "entity",
     "migration"
 ]
+exclude = ["snpguest"]
 resolver = "2"
 
 [profile.release]

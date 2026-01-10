@@ -1,11 +1,10 @@
 use axum::{
     async_trait,
-    extract::{Extension, FromRequest},
+    extract::{Extension, Request, FromRequest},
     response::{IntoResponse, Response},
-    http::{StatusCode, header, Request},
+    http::{StatusCode, header},
     body::Body,
 };
-use axum::body::Bytes;
 use axum::body::to_bytes;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
 use entity::vm;
@@ -24,11 +23,13 @@ use crate::snpguest_wrapper;
 
 #[derive(Clone)]
 pub struct NonceEntry {
+    #[allow(unused)]
     pub nonce: Vec<u8>,
     pub created_at: u64, // Unix timestamp
 }
 
 pub struct AttestationState {
+    #[allow(unused)]
     pub db: DatabaseConnection,
     pub nonces: Arc<Mutex<HashMap<String, NonceEntry>>>,
 }
@@ -36,26 +37,29 @@ pub struct AttestationState {
 const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
 const MAX_NONCES: usize = 10000; // Prevent memory exhaustion
 
-/// Custom extractor to capture full request body as bytes
-struct RawBytes(Bytes);
+/// Custom extractor for raw request body bytes
+pub struct RawBody(pub bytes::Bytes);
 
-#[axum::async_trait]
-impl<S> FromRequest<S, Body> for RawBytes
+#[async_trait]
+impl<S> FromRequest<S, Body> for RawBody
 where
     S: Send + Sync,
 {
     type Rejection = StatusCode;
 
     async fn from_request(req: Request<Body>, _state: &S) -> Result<Self, Self::Rejection> {
-        match to_bytes(req.into_body(), usize::MAX).await {
-            Ok(b) => Ok(RawBytes(b)),
+        let body = req.into_body();
+        match to_bytes(body, usize::MAX).await {
+            Ok(bytes) => Ok(RawBody(bytes)),
             Err(_) => Err(StatusCode::BAD_REQUEST),
         }
     }
 }
 
+
 /// Extract CPU family from attestation report
 /// Based on CPUID_FAM_ID (offset 0x188, 8 bits) and CPUID_MOD_ID (offset 0x189, 8 bits)
+#[allow(unused)]
 fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
     if report_data.len() < 0x18A {
         return Err("Report too short".to_string());
@@ -91,8 +95,9 @@ fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
 /// Handler for /attestation/nonce - Get a random 64-byte nonce
 pub async fn get_nonce_handler(
     Extension(state): Extension<Arc<AttestationState>>,
-    RawBytes(body_bytes): RawBytes,
+    RawBody(body_bytes): RawBody,
 ) -> impl IntoResponse {
+
     let req = match NonceRequest::decode(&body_bytes[..]) {
         Ok(r) => r,
         Err(_) => return (StatusCode::BAD_REQUEST, "Failed to decode request").into_response(),
@@ -150,10 +155,12 @@ pub async fn get_nonce_handler(
 }
 
 /// Handler for /attestation/verify - Verify attestation report
+#[allow(unused)]
 pub async fn verify_report_handler(
     Extension(state): Extension<Arc<AttestationState>>,
-    RawBytes(body_bytes): RawBytes,
+    RawBody(body_bytes): RawBody,
 ) -> impl IntoResponse {
+
     let req = match AttestationRequest::decode(&body_bytes[..]) {
         Ok(r) => r,
         Err(_) => return encode_response(AttestationResponse {
@@ -319,6 +326,7 @@ pub async fn verify_report_handler(
     encode_response(response)
 }
 
+#[allow(unused)]
 fn encode_response(response: AttestationResponse) -> Response<Body> {
     let mut response_bytes = Vec::new();
     if response.encode(&mut response_bytes).is_err() {

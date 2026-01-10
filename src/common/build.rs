@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(false)  // Only build server code
         .out_dir(std::env::var("OUT_DIR")?)
-        .compile(&["../../protos/attestation.proto"], &["../../protos"])?;
-    
+        .compile_protos(&["../../protos/attestation.proto"], &["../../protos"])?;
+
     Ok(())
 }
