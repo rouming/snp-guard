@@ -6,17 +6,30 @@ use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
     ToggleEnabledRequest, UpdateRecordRequest,
 };
-use entity::vm;
+use entity::{vm, token};
 use sev::firmware::guest::AttestationReport;
 use sev::parser::ByteParser;
 
 use crate::attestation::AttestationState;
 use crate::snpguest_wrapper;
 use crate::business_logic;
+use argon2::{Argon2, password_hash::{PasswordHasher, PasswordHash, PasswordVerifier, SaltString}};
+use rand::RngCore;
+use uuid::Uuid;
+use base64::Engine;
 
 pub struct ServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TokenInfo {
+    pub id: String,
+    pub label: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub revoked: bool,
 }
 
 struct ParsedReport<'a> {
@@ -369,4 +382,106 @@ pub async fn toggle_enabled_core(
         .await
         .map_err(|e| format!("Database error: {}", e))?;
     Ok(enabled)
+}
+
+fn hash_token(token: &str) -> Result<String, String> {
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    Argon2::default()
+        .hash_password(token.as_bytes(), &salt)
+        .map_err(|e| format!("Hash error: {e}"))
+        .map(|h| h.to_string())
+}
+
+fn verify_token_hash(token: &str, hash: &str) -> bool {
+    if let Ok(parsed) = PasswordHash::new(hash) {
+        Argon2::default().verify_password(token.as_bytes(), &parsed).is_ok()
+    } else {
+        false
+    }
+}
+
+pub async fn generate_token(state: &ServiceState, label: String, expires_at: Option<chrono::NaiveDateTime>) -> Result<(String, TokenInfo), String> {
+    let token_plain = {
+        let mut buf = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut buf);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(buf)
+    };
+    let token_hash = hash_token(&token_plain)?;
+    let id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().naive_utc();
+
+    let model = token::ActiveModel {
+        id: Set(id.clone()),
+        label: Set(label.clone()),
+        token_hash: Set(token_hash),
+        created_at: Set(now),
+        expires_at: Set(expires_at),
+        revoked: Set(false),
+    };
+
+    model.insert(&state.db).await.map_err(|e| format!("DB error: {e}"))?;
+
+    let info = TokenInfo {
+        id,
+        label,
+        created_at: now.to_string(),
+        expires_at: expires_at.map(|e| e.to_string()),
+        revoked: false,
+    };
+
+    Ok((token_plain, info))
+}
+
+pub async fn list_tokens(state: &ServiceState) -> Result<Vec<TokenInfo>, String> {
+    let tokens = token::Entity::find()
+        .order_by_desc(token::Column::CreatedAt)
+        .all(&state.db)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    Ok(tokens
+        .into_iter()
+        .map(|t| TokenInfo {
+            id: t.id,
+            label: t.label,
+            created_at: t.created_at.to_string(),
+            expires_at: t.expires_at.map(|e| e.to_string()),
+            revoked: t.revoked,
+        })
+        .collect())
+}
+
+pub async fn revoke_token(state: &ServiceState, id: String) -> Result<(), String> {
+    let mut model = token::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?
+        .ok_or_else(|| "Token not found".to_string())?;
+
+    model.revoked = true;
+    let mut active: token::ActiveModel = model.into();
+    active.revoked = Set(true);
+    active.update(&state.db).await.map_err(|e| format!("DB error: {e}"))?;
+    Ok(())
+}
+
+pub async fn auth_token_valid(state: &ServiceState, token_plain: &str) -> Result<bool, String> {
+    let now = chrono::Utc::now().naive_utc();
+    let records = token::Entity::find()
+        .filter(token::Column::Revoked.eq(false))
+        .all(&state.db)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    for rec in records {
+        if let Some(exp) = rec.expires_at {
+            if now > exp {
+                continue;
+            }
+        }
+        if verify_token_hash(token_plain, &rec.token_hash) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
