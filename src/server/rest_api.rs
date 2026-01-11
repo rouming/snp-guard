@@ -8,24 +8,26 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use prost::Message;
 use base64::Engine;
+use prost::Message;
 
-use crate::service_core::ServiceState;
-use crate::nonce;
 use crate::master_password::MasterAuth;
+use crate::nonce;
+use crate::service_core::ServiceState;
+use argon2::{password_hash::PasswordHash, password_hash::PasswordVerifier, Argon2};
 use common::snpguard::{
-    AttestationRequest, NonceRequest, NonceResponse,
-    ListRecordsResponse, GetRecordResponse,
-    CreateRecordRequest, CreateRecordResponse, UpdateRecordRequest, UpdateRecordResponse,
-    DeleteRecordResponse, ToggleEnabledRequest, ToggleEnabledResponse,
+    AttestationRequest, CreateRecordRequest, CreateRecordResponse, DeleteRecordResponse,
+    GetRecordResponse, ListRecordsResponse, NonceRequest, NonceResponse, ToggleEnabledRequest,
+    ToggleEnabledResponse, UpdateRecordRequest, UpdateRecordResponse,
 };
-use argon2::{Argon2, password_hash::PasswordHash, password_hash::PasswordVerifier};
 
 const PROTO_CT: &str = "application/x-protobuf";
 
 pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
-    let auth_ctx = AuthCtx { state: state.clone(), master };
+    let auth_ctx = AuthCtx {
+        state: state.clone(),
+        master,
+    };
     let public = Router::new()
         .route("/health", get(health))
         .route("/attest/nonce", post(attest_nonce))
@@ -34,13 +36,19 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 
     let management = Router::new()
         .route("/records", get(list_records).post(create_record))
-        .route("/records/:id", get(get_record).patch(update_record).delete(delete_record))
+        .route(
+            "/records/:id",
+            get(get_record).patch(update_record).delete(delete_record),
+        )
         .route("/records/:id/enable", post(enable_record))
         .route("/records/:id/disable", post(disable_record))
         .route("/tokens", get(list_tokens).post(create_token))
         .route("/tokens/:id/revoke", post(revoke_token))
         .with_state(state.clone())
-        .layer(axum::middleware::from_fn_with_state(auth_ctx, management_auth));
+        .layer(axum::middleware::from_fn_with_state(
+            auth_ctx,
+            management_auth,
+        ));
 
     public.merge(management)
 }
@@ -76,7 +84,10 @@ fn auth_header_token(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn verify_master(headers: &axum::http::HeaderMap, master: &crate::master_password::MasterAuth) -> bool {
+fn verify_master(
+    headers: &axum::http::HeaderMap,
+    master: &crate::master_password::MasterAuth,
+) -> bool {
     let auth_header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
@@ -139,35 +150,34 @@ async fn management_auth(
     resp
 }
 
-async fn attest_nonce(
-    State(state): State<Arc<ServiceState>>,
-    body: Bytes,
-) -> Response {
+async fn attest_nonce(State(state): State<Arc<ServiceState>>, body: Bytes) -> Response {
     let req = match NonceRequest::decode(&body[..]) {
         Ok(r) => r,
         Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode NonceRequest"),
     };
     let _ = req; // vm_id unused for stateless nonce
     let nonce_bytes = nonce::generate_nonce(&state.attestation_state.secret);
-    proto_response(NonceResponse { nonce: nonce_bytes.to_vec() })
+    proto_response(NonceResponse {
+        nonce: nonce_bytes.to_vec(),
+    })
 }
 
-async fn attest_report(
-    State(state): State<Arc<ServiceState>>,
-    body: Bytes,
-) -> Response {
+async fn attest_report(State(state): State<Arc<ServiceState>>, body: Bytes) -> Response {
     let req = match AttestationRequest::decode(&body[..]) {
         Ok(r) => r,
-        Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode AttestationRequest"),
+        Err(_) => {
+            return proto_error(
+                StatusCode::BAD_REQUEST,
+                "Failed to decode AttestationRequest",
+            )
+        }
     };
 
     let resp = crate::service_core::verify_report_core(state.clone(), req).await;
     proto_response(resp)
 }
 
-async fn list_records(
-    State(state): State<Arc<ServiceState>>,
-) -> Response {
+async fn list_records(State(state): State<Arc<ServiceState>>) -> Response {
     let records = match crate::service_core::list_records_core(&state).await {
         Ok(r) => r,
         Err(e) => return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
@@ -175,27 +185,32 @@ async fn list_records(
     proto_response(ListRecordsResponse { records })
 }
 
-async fn get_record(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Response {
+async fn get_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
     match crate::service_core::get_record_core(&state, id).await {
         Ok(opt) => proto_response(GetRecordResponse { record: opt }),
         Err(e) => proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
-async fn create_record(
-    State(state): State<Arc<ServiceState>>,
-    body: Bytes,
-) -> Response {
+async fn create_record(State(state): State<Arc<ServiceState>>, body: Bytes) -> Response {
     let req = match CreateRecordRequest::decode(&body[..]) {
         Ok(r) => r,
-        Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode CreateRecordRequest"),
+        Err(_) => {
+            return proto_error(
+                StatusCode::BAD_REQUEST,
+                "Failed to decode CreateRecordRequest",
+            )
+        }
     };
     match crate::service_core::create_record_core(&state, req).await {
-        Ok(id) => proto_response(CreateRecordResponse { id, error_message: None }),
-        Err(e) => proto_response(CreateRecordResponse { id: String::new(), error_message: Some(e) }),
+        Ok(id) => proto_response(CreateRecordResponse {
+            id,
+            error_message: None,
+        }),
+        Err(e) => proto_response(CreateRecordResponse {
+            id: String::new(),
+            error_message: Some(e),
+        }),
     }
 }
 
@@ -206,29 +221,40 @@ async fn update_record(
 ) -> Response {
     let mut req = match UpdateRecordRequest::decode(&body[..]) {
         Ok(r) => r,
-        Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode UpdateRecordRequest"),
+        Err(_) => {
+            return proto_error(
+                StatusCode::BAD_REQUEST,
+                "Failed to decode UpdateRecordRequest",
+            )
+        }
     };
     req.id = id;
     match crate::service_core::update_record_core(&state, req).await {
-        Ok(_) => proto_response(UpdateRecordResponse { success: true, error_message: None }),
-        Err(e) => proto_response(UpdateRecordResponse { success: false, error_message: Some(e) }),
+        Ok(_) => proto_response(UpdateRecordResponse {
+            success: true,
+            error_message: None,
+        }),
+        Err(e) => proto_response(UpdateRecordResponse {
+            success: false,
+            error_message: Some(e),
+        }),
     }
 }
 
-async fn delete_record(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Response {
+async fn delete_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
     match crate::service_core::delete_record_core(&state, id).await {
-        Ok(_) => proto_response(DeleteRecordResponse { success: true, error_message: None }),
-        Err(e) => proto_response(DeleteRecordResponse { success: false, error_message: Some(e) }),
+        Ok(_) => proto_response(DeleteRecordResponse {
+            success: true,
+            error_message: None,
+        }),
+        Err(e) => proto_response(DeleteRecordResponse {
+            success: false,
+            error_message: Some(e),
+        }),
     }
 }
 
-async fn enable_record(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Response {
+async fn enable_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
     toggle_record(state, id, true).await
 }
 
@@ -239,21 +265,21 @@ async fn disable_record(
     toggle_record(state, id, false).await
 }
 
-async fn toggle_record(
-    state: Arc<ServiceState>,
-    id: String,
-    enabled: bool,
-) -> Response {
+async fn toggle_record(state: Arc<ServiceState>, id: String, enabled: bool) -> Response {
     let req = ToggleEnabledRequest { id };
     match crate::service_core::toggle_enabled_core(&state, req, enabled).await {
-        Ok(enabled) => proto_response(ToggleEnabledResponse { enabled, error_message: None }),
-        Err(e) => proto_response(ToggleEnabledResponse { enabled: !enabled, error_message: Some(e) }),
+        Ok(enabled) => proto_response(ToggleEnabledResponse {
+            enabled,
+            error_message: None,
+        }),
+        Err(e) => proto_response(ToggleEnabledResponse {
+            enabled: !enabled,
+            error_message: Some(e),
+        }),
     }
 }
 
-async fn list_tokens(
-    State(state): State<Arc<ServiceState>>,
-) -> Response {
+async fn list_tokens(State(state): State<Arc<ServiceState>>) -> Response {
     match crate::service_core::list_tokens(&state).await {
         Ok(tokens) => {
             // encode as protobuf? We don't have Token list message; return text for now
@@ -268,18 +294,25 @@ async fn list_tokens(
     }
 }
 
-async fn create_token(
-    State(state): State<Arc<ServiceState>>,
-    body: Bytes,
-) -> Response {
+async fn create_token(State(state): State<Arc<ServiceState>>, body: Bytes) -> Response {
     // body: expected: label (string) and optional expires_at seconds since epoch in plain text? For simplicity JSON
     #[derive(serde::Deserialize)]
-    struct CreateReq { label: String, expires_at: Option<i64> }
+    struct CreateReq {
+        label: String,
+        expires_at: Option<i64>,
+    }
     let req: CreateReq = match serde_json::from_slice(&body) {
         Ok(r) => r,
-        Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Invalid token create payload (json)"),
+        Err(_) => {
+            return proto_error(
+                StatusCode::BAD_REQUEST,
+                "Invalid token create payload (json)",
+            )
+        }
     };
-    let expires_at = req.expires_at.and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|dt| dt.naive_utc()));
+    let expires_at = req.expires_at.and_then(|ts| {
+        chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|dt| dt.naive_utc())
+    });
     match crate::service_core::generate_token(&state, req.label, expires_at).await {
         Ok((token_plain, info)) => {
             let resp = serde_json::json!({
@@ -300,10 +333,7 @@ async fn create_token(
     }
 }
 
-async fn revoke_token(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-) -> Response {
+async fn revoke_token(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
     match crate::service_core::revoke_token(&state, id).await {
         Ok(_) => proto_error(StatusCode::OK, "revoked"),
         Err(e) => proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),

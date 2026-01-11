@@ -1,21 +1,23 @@
-use axum::{
-    extract::{Extension, Path, Multipart},
-    response::{Html, IntoResponse, Redirect},
-    body::Body,
-};
-use tokio_util::io::ReaderStream;
-use askama::Template;
-use std::path::PathBuf;
-use std::fs;
-use std::process::Command;
-use common::snpguard::AttestationRecord;
 use crate::service_core::{self, ServiceState, TokenInfo};
-use std::sync::Arc;
+use askama::Template;
+use axum::{
+    body::Body,
+    extract::{Extension, Multipart, Path},
+    response::{Html, IntoResponse, Redirect},
+};
 use chrono::Duration;
+use common::snpguard::AttestationRecord;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
+use tokio_util::io::ReaderStream;
 
 #[derive(Template)]
 #[template(path = "index.html")]
-struct IndexTemplate { vms: Vec<AttestationRecord> }
+struct IndexTemplate {
+    vms: Vec<AttestationRecord>,
+}
 
 #[derive(Template)]
 #[template(path = "create.html")]
@@ -23,7 +25,9 @@ struct CreateTemplate {}
 
 #[derive(Template)]
 #[template(path = "edit.html")]
-struct EditTemplate { vm: AttestationRecord }
+struct EditTemplate {
+    vm: AttestationRecord,
+}
 
 #[derive(Template)]
 #[template(path = "tokens.html")]
@@ -41,7 +45,7 @@ pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoR
                 Ok(html) => Html(html).into_response(),
                 Err(e) => Html(format!("Template error: {}", e)).into_response(),
             }
-        },
+        }
         Err(e) => Html(format!("Failed to load records: {}", e)).into_response(),
     }
 }
@@ -56,7 +60,7 @@ pub async fn create_form() -> impl IntoResponse {
 
 pub async fn create_action(
     Extension(state): Extension<Arc<ServiceState>>,
-    mut multipart: Multipart
+    mut multipart: Multipart,
 ) -> impl IntoResponse {
     let mut os_name = String::new();
     let mut secret = String::new();
@@ -80,21 +84,27 @@ pub async fn create_action(
     while let Some(field) = multipart.next_field().await.unwrap() {
         let name = field.name().unwrap().to_string();
         if let Some(_) = field.file_name() {
-             let data = field.bytes().await.unwrap();
-             if data.is_empty() { continue; }
+            let data = field.bytes().await.unwrap();
+            if data.is_empty() {
+                continue;
+            }
 
-             // Enforce file size limits
-             let max_size = match name.as_str() {
-                "firmware" => 10 * 1024 * 1024, // 10 MB
-                "kernel" => 50 * 1024 * 1024,  // 50 MB
-                "initrd" => 50 * 1024 * 1024,  // 50 MB
+            // Enforce file size limits
+            let max_size = match name.as_str() {
+                "firmware" => 10 * 1024 * 1024,     // 10 MB
+                "kernel" => 50 * 1024 * 1024,       // 50 MB
+                "initrd" => 50 * 1024 * 1024,       // 50 MB
                 "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
                 _ => continue,
-             };
+            };
 
-             if data.len() > max_size {
-                 return Html(format!("<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>", name, max_size)).into_response();
-             }
+            if data.len() > max_size {
+                return Html(format!(
+                    "<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>",
+                    name, max_size
+                ))
+                .into_response();
+            }
 
             match name.as_str() {
                 "id_key" => id_key = Some(data.to_vec()),
@@ -126,9 +136,15 @@ pub async fn create_action(
     }
 
     // Validate required fields
-    if os_name.is_empty() || secret.is_empty() || service_url.is_empty() ||
-       id_key.is_none() || auth_key.is_none() || firmware.is_none() ||
-       kernel.is_none() || initrd.is_none() {
+    if os_name.is_empty()
+        || secret.is_empty()
+        || service_url.is_empty()
+        || id_key.is_none()
+        || auth_key.is_none()
+        || firmware.is_none()
+        || kernel.is_none()
+        || initrd.is_none()
+    {
         return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
@@ -158,7 +174,10 @@ pub async fn create_action(
     }
 }
 
-pub async fn view_record(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+pub async fn view_record(
+    Extension(state): Extension<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     match service_core::get_record_core(&state, id).await {
         Ok(Some(vm)) => {
             let template = EditTemplate { vm };
@@ -166,9 +185,11 @@ pub async fn view_record(Extension(state): Extension<Arc<ServiceState>>, Path(id
                 Ok(html) => Html(html).into_response(),
                 Err(e) => Html(format!("Template error: {}", e)).into_response(),
             }
-        },
+        }
         Ok(None) => Html("<h1>Not Found</h1><p>Record not found</p>").into_response(),
-        Err(e) => Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response(),
+        Err(e) => {
+            Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response()
+        }
     }
 }
 
@@ -181,7 +202,10 @@ pub async fn update_action(
     let current_record = match service_core::get_record_core(&state, id.clone()).await {
         Ok(Some(record)) => record,
         Ok(None) => return Html("<h1>Not Found</h1><p>Record not found</p>").into_response(),
-        Err(e) => return Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response(),
+        Err(e) => {
+            return Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e))
+                .into_response()
+        }
     };
 
     let mut os_name = Some(current_record.os_name);
@@ -215,19 +239,25 @@ pub async fn update_action(
         let name = field.name().unwrap().to_string();
         if let Some(_) = field.file_name() {
             let data = field.bytes().await.unwrap();
-            if data.is_empty() { continue; }
+            if data.is_empty() {
+                continue;
+            }
 
             // Enforce file size limits
             let max_size = match name.as_str() {
-                "firmware" => 10 * 1024 * 1024, // 10 MB
-                "kernel" => 50 * 1024 * 1024,  // 50 MB
-                "initrd" => 50 * 1024 * 1024,  // 50 MB
+                "firmware" => 10 * 1024 * 1024,     // 10 MB
+                "kernel" => 50 * 1024 * 1024,       // 50 MB
+                "initrd" => 50 * 1024 * 1024,       // 50 MB
                 "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
                 _ => continue,
             };
 
             if data.len() > max_size {
-                return Html(format!("<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>", name, max_size)).into_response();
+                return Html(format!(
+                    "<h1>File Too Large</h1><p>File '{}' exceeds maximum size of {} bytes</p>",
+                    name, max_size
+                ))
+                .into_response();
             }
 
             match name.as_str() {
@@ -288,15 +318,25 @@ pub async fn update_action(
     }
 }
 
-pub async fn toggle_enabled(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+pub async fn toggle_enabled(
+    Extension(state): Extension<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     let req = common::snpguard::ToggleEnabledRequest { id: id.clone() };
     match service_core::toggle_enabled_core(&state, req, true).await {
         Ok(_) => Redirect::to("/").into_response(),
-        Err(e) => Html(format!("<h1>Error</h1><p>Failed to toggle enabled status: {}</p>", e)).into_response(),
+        Err(e) => Html(format!(
+            "<h1>Error</h1><p>Failed to toggle enabled status: {}</p>",
+            e
+        ))
+        .into_response(),
     }
 }
 
-pub async fn delete_action(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+pub async fn delete_action(
+    Extension(state): Extension<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
     match service_core::delete_record_core(&state, id).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Deleting Record</h1><p>{}</p>", e)).into_response(),
@@ -306,7 +346,11 @@ pub async fn delete_action(Extension(state): Extension<Arc<ServiceState>>, Path(
 pub async fn tokens_page(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
     match service_core::list_tokens(&state).await {
         Ok(tokens) => {
-            let template = TokensTemplate { tokens, new_token: String::new(), show_token: false };
+            let template = TokensTemplate {
+                tokens,
+                new_token: String::new(),
+                show_token: false,
+            };
             match template.render() {
                 Ok(html) => Html(html).into_response(),
                 Err(e) => Html(format!("Template error: {}", e)).into_response(),
@@ -344,22 +388,32 @@ pub async fn create_token(
         return Html("<h1>Error</h1><p>Label is required</p>").into_response();
     }
 
-    let expires_at = expires_hours.and_then(|h| chrono::Utc::now().naive_utc().checked_add_signed(Duration::hours(h)));
+    let expires_at = expires_hours.and_then(|h| {
+        chrono::Utc::now()
+            .naive_utc()
+            .checked_add_signed(Duration::hours(h))
+    });
 
     match service_core::generate_token(&state, label, expires_at).await {
-        Ok((token_plain, _info)) => {
-            match service_core::list_tokens(&state).await {
-                Ok(tokens) => {
-                    let template = TokensTemplate { tokens, new_token: token_plain, show_token: true };
-                    match template.render() {
-                        Ok(html) => Html(html).into_response(),
-                        Err(e) => Html(format!("Template error: {}", e)).into_response(),
-                    }
+        Ok((token_plain, _info)) => match service_core::list_tokens(&state).await {
+            Ok(tokens) => {
+                let template = TokensTemplate {
+                    tokens,
+                    new_token: token_plain,
+                    show_token: true,
+                };
+                match template.render() {
+                    Ok(html) => Html(html).into_response(),
+                    Err(e) => Html(format!("Template error: {}", e)).into_response(),
                 }
-                Err(e) => Html(format!("<h1>Error</h1><p>{}</p>", e)).into_response(),
             }
-        }
-        Err(e) => Html(format!("<h1>Error</h1><p>Failed to generate token: {}</p>", e)).into_response(),
+            Err(e) => Html(format!("<h1>Error</h1><p>{}</p>", e)).into_response(),
+        },
+        Err(e) => Html(format!(
+            "<h1>Error</h1><p>Failed to generate token: {}</p>",
+            e
+        ))
+        .into_response(),
     }
 }
 
@@ -369,12 +423,18 @@ pub async fn revoke_token(
 ) -> impl IntoResponse {
     match service_core::revoke_token(&state, id).await {
         Ok(_) => Redirect::to("/tokens").into_response(),
-        Err(e) => Html(format!("<h1>Error</h1><p>Failed to revoke token: {}</p>", e)).into_response(),
+        Err(e) => Html(format!(
+            "<h1>Error</h1><p>Failed to revoke token: {}</p>",
+            e
+        ))
+        .into_response(),
     }
 }
 
 pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) -> impl IntoResponse {
-    if file_name.contains("..") { return "Invalid path".into_response(); }
+    if file_name.contains("..") {
+        return "Invalid path".into_response();
+    }
     let artifact_dir = PathBuf::from("artifacts").join(&id);
     let path = artifact_dir.join(&file_name);
 
@@ -384,17 +444,24 @@ pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) ->
         // Strict permissions
         fs::write(&def_path, "/ d 755 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n").unwrap();
         Command::new("mksquashfs")
-            .arg(&artifact_dir).arg(&path)
-            .arg("-noappend").arg("-all-root").arg("-pf").arg(&def_path)
-            .status().unwrap();
+            .arg(&artifact_dir)
+            .arg(&path)
+            .arg("-noappend")
+            .arg("-all-root")
+            .arg("-pf")
+            .arg(&def_path)
+            .status()
+            .unwrap();
     }
-    
+
     // Tarball Generator - create with correct filenames in root (/)
     if file_name == "artifacts.tar.gz" {
         // Create tarball with files at root level
         let status = Command::new("tar")
-            .arg("-czf").arg(&path)
-            .arg("-C").arg(&artifact_dir)
+            .arg("-czf")
+            .arg(&path)
+            .arg("-C")
+            .arg(&artifact_dir)
             .arg("--transform=s|^|/|")
             .arg("firmware-code.fd")
             .arg("vmlinuz")
@@ -403,7 +470,7 @@ pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) ->
             .arg("id-block.bin")
             .arg("id-auth.bin")
             .status();
-        
+
         if status.is_err() {
             return "Failed to create tarball".into_response();
         }
@@ -419,7 +486,7 @@ pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) ->
             headers.insert("Content-Type", "application/octet-stream".parse().unwrap());
             headers.insert("Content-Disposition", content_disposition.parse().unwrap());
             (headers, body).into_response()
-        },
-        Err(_) => "File not found".into_response()
+        }
+        Err(_) => "File not found".into_response(),
     }
 }

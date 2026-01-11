@@ -1,9 +1,9 @@
-use sea_orm::{DatabaseConnection, EntityTrait, ActiveModelTrait, Set};
-use entity::vm;
-use uuid::Uuid;
-use std::path::PathBuf;
-use std::fs;
 use crate::snpguest_wrapper;
+use entity::vm;
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use std::fs;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct CreateRecordRequest {
@@ -57,7 +57,6 @@ pub struct UpdateRecordResponse {
     pub error_message: Option<String>,
 }
 
-
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     req: CreateRecordRequest,
@@ -68,7 +67,8 @@ pub async fn create_record_logic(
     let image_id = Uuid::new_v4();
 
     let artifact_dir = PathBuf::from("artifacts").join(&new_id);
-    fs::create_dir_all(&artifact_dir).map_err(|e| format!("Failed to create artifact directory: {}", e))?;
+    fs::create_dir_all(&artifact_dir)
+        .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 
     // Save uploaded files
     if let Some(id_key) = req.id_key_pem {
@@ -111,7 +111,8 @@ pub async fn create_record_logic(
         &artifact_dir.join("id-auth-key.pem"),
         &artifact_dir,
         image_id_hex,
-    ).map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
     // Get Digests
     let id_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-block-key.pem"))
@@ -145,7 +146,9 @@ pub async fn create_record_logic(
         initrd_path: Set("initrd.img".into()),
     };
 
-    new_vm.insert(db).await
+    new_vm
+        .insert(db)
+        .await
         .map_err(|e| format!("Failed to save record to database: {}", e))?;
 
     Ok(new_id)
@@ -165,7 +168,6 @@ pub async fn update_record_logic(
         .await
         .map_err(|e| format!("Database error: {}", e))?
         .ok_or_else(|| "Record not found".to_string())?;
-
 
     // Save any new uploaded files
     let id_key_present = req.id_key_pem.is_some();
@@ -204,17 +206,27 @@ pub async fn update_record_logic(
         params_changed = true;
     }
     if let Some(service_url) = req.service_url {
-        full_params = format!("{} rd.attest.url={}",
-            full_params.split("rd.attest.url=").next().unwrap_or("").trim(),
-            service_url);
+        full_params = format!(
+            "{} rd.attest.url={}",
+            full_params
+                .split("rd.attest.url=")
+                .next()
+                .unwrap_or("")
+                .trim(),
+            service_url
+        );
         params_changed = true;
     }
 
     // Check if we need to regenerate blocks
-    let needs_regeneration = params_changed ||
-        id_key_present || auth_key_present ||
-        firmware_present || kernel_present || initrd_present ||
-        req.vcpus.is_some() || req.vcpu_type.is_some();
+    let needs_regeneration = params_changed
+        || id_key_present
+        || auth_key_present
+        || firmware_present
+        || kernel_present
+        || initrd_present
+        || req.vcpus.is_some()
+        || req.vcpu_type.is_some();
 
     if needs_regeneration {
         // Ensure all files exist
@@ -225,7 +237,11 @@ pub async fn update_record_logic(
         let auth_key_path = artifact_dir.join("id-auth-key.pem");
 
         let vcpus = req.vcpus.unwrap_or(vm_model.vcpus as u32);
-        let vcpu_type = req.vcpu_type.as_ref().unwrap_or(&vm_model.vcpu_type).clone();
+        let vcpu_type = req
+            .vcpu_type
+            .as_ref()
+            .unwrap_or(&vm_model.vcpu_type)
+            .clone();
 
         // Convert image_id bytes to hex string (32 characters, 16 bytes when decoded)
         let image_id_hex = hex::encode(&vm_model.image_id);
@@ -241,7 +257,8 @@ pub async fn update_record_logic(
             &auth_key_path,
             &artifact_dir,
             image_id_hex,
-        ).map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
 
         // Update digests
         let id_digest = snpguest_wrapper::get_key_digest(&id_key_path)
@@ -270,11 +287,23 @@ pub async fn update_record_logic(
     }
     if let Some(enabled) = req.enabled {
         active_model.enabled = Set(enabled);
-    } else if req.os_name.is_none() && req.secret.is_none() && req.vcpus.is_none() &&
-              req.vcpu_type.is_none() && !id_key_present && !auth_key_present &&
-              !firmware_present && !kernel_present && !initrd_present &&
-              req.allowed_debug.is_none() && req.allowed_migrate_ma.is_none() && req.allowed_smt.is_none() &&
-              req.min_tcb_bootloader.is_none() && req.min_tcb_tee.is_none() && req.min_tcb_snp.is_none() && req.min_tcb_microcode.is_none() {
+    } else if req.os_name.is_none()
+        && req.secret.is_none()
+        && req.vcpus.is_none()
+        && req.vcpu_type.is_none()
+        && !id_key_present
+        && !auth_key_present
+        && !firmware_present
+        && !kernel_present
+        && !initrd_present
+        && req.allowed_debug.is_none()
+        && req.allowed_migrate_ma.is_none()
+        && req.allowed_smt.is_none()
+        && req.min_tcb_bootloader.is_none()
+        && req.min_tcb_tee.is_none()
+        && req.min_tcb_snp.is_none()
+        && req.min_tcb_microcode.is_none()
+    {
         // If no other changes, default enabled to false for checkbox behavior
         active_model.enabled = Set(false);
     }
@@ -307,7 +336,9 @@ pub async fn update_record_logic(
             .map_err(|e| format!("Failed to update kernel params file: {}", e))?;
     }
 
-    active_model.update(db).await
+    active_model
+        .update(db)
+        .await
         .map_err(|e| format!("Failed to update record in database: {}", e))?;
 
     Ok(UpdateRecordResponse {

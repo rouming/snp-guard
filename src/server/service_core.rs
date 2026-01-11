@@ -1,22 +1,27 @@
 use std::sync::Arc;
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+};
 
 use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
     ToggleEnabledRequest, UpdateRecordRequest,
 };
-use entity::{vm, token};
+use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
 use sev::parser::ByteParser;
 
 use crate::attestation::AttestationState;
-use crate::snpguest_wrapper;
 use crate::business_logic;
-use argon2::{Argon2, password_hash::{PasswordHasher, PasswordHash, PasswordVerifier, SaltString}};
+use crate::snpguest_wrapper;
+use argon2::{
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    Argon2,
+};
+use base64::Engine;
 use rand::RngCore;
 use uuid::Uuid;
-use base64::Engine;
 
 pub struct ServiceState {
     pub db: DatabaseConnection,
@@ -39,7 +44,10 @@ struct ParsedReport<'a> {
 
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
     AttestationReport::from_bytes(report_data)
-        .map(|r| ParsedReport { report: r, raw: report_data })
+        .map(|r| ParsedReport {
+            report: r,
+            raw: report_data,
+        })
         .map_err(|e| format!("Failed to parse attestation report: {e}"))
 }
 
@@ -113,9 +121,11 @@ pub async fn verify_report_core(
         }
     };
 
-    if let Err(e) =
-        snpguest_wrapper::verify_report_signature(&report_path, std::path::Path::new(""), &cpu_family)
-    {
+    if let Err(e) = snpguest_wrapper::verify_report_signature(
+        &report_path,
+        std::path::Path::new(""),
+        &cpu_family,
+    ) {
         return AttestationResponse {
             success: false,
             secret: vec![],
@@ -236,7 +246,9 @@ pub async fn verify_report_core(
     }
 }
 
-pub async fn list_records_core(state: &Arc<ServiceState>) -> Result<Vec<AttestationRecord>, String> {
+pub async fn list_records_core(
+    state: &Arc<ServiceState>,
+) -> Result<Vec<AttestationRecord>, String> {
     let records = vm::Entity::find()
         .order_by_asc(vm::Column::OsName)
         .all(&state.db)
@@ -271,7 +283,10 @@ pub async fn list_records_core(state: &Arc<ServiceState>) -> Result<Vec<Attestat
     Ok(proto_records)
 }
 
-pub async fn get_record_core(state: &Arc<ServiceState>, id: String) -> Result<Option<AttestationRecord>, String> {
+pub async fn get_record_core(
+    state: &Arc<ServiceState>,
+    id: String,
+) -> Result<Option<AttestationRecord>, String> {
     let record = vm::Entity::find_by_id(id)
         .one(&state.db)
         .await
@@ -300,14 +315,37 @@ pub async fn get_record_core(state: &Arc<ServiceState>, id: String) -> Result<Op
     }))
 }
 
-pub async fn create_record_core(state: &Arc<ServiceState>, req: CreateRecordRequest) -> Result<String, String> {
+pub async fn create_record_core(
+    state: &Arc<ServiceState>,
+    req: CreateRecordRequest,
+) -> Result<String, String> {
     let create_req = business_logic::CreateRecordRequest {
         os_name: req.os_name,
-        id_key_pem: if req.id_key.is_empty() { None } else { Some(req.id_key) },
-        auth_key_pem: if req.auth_key.is_empty() { None } else { Some(req.auth_key) },
-        firmware_data: if req.firmware.is_empty() { None } else { Some(req.firmware) },
-        kernel_data: if req.kernel.is_empty() { None } else { Some(req.kernel) },
-        initrd_data: if req.initrd.is_empty() { None } else { Some(req.initrd) },
+        id_key_pem: if req.id_key.is_empty() {
+            None
+        } else {
+            Some(req.id_key)
+        },
+        auth_key_pem: if req.auth_key.is_empty() {
+            None
+        } else {
+            Some(req.auth_key)
+        },
+        firmware_data: if req.firmware.is_empty() {
+            None
+        } else {
+            Some(req.firmware)
+        },
+        kernel_data: if req.kernel.is_empty() {
+            None
+        } else {
+            Some(req.kernel)
+        },
+        initrd_data: if req.initrd.is_empty() {
+            None
+        } else {
+            Some(req.initrd)
+        },
         kernel_params: req.kernel_params,
         vcpus: req.vcpus as u32,
         vcpu_type: req.vcpu_type,
@@ -326,7 +364,10 @@ pub async fn create_record_core(state: &Arc<ServiceState>, req: CreateRecordRequ
     Ok(res)
 }
 
-pub async fn update_record_core(state: &Arc<ServiceState>, req: UpdateRecordRequest) -> Result<(), String> {
+pub async fn update_record_core(
+    state: &Arc<ServiceState>,
+    req: UpdateRecordRequest,
+) -> Result<(), String> {
     let update_req = business_logic::UpdateRecordRequest {
         id: req.id,
         os_name: req.os_name,
@@ -351,7 +392,11 @@ pub async fn update_record_core(state: &Arc<ServiceState>, req: UpdateRecordRequ
     };
 
     let res = business_logic::update_record_logic(&state.attestation_state.db, update_req).await?;
-    if res.success { Ok(()) } else { Err(res.error_message.unwrap_or_else(|| "update failed".into())) }
+    if res.success {
+        Ok(())
+    } else {
+        Err(res.error_message.unwrap_or_else(|| "update failed".into()))
+    }
 }
 
 pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result<(), String> {
@@ -394,13 +439,19 @@ fn hash_token(token: &str) -> Result<String, String> {
 
 fn verify_token_hash(token: &str, hash: &str) -> bool {
     if let Ok(parsed) = PasswordHash::new(hash) {
-        Argon2::default().verify_password(token.as_bytes(), &parsed).is_ok()
+        Argon2::default()
+            .verify_password(token.as_bytes(), &parsed)
+            .is_ok()
     } else {
         false
     }
 }
 
-pub async fn generate_token(state: &ServiceState, label: String, expires_at: Option<chrono::NaiveDateTime>) -> Result<(String, TokenInfo), String> {
+pub async fn generate_token(
+    state: &ServiceState,
+    label: String,
+    expires_at: Option<chrono::NaiveDateTime>,
+) -> Result<(String, TokenInfo), String> {
     let token_plain = {
         let mut buf = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut buf);
@@ -419,7 +470,10 @@ pub async fn generate_token(state: &ServiceState, label: String, expires_at: Opt
         revoked: Set(false),
     };
 
-    model.insert(&state.db).await.map_err(|e| format!("DB error: {e}"))?;
+    model
+        .insert(&state.db)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
 
     let info = TokenInfo {
         id,
@@ -461,7 +515,10 @@ pub async fn revoke_token(state: &ServiceState, id: String) -> Result<(), String
     model.revoked = true;
     let mut active: token::ActiveModel = model.into();
     active.revoked = Set(true);
-    active.update(&state.db).await.map_err(|e| format!("DB error: {e}"))?;
+    active
+        .update(&state.db)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
     Ok(())
 }
 

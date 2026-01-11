@@ -56,13 +56,14 @@ pub async fn master_auth_middleware(
         let mut headers = HeaderMap::new();
         headers.insert(
             header::WWW_AUTHENTICATE,
-            "Basic realm=\"SnpGuard Management\""
-                .parse()
-                .unwrap(),
+            "Basic realm=\"SnpGuard Management\"".parse().unwrap(),
         );
         Response::builder()
             .status(StatusCode::UNAUTHORIZED)
-            .header(header::WWW_AUTHENTICATE, "Basic realm=\"SnpGuard Management\"")
+            .header(
+                header::WWW_AUTHENTICATE,
+                "Basic realm=\"SnpGuard Management\"",
+            )
             .body(Body::from("Unauthorized - enter master password"))
             .unwrap()
     }

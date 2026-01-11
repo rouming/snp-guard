@@ -1,25 +1,25 @@
 use axum::{
-    routing::{get, post},
-    Router, Extension,
     middleware,
+    routing::{get, post},
+    Extension, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
+use rand::RngCore;
 use sea_orm::Database;
 use std::net::SocketAddr;
-use tower_http::trace::TraceLayer;
-use tower_http::services::ServeDir;
 use std::sync::Arc;
-use rand::RngCore;
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
 
 mod attestation;
-mod web;
-mod snpguest_wrapper;
 mod auth;
-mod service_core;
 mod business_logic;
 mod master_password;
 mod nonce;
 mod rest_api;
+mod service_core;
+mod snpguest_wrapper;
+mod web;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Master password (web management)
     let master_auth = Arc::new(master_password::load_or_create_master_password()?);
-    
+
     // REST API router
     let rest_router = rest_api::router(service_state.clone(), master_auth.clone());
 
@@ -78,7 +78,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 7. TLS Configuration
     // 7. TLS Configuration - HTTPS only
-    let tls_cert = std::env::var("TLS_CERT").expect("TLS_CERT must be set (path to PEM certificate)");
+    let tls_cert =
+        std::env::var("TLS_CERT").expect("TLS_CERT must be set (path to PEM certificate)");
     let tls_key = std::env::var("TLS_KEY").expect("TLS_KEY must be set (path to PEM private key)");
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
 

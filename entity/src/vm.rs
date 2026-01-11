@@ -5,20 +5,20 @@ use serde::{Deserialize, Serialize};
 #[sea_orm(table_name = "attestation_records")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    pub id: String,              // UUID
+    pub id: String, // UUID
     pub os_name: String,
     pub request_count: i32,
     pub secret: String,
     pub vcpus: i32,
     pub vcpu_type: String,
-    pub enabled: bool,           // Enable/Disable flag
+    pub enabled: bool, // Enable/Disable flag
     #[sea_orm(column_type = "Binary(16)")]
-    pub image_id: Vec<u8>,       // Image ID (UUID as 16 bytes) for attestation report matching
+    pub image_id: Vec<u8>, // Image ID (UUID as 16 bytes) for attestation report matching
 
     // Policy flags
-    pub allowed_debug: bool,     // Allow debug mode
+    pub allowed_debug: bool,      // Allow debug mode
     pub allowed_migrate_ma: bool, // Allow migration with MA
-    pub allowed_smt: bool,       // Allow Simultaneous Multithreading
+    pub allowed_smt: bool,        // Allow Simultaneous Multithreading
 
     // TCB minimum version requirements
     pub min_tcb_bootloader: i32, // Minimum PSP bootloader version
@@ -28,13 +28,13 @@ pub struct Model {
 
     #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,
-    
+
     #[sea_orm(column_type = "Binary(48)")]
     pub auth_key_digest: Vec<u8>,
-    
+
     pub created_at: DateTime,
     pub kernel_params: String,
-    
+
     // Stored filenames relative to artifact dir
     pub firmware_path: String,
     pub kernel_path: String,
