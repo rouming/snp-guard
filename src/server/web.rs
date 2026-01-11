@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::fs;
 use std::process::Command;
 use common::snpguard::AttestationRecord;
+use crate::service_core::{self, ServiceState, TokenInfo};
 use std::sync::Arc;
-use crate::service_core::{self, ServiceState};
+use chrono::Duration;
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -23,6 +24,14 @@ struct CreateTemplate {}
 #[derive(Template)]
 #[template(path = "edit.html")]
 struct EditTemplate { vm: AttestationRecord }
+
+#[derive(Template)]
+#[template(path = "tokens.html")]
+struct TokensTemplate {
+    tokens: Vec<TokenInfo>,
+    new_token: String,
+    show_token: bool,
+}
 
 pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
     match service_core::list_records_core(&state).await {
@@ -291,6 +300,76 @@ pub async fn delete_action(Extension(state): Extension<Arc<ServiceState>>, Path(
     match service_core::delete_record_core(&state, id).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Deleting Record</h1><p>{}</p>", e)).into_response(),
+    }
+}
+
+pub async fn tokens_page(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
+    match service_core::list_tokens(&state).await {
+        Ok(tokens) => {
+            let template = TokensTemplate { tokens, new_token: String::new(), show_token: false };
+            match template.render() {
+                Ok(html) => Html(html).into_response(),
+                Err(e) => Html(format!("Template error: {}", e)).into_response(),
+            }
+        }
+        Err(e) => Html(format!("<h1>Error</h1><p>{}</p>", e)).into_response(),
+    }
+}
+
+pub async fn create_token(
+    Extension(state): Extension<Arc<ServiceState>>,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    let mut label = String::new();
+    let mut expires_hours: Option<i64> = None;
+
+    while let Some(field) = multipart.next_field().await.unwrap() {
+        let name = field.name().unwrap_or("").to_string();
+        let txt = field.text().await.unwrap_or_default();
+        match name.as_str() {
+            "label" => label = txt,
+            "expires_hours" => {
+                let parsed = txt.trim();
+                if !parsed.is_empty() {
+                    if let Ok(h) = parsed.parse::<i64>() {
+                        expires_hours = Some(h);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if label.is_empty() {
+        return Html("<h1>Error</h1><p>Label is required</p>").into_response();
+    }
+
+    let expires_at = expires_hours.and_then(|h| chrono::Utc::now().naive_utc().checked_add_signed(Duration::hours(h)));
+
+    match service_core::generate_token(&state, label, expires_at).await {
+        Ok((token_plain, _info)) => {
+            match service_core::list_tokens(&state).await {
+                Ok(tokens) => {
+                    let template = TokensTemplate { tokens, new_token: token_plain, show_token: true };
+                    match template.render() {
+                        Ok(html) => Html(html).into_response(),
+                        Err(e) => Html(format!("Template error: {}", e)).into_response(),
+                    }
+                }
+                Err(e) => Html(format!("<h1>Error</h1><p>{}</p>", e)).into_response(),
+            }
+        }
+        Err(e) => Html(format!("<h1>Error</h1><p>Failed to generate token: {}</p>", e)).into_response(),
+    }
+}
+
+pub async fn revoke_token(
+    Extension(state): Extension<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match service_core::revoke_token(&state, id).await {
+        Ok(_) => Redirect::to("/tokens").into_response(),
+        Err(e) => Html(format!("<h1>Error</h1><p>Failed to revoke token: {}</p>", e)).into_response(),
     }
 }
 

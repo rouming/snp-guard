@@ -21,7 +21,6 @@ use common::snpguard::{
     DeleteRecordResponse, ToggleEnabledRequest, ToggleEnabledResponse,
 };
 use argon2::{Argon2, password_hash::PasswordHash, password_hash::PasswordVerifier};
-use serde::Deserialize;
 
 const PROTO_CT: &str = "application/x-protobuf";
 
@@ -280,7 +279,7 @@ async fn create_token(
         Ok(r) => r,
         Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Invalid token create payload (json)"),
     };
-    let expires_at = req.expires_at.and_then(|ts| chrono::NaiveDateTime::from_timestamp_opt(ts, 0));
+    let expires_at = req.expires_at.and_then(|ts| chrono::DateTime::<chrono::Utc>::from_timestamp(ts, 0).map(|dt| dt.naive_utc()));
     match crate::service_core::generate_token(&state, req.label, expires_at).await {
         Ok((token_plain, info)) => {
             let resp = serde_json::json!({

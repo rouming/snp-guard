@@ -55,6 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/delete/:id", get(web::delete_action))
         .route("/download/:id/:file", get(web::download_artifact))
         .route("/toggle/:id", post(web::toggle_enabled))
+        .route("/tokens", get(web::tokens_page).post(web::create_token))
+        .route("/tokens/:id/revoke", post(web::revoke_token))
         .nest_service("/static", ServeDir::new("ui/static"))
         .layer(Extension(grpc_state.clone()))
         .layer(Extension(master_auth.clone()))

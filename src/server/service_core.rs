@@ -28,7 +28,7 @@ pub struct TokenInfo {
     pub id: String,
     pub label: String,
     pub created_at: String,
-    pub expires_at: Option<String>,
+    pub expires_at: String,
     pub revoked: bool,
 }
 
@@ -425,7 +425,7 @@ pub async fn generate_token(state: &ServiceState, label: String, expires_at: Opt
         id,
         label,
         created_at: now.to_string(),
-        expires_at: expires_at.map(|e| e.to_string()),
+        expires_at: expires_at.map(|e| e.to_string()).unwrap_or_default(),
         revoked: false,
     };
 
@@ -445,7 +445,7 @@ pub async fn list_tokens(state: &ServiceState) -> Result<Vec<TokenInfo>, String>
             id: t.id,
             label: t.label,
             created_at: t.created_at.to_string(),
-            expires_at: t.expires_at.map(|e| e.to_string()),
+            expires_at: t.expires_at.map(|e| e.to_string()).unwrap_or_default(),
             revoked: t.revoked,
         })
         .collect())
