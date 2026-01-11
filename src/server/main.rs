@@ -1,12 +1,12 @@
 use axum::{
     routing::{get, post},
     Router, Extension,
+    middleware,
 };
 use sea_orm::Database;
 use std::net::SocketAddr;
 use tower_http::trace::TraceLayer;
 use tower_http::services::ServeDir;
-use axum::middleware;
 use std::sync::Arc;
 use rand::RngCore;
 
@@ -19,6 +19,7 @@ mod business_logic;
 mod grpc_client;
 mod master_password;
 mod nonce;
+mod rest_api;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,30 +45,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Master password (web management)
     let master_auth = Arc::new(master_password::load_or_create_master_password()?);
     
-    // Start gRPC server
-    let grpc_state_clone = grpc_state.clone();
-    let grpc_addr = "[::]:50051".parse().unwrap();
-    tokio::spawn(async move {
-        use tonic::transport::Server;
-        use grpc_service::{AttestationServiceImpl, ManagementServiceImpl};
-        use common::snpguard::{
-            attestation_service_server::AttestationServiceServer,
-            management_service_server::ManagementServiceServer,
-        };
-        
-        let attestation_svc = AttestationServiceImpl { state: grpc_state_clone.clone() };
-        let management_svc = ManagementServiceImpl { state: grpc_state_clone };
-        
-        Server::builder()
-            .add_service(AttestationServiceServer::new(attestation_svc))
-            .add_service(ManagementServiceServer::new(management_svc))
-            .serve(grpc_addr)
-            .await
-            .unwrap();
-    });
-    println!("gRPC Service listening on {}", grpc_addr);
-    
-    // 4. Web UI (Management) - calls gRPC internally
+    // REST API router
+    let rest_router = rest_api::router(grpc_state.clone(), master_auth.clone());
+
+    // 4. Web UI (Management)
     let management_app = Router::new()
         .route("/", get(web::index))
         .route("/create", get(web::create_form).post(web::create_action))
@@ -90,30 +71,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 6. Combined app
     let app = Router::new()
         .merge(management_app)
-        .merge(attestation_app);
+        .merge(attestation_app)
+        .nest("/v1", rest_router);
 
     // 7. TLS Configuration
-    let tls_cert = std::env::var("TLS_CERT").ok();
-    let tls_key = std::env::var("TLS_KEY").ok();
-    
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    
-    if let (Some(_cert_path), Some(_key_path)) = (tls_cert, tls_key) {
-        // HTTPS mode - simplified, for production use proper TLS termination (nginx, etc.)
-        println!("WARNING: Direct TLS in axum is complex. Consider using a reverse proxy for production.");
-        println!("For now, falling back to HTTP. Set up nginx/caddy for TLS termination.");
-        println!("Management UI listening on http://{}", addr);
-                println!("Attestation endpoints: POST /attestation/nonce (verify via gRPC)");
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
-    } else {
-        // HTTP mode (for development)
-        println!("WARNING: Running in HTTP mode (no TLS). Set TLS_CERT and TLS_KEY for production.");
-        println!("Management UI listening on http://{}", addr);
-                println!("Attestation endpoints: POST /attestation/nonce (verify via gRPC)");
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
-    }
+
+    println!("WARNING: Running in HTTP mode. Place behind TLS-terminating proxy for production.");
+    println!("Management UI listening on http://{}", addr);
+    println!("REST API listening on http://{}/v1", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
     
     Ok(())
 }

@@ -41,6 +41,351 @@ pub struct GrpcServiceState {
     pub attestation_state: Arc<AttestationState>,
 }
 
+// Shared helpers for REST and (legacy) gRPC
+
+pub async fn verify_report_core(
+    state: Arc<GrpcServiceState>,
+    req: AttestationRequest,
+) -> AttestationResponse {
+    let report_data = req.report_data;
+
+    // 1) Parse SNP report
+    let parsed = match parse_snp_report(&report_data) {
+        Ok(p) => p,
+        Err(e) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: e,
+            }
+        }
+    };
+
+    // 2) Verify nonce
+    if let Err(e) = verify_nonce_step(&state.attestation_state.secret, &parsed.report.report_data) {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: e,
+        };
+    }
+
+    // 3) Detect CPU family
+    let cpu_family = match crate::attestation::detect_cpu_family(parsed.raw) {
+        Ok(family) => {
+            if !req.cpu_family_hint.is_empty() {
+                req.cpu_family_hint.clone()
+            } else {
+                family
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to detect CPU family: {}", e);
+            if !req.cpu_family_hint.is_empty() {
+                req.cpu_family_hint.clone()
+            } else {
+                "genoa".to_string()
+            }
+        }
+    };
+
+    // 4) Verify signature (re-use existing wrapper)
+    let temp_dir = tempfile::TempDir::new();
+    let report_path = match temp_dir {
+        Ok(dir) => {
+            let path = dir.path().join("report.bin");
+            if std::fs::write(&path, parsed.raw).is_err() {
+                return AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: "Failed to write report to temp file".to_string(),
+                };
+            }
+            path
+        }
+        Err(_) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Failed to create temp dir".to_string(),
+            }
+        }
+    };
+
+    if let Err(e) =
+        snpguest_wrapper::verify_report_signature(&report_path, std::path::Path::new(""), &cpu_family)
+    {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: format!("Signature verification failed: {}", e),
+        };
+    }
+
+    // 5) DB lookup
+    let record = match vm::Entity::find()
+        .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
+        .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
+        .filter(vm::Column::AuthKeyDigest.eq(parsed.report.author_key_digest.to_vec()))
+        .one(&state.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Database error".to_string(),
+            }
+        }
+    };
+
+    if let Some(vm) = record {
+        // Policy
+        let policy = parsed.report.policy;
+        if policy.debug_allowed() && !vm.allowed_debug {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Debug mode not allowed by policy".to_string(),
+            };
+        }
+        if policy.migrate_ma_allowed() && !vm.allowed_migrate_ma {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Migration with MA not allowed by policy".to_string(),
+            };
+        }
+        if policy.smt_allowed() && !vm.allowed_smt {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Simultaneous Multithreading not allowed by policy".to_string(),
+            };
+        }
+
+        // TCB
+        let current_bootloader = parsed.report.current_tcb.bootloader;
+        let current_tee = parsed.report.current_tcb.tee;
+        let current_snp = parsed.report.current_tcb.snp;
+        let current_microcode = parsed.report.current_tcb.microcode;
+
+        if current_bootloader < vm.min_tcb_bootloader as u8 {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!(
+                    "Bootloader TCB version {} below minimum requirement {}",
+                    current_bootloader, vm.min_tcb_bootloader
+                ),
+            };
+        }
+        if current_tee < vm.min_tcb_tee as u8 {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!(
+                    "TEE TCB version {} below minimum requirement {}",
+                    current_tee, vm.min_tcb_tee
+                ),
+            };
+        }
+        if current_snp < vm.min_tcb_snp as u8 {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!(
+                    "SNP TCB version {} below minimum requirement {}",
+                    current_snp, vm.min_tcb_snp
+                ),
+            };
+        }
+        if current_microcode < vm.min_tcb_microcode as u8 {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!(
+                    "Microcode TCB version {} below minimum requirement {}",
+                    current_microcode, vm.min_tcb_microcode
+                ),
+            };
+        }
+
+        if !vm.enabled {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Attestation record is disabled".to_string(),
+            };
+        }
+
+        // Update request count (best-effort)
+        let mut active: vm::ActiveModel = vm.clone().into();
+        active.request_count = Set(vm.request_count + 1);
+        let _ = active.update(&state.db).await;
+
+        AttestationResponse {
+            success: true,
+            secret: vm.secret.into_bytes(),
+            error_message: String::new(),
+        }
+    } else {
+        AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "No matching attestation record found".to_string(),
+        }
+    }
+}
+
+pub async fn list_records_core(state: &Arc<GrpcServiceState>) -> Result<Vec<AttestationRecord>, String> {
+    let records = vm::Entity::find()
+        .order_by_asc(vm::Column::OsName)
+        .all(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    let proto_records: Vec<AttestationRecord> = records
+        .into_iter()
+        .map(|vm| AttestationRecord {
+            id: vm.id,
+            os_name: vm.os_name,
+            request_count: vm.request_count,
+            secret: vm.secret,
+            vcpu_type: vm.vcpu_type,
+            enabled: vm.enabled,
+            created_at: vm.created_at.to_string(),
+            kernel_params: vm.kernel_params,
+            firmware_path: vm.firmware_path,
+            kernel_path: vm.kernel_path,
+            initrd_path: vm.initrd_path,
+            image_id: vm.image_id,
+            allowed_debug: vm.allowed_debug,
+            allowed_migrate_ma: vm.allowed_migrate_ma,
+            allowed_smt: vm.allowed_smt,
+            min_tcb_bootloader: vm.min_tcb_bootloader as u32,
+            min_tcb_tee: vm.min_tcb_tee as u32,
+            min_tcb_snp: vm.min_tcb_snp as u32,
+            min_tcb_microcode: vm.min_tcb_microcode as u32,
+        })
+        .collect();
+
+    Ok(proto_records)
+}
+
+pub async fn get_record_core(state: &Arc<GrpcServiceState>, id: String) -> Result<Option<AttestationRecord>, String> {
+    let record = vm::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    Ok(record.map(|vm| AttestationRecord {
+        id: vm.id,
+        os_name: vm.os_name,
+        request_count: vm.request_count,
+        secret: vm.secret,
+        vcpu_type: vm.vcpu_type,
+        enabled: vm.enabled,
+        created_at: vm.created_at.to_string(),
+        kernel_params: vm.kernel_params,
+        firmware_path: vm.firmware_path,
+        kernel_path: vm.kernel_path,
+        initrd_path: vm.initrd_path,
+        image_id: vm.image_id,
+        allowed_debug: vm.allowed_debug,
+        allowed_migrate_ma: vm.allowed_migrate_ma,
+        allowed_smt: vm.allowed_smt,
+        min_tcb_bootloader: vm.min_tcb_bootloader as u32,
+        min_tcb_tee: vm.min_tcb_tee as u32,
+        min_tcb_snp: vm.min_tcb_snp as u32,
+        min_tcb_microcode: vm.min_tcb_microcode as u32,
+    }))
+}
+
+pub async fn create_record_core(state: &Arc<GrpcServiceState>, req: CreateRecordRequest) -> Result<String, String> {
+    let create_req = business_logic::CreateRecordRequest {
+        os_name: req.os_name,
+        id_key_pem: if req.id_key.is_empty() { None } else { Some(req.id_key) },
+        auth_key_pem: if req.auth_key.is_empty() { None } else { Some(req.auth_key) },
+        firmware_data: if req.firmware.is_empty() { None } else { Some(req.firmware) },
+        kernel_data: if req.kernel.is_empty() { None } else { Some(req.kernel) },
+        initrd_data: if req.initrd.is_empty() { None } else { Some(req.initrd) },
+        kernel_params: req.kernel_params,
+        vcpus: req.vcpus as u32,
+        vcpu_type: req.vcpu_type,
+        service_url: req.service_url,
+        secret: req.secret,
+        allowed_debug: req.allowed_debug,
+        allowed_migrate_ma: req.allowed_migrate_ma,
+        allowed_smt: req.allowed_smt,
+        min_tcb_bootloader: req.min_tcb_bootloader,
+        min_tcb_tee: req.min_tcb_tee,
+        min_tcb_snp: req.min_tcb_snp,
+        min_tcb_microcode: req.min_tcb_microcode,
+    };
+
+    let res = business_logic::create_record_logic(&state.attestation_state.db, create_req).await?;
+    Ok(res.id)
+}
+
+pub async fn update_record_core(state: &Arc<GrpcServiceState>, req: UpdateRecordRequest) -> Result<(), String> {
+    let update_req = business_logic::UpdateRecordRequest {
+        id: req.id,
+        os_name: req.os_name,
+        id_key_pem: req.id_key,
+        auth_key_pem: req.auth_key,
+        firmware_data: req.firmware,
+        kernel_data: req.kernel,
+        initrd_data: req.initrd,
+        kernel_params: req.kernel_params,
+        vcpus: req.vcpus.map(|v| v as u32),
+        vcpu_type: req.vcpu_type,
+        service_url: req.service_url,
+        secret: req.secret,
+        enabled: req.enabled,
+        allowed_debug: req.allowed_debug,
+        allowed_migrate_ma: req.allowed_migrate_ma,
+        allowed_smt: req.allowed_smt,
+        min_tcb_bootloader: req.min_tcb_bootloader,
+        min_tcb_tee: req.min_tcb_tee,
+        min_tcb_snp: req.min_tcb_snp,
+        min_tcb_microcode: req.min_tcb_microcode,
+    };
+
+    let res = business_logic::update_record_logic(&state.attestation_state.db, update_req).await?;
+    if res.success { Ok(()) } else { Err(res.error_message.unwrap_or_else(|| "update failed".into())) }
+}
+
+pub async fn delete_record_core(state: &Arc<GrpcServiceState>, id: String) -> Result<(), String> {
+    vm::Entity::delete_by_id(id)
+        .exec(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(())
+}
+
+pub async fn toggle_enabled_core(
+    state: &Arc<GrpcServiceState>,
+    req: ToggleEnabledRequest,
+    enabled: bool,
+) -> Result<bool, String> {
+    let id = req.id;
+    let mut vm_model = vm::Entity::find_by_id(id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "Record not found".to_string())?;
+
+    vm_model.enabled = enabled;
+    let mut active: vm::ActiveModel = vm_model.into();
+    active.enabled = Set(enabled);
+    active
+        .update(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+    Ok(enabled)
+}
 // Attestation Service Implementation
 pub struct AttestationServiceImpl {
     pub state: Arc<GrpcServiceState>,

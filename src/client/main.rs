@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let mut request_bytes = Vec::new();
     nonce_request.encode(&mut request_bytes)?;
     
-    let nonce_url = format!("{}/attestation/nonce", url);
+    let nonce_url = format!("{}/v1/attest/nonce", url);
     let response = client
         .post(&nonce_url)
         .header("Content-Type", "application/x-protobuf")
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     let mut request_bytes = Vec::new();
     verify_request.encode(&mut request_bytes)?;
     
-    let verify_url = format!("{}/attestation/verify", url);
+    let verify_url = format!("{}/v1/attest/report", url);
     let response = client
         .post(&verify_url)
         .header("Content-Type", "application/x-protobuf")

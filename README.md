@@ -375,6 +375,23 @@ The application will be available at `http://localhost:3000`.
 - Keep that password safe; it is not stored in plaintext and won’t be shown again unless you delete the hash file to regenerate a new one.
 - Web login uses HTTP Basic Auth; username is ignored—enter any value, and supply the master password in the password field.
 
+### Attestation REST API (HTTPS + Protobuf)
+
+- All attestation and management APIs are exposed as REST-style HTTPS endpoints using protobuf payloads (`application/x-protobuf`).
+- Endpoints (prefix `/v1`):
+  - `POST /v1/attest/nonce` -> `NonceRequest` / `NonceResponse`
+  - `POST /v1/attest/report` -> `AttestationRequest` / `AttestationResponse`
+  - `GET /v1/records` -> `ListRecordsResponse`
+  - `GET /v1/records/{id}` -> `GetRecordResponse`
+  - `POST /v1/records` -> `CreateRecordRequest` / `CreateRecordResponse`
+  - `PATCH /v1/records/{id}` -> `UpdateRecordRequest` / `UpdateRecordResponse`
+  - `POST /v1/records/{id}/enable` -> `ToggleEnabledResponse`
+  - `POST /v1/records/{id}/disable` -> `ToggleEnabledResponse`
+  - `DELETE /v1/records/{id}` -> `DeleteRecordResponse`
+  - `GET /v1/health` -> 200 OK
+- Attestation client uses the same protobuf messages over HTTPS with full TLS verification.
+- Management routes are protected by the master password (HTTP Basic; username ignored).
+
 ### Attestation Report Parsing
 
 - The server parses SEV-SNP attestation reports using the `sev` crate’s `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (nonce), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
