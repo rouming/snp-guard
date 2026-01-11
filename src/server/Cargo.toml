@@ -40,6 +40,7 @@ hex = "0.4"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = "0.4"
 base64 = "0.21"
+argon2 = "0.5"
 tempfile = "3.8"
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.5"

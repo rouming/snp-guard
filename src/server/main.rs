@@ -17,6 +17,7 @@ mod auth;
 mod grpc_service;
 mod business_logic;
 mod grpc_client;
+mod master_password;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,6 +36,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: conn.clone(),
         attestation_state: attestation_state.clone(),
     });
+
+    // Master password (web management)
+    let master_auth = Arc::new(master_password::load_or_create_master_password()?);
     
     // Start gRPC server
     let grpc_state_clone = grpc_state.clone();
@@ -69,7 +73,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/toggle/:id", post(web::toggle_enabled))
         .nest_service("/static", ServeDir::new("ui/static"))
         .layer(Extension(grpc_state.clone()))
-        .layer(middleware::from_fn(auth::basic_auth_middleware))
+        .layer(Extension(master_auth.clone()))
+        .layer(middleware::from_fn(auth::master_auth_middleware))
         .layer(TraceLayer::new_for_http());
 
     // 5. Attestation API (HTTPS/TLS with protobuf) - calls gRPC internally
