@@ -16,16 +16,16 @@
 
 ### 3. Client Attestation Tool
 - [x] Built without glibc (uses musl target)
-- [x] Retrieves attestation report using snpguest tool
+- [x] Retrieves attestation report using virtee/sev library (no snpguest dependency)
 - [x] Communicates via HTTPS/TLS with protobuf
 - [x] Can be included in initrd image
 
 ### 4. Attestation Service
-- [x] Verifies attestation reports from guests (via gRPC)
+- [x] Verifies attestation reports from guests (REST + protobuf over HTTPS)
 - [x] Responds with success/failure
 - [x] Returns SECRET on successful attestation
 - [x] Management frontend for managing attestations
-- [x] API for future management tool integration (gRPC)
+- [x] API for future management tool integration (REST + protobuf)
 
 ### 5. Communication Protocol
 - [x] HTTPS/TLS communication
@@ -35,8 +35,8 @@
 - [x] Nonce used for attestation report generation
 
 ### 6. Endpoints
-- [x] Management endpoint (web UI)
-- [x] Attestation endpoint (gRPC API)
+- [x] Management endpoints (web UI and REST under `/v1/records`, `/v1/tokens`)
+- [x] Attestation endpoints (REST under `/v1/attest/nonce` and `/v1/attest/report`)
 
 ### 7. Management Authentication
 - [x] Basic authorization (username/password)
@@ -96,15 +96,16 @@
 - [x] HTTPS/TLS connection (verified certificates)
 - [x] Service sends 64-byte nonce in first response
 - [x] Client generates report with nonce
-- [x] Service verifies report (via gRPC):
+- [x] Service verifies report (REST handler):
   - [x] Extracts nonce from report (offset 0x50)
-  - [x] Verifies nonce (matches stored, not expired)
+  - [x] Verifies nonce (stateless HMAC, timestamp window)
   - [x] Detects CPU family from report (CPUID_FAM_ID/CPUID_MOD_ID)
   - [x] Fetches AMD certificates (CA and VCEK)
   - [x] Verifies certificate chain
   - [x] Verifies attestation report signature
-  - [x] Extracts key digests (0xE0 and 0x110)
-  - [x] Looks up attestation record by digests
+  - [x] Extracts key digests (0xE0 and 0x110) and image_id (0x20)
+  - [x] Looks up attestation record by digests + image_id
+  - [x] Checks policy flags (debug/migrate_ma/smt) and TCB minimums
   - [x] Checks if record is enabled
   - [x] Returns success with SECRET if all checks pass
 
@@ -147,21 +148,18 @@
 
 ## Security Improvements Implemented
 
-- [x] Cryptographically secure RNG (OsRng) for nonce generation
-- [x] Nonce expiration (5 minutes TTL)
-- [x] Nonce verification against stored nonces
-- [x] One-time nonce use (removed after verification)
-- [x] Nonce storage limits (max 10,000 entries)
+- [x] Cryptographically secure RNG (OsRng) for stateless HMAC nonce
+- [x] Nonce freshness window and HMAC verification (no stored nonces)
 - [x] File upload size limits enforced (firmware <10MB, kernel/initrd <50MB)
 - [x] Path traversal protection in download endpoint
 
 ## Architecture Improvements
 
-- [x] **gRPC as Main Backend API**: All business logic moved to gRPC services
-- [x] **Web UI as gRPC Client**: Management frontend calls gRPC services instead of direct DB access
+- [x] **REST + Protobuf as Main Backend API**: Business logic exposed via HTTPS REST endpoints
+- [x] **Web UI uses REST**: Management frontend calls REST, not direct DB
 - [x] **Shared Business Logic**: Common logic extracted to reusable modules
-- [x] **Clean Separation**: Database access isolated to gRPC service layer
-- [x] **API Consistency**: Both HTTP endpoints and future CLI tools use same gRPC APIs
+- [x] **Clean Separation**: Database access isolated to service_core layer
+- [x] **API Consistency**: REST endpoints and future tools share protobuf messages
 
 ## Additional Features
 
@@ -174,12 +172,12 @@
 
 ## Architecture Summary
 
-**✅ gRPC-First Architecture Achieved:**
-- gRPC services (`AttestationService`, `ManagementService`) are the core backend
-- Web UI acts as a gRPC client, not direct database access
+**✅ REST + Protobuf Architecture:**
+- REST endpoints (`/v1/attest/*`, `/v1/records/*`, `/v1/tokens`) are the core backend
+- Web UI uses REST calls, not direct DB access
 - Business logic centralized in shared modules
 - Clean separation between API layer and presentation layer
-- Future CLI tools can reuse the same gRPC APIs
+- Future tools can reuse the same protobuf messages over REST
 
 ## Notes
 
