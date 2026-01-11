@@ -13,73 +13,21 @@ use common::snpguard::{
 };
 use crate::attestation::AttestationState;
 use crate::nonce;
+use sev::firmware::guest::AttestationReport;
+use sev::parser::ByteParser;
 use crate::snpguest_wrapper;
 use crate::business_logic;
 // snpguest wrapper not used directly in gRPC service paths
 
-/// Decode TCB version from attestation report based on CPU family
-/// Returns (microcode, snp, tee, bootloader) versions
-fn decode_tcb_version(tcb_version: u64, cpu_family: &str) -> (u8, u8, u8, u8) {
-    // Extract bytes from the 64-bit TCB version
-    let microcode = ((tcb_version >> 56) & 0xFF) as u8;
-
-    // Check CPU family to determine TCB structure
-    if cpu_family.contains("genoa") || cpu_family.contains("milan") {
-        // Table 4: Genoa and Milan structure
-        // Bits: 63:56 MICROCODE, 55:48 SNP, 47:16 Reserved, 15:8 TEE, 7:0 BOOT_LOADER
-        let snp = ((tcb_version >> 48) & 0xFF) as u8;
-        let tee = ((tcb_version >> 8) & 0xFF) as u8;
-        let bootloader = (tcb_version & 0xFF) as u8;
-        (microcode, snp, tee, bootloader)
-    } else if cpu_family.contains("turin") {
-        // Table 3: Turin structure
-        // Bits: 63:56 MICROCODE, 55:32 Reserved, 31:24 SNP, 23:16 TEE, 15:8 BOOT_LOADER, 7:0 FMC
-        let snp = ((tcb_version >> 24) & 0xFF) as u8;
-        let tee = ((tcb_version >> 16) & 0xFF) as u8;
-        let bootloader = ((tcb_version >> 8) & 0xFF) as u8;
-        (microcode, snp, tee, bootloader)
-    } else {
-        // Default to Genoa/Milan structure as fallback
-        let snp = ((tcb_version >> 48) & 0xFF) as u8;
-        let tee = ((tcb_version >> 8) & 0xFF) as u8;
-        let bootloader = (tcb_version & 0xFF) as u8;
-        (microcode, snp, tee, bootloader)
-    }
-}
-
 struct ParsedReport<'a> {
-    nonce: &'a [u8],
-    id_digest: &'a [u8],
-    auth_digest: &'a [u8],
-    image_id: Vec<u8>,
-    policy: u64,
-    tcb_version: u64,
+    report: AttestationReport,
     raw: &'a [u8],
 }
 
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
-    if report_data.len() < 0x110 + 48 {
-        return Err("Report too short".to_string());
-    }
-
-    let nonce = &report_data[0x50..0x50 + nonce::NONCE_SIZE];
-    let image_id = report_data[0x20..0x20 + 16].to_vec();
-    let id_digest = &report_data[0xE0..0xE0 + 48];
-    let auth_digest = &report_data[0x110..0x110 + 48];
-    let policy_bytes = &report_data[0x08..0x08 + 8];
-    let policy = u64::from_le_bytes(policy_bytes.try_into().unwrap());
-    let tcb_bytes = &report_data[0x38..0x38 + 8];
-    let tcb_version = u64::from_le_bytes(tcb_bytes.try_into().unwrap());
-
-    Ok(ParsedReport {
-        nonce,
-        id_digest,
-        auth_digest,
-        image_id,
-        policy,
-        tcb_version,
-        raw: report_data,
-    })
+    AttestationReport::from_bytes(report_data)
+        .map(|r| ParsedReport { report: r, raw: report_data })
+        .map_err(|e| format!("Failed to parse attestation report: {e}"))
 }
 
 fn verify_nonce_step(secret: &[u8], nonce_bytes: &[u8]) -> Result<(), String> {
@@ -129,7 +77,7 @@ impl AttestationService for AttestationServiceImpl {
         };
 
         // 2) Verify nonce BEFORE crypto verification
-        if let Err(e) = verify_nonce_step(&self.state.attestation_state.secret, parsed.nonce) {
+        if let Err(e) = verify_nonce_step(&self.state.attestation_state.secret, &parsed.report.report_data) {
             let response = AttestationResponse {
                 success: false,
                 secret: vec![],
@@ -186,9 +134,9 @@ impl AttestationService for AttestationServiceImpl {
 
         // 8. DB lookup by image_id and key digests
         let record = match vm::Entity::find()
-            .filter(vm::Column::ImageId.eq(parsed.image_id.clone()))
-            .filter(vm::Column::IdKeyDigest.eq(parsed.id_digest))
-            .filter(vm::Column::AuthKeyDigest.eq(parsed.auth_digest))
+            .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
+            .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
+            .filter(vm::Column::AuthKeyDigest.eq(parsed.report.author_key_digest.to_vec()))
             .one(&self.state.attestation_state.db)
             .await
         {
@@ -202,10 +150,10 @@ impl AttestationService for AttestationServiceImpl {
 
         if let Some(vm) = record {
             // 9. Verify policy flags
-            let policy = parsed.policy;
-            let report_debug = (policy & (1 << 19)) != 0;
-            let report_migrate_ma = (policy & (1 << 18)) != 0;
-            let report_smt = (policy & (1 << 16)) != 0;
+            let policy = parsed.report.policy;
+            let report_debug = policy.debug_allowed();
+            let report_migrate_ma = policy.migrate_ma_allowed();
+            let report_smt = policy.smt_allowed();
 
             // Check policy flags against allowed settings
             if report_debug && !vm.allowed_debug {
@@ -234,8 +182,10 @@ impl AttestationService for AttestationServiceImpl {
             }
 
             // 10. Verify TCB version requirements
-            let (current_microcode, current_snp, current_tee, current_bootloader) =
-                decode_tcb_version(parsed.tcb_version, &cpu_family);
+            let current_bootloader = parsed.report.current_tcb.bootloader;
+            let current_tee = parsed.report.current_tcb.tee;
+            let current_snp = parsed.report.current_tcb.snp;
+            let current_microcode = parsed.report.current_tcb.microcode;
 
             // Check minimum TCB requirements
             if current_bootloader < vm.min_tcb_bootloader as u8 {

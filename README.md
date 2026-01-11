@@ -375,6 +375,10 @@ The application will be available at `http://localhost:3000`.
 - Keep that password safe; it is not stored in plaintext and won’t be shown again unless you delete the hash file to regenerate a new one.
 - Web login uses HTTP Basic Auth; username is ignored—enter any value, and supply the master password in the password field.
 
+### Attestation Report Parsing
+
+- The server parses SEV-SNP attestation reports using the `sev` crate’s `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (nonce), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
+
 ### Volumes
 
 - `/data`: Persistent storage for the SQLite database
