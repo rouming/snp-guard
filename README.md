@@ -367,6 +367,13 @@ The application will be available at `http://localhost:3000`.
 - `DATABASE_URL`: SQLite database path (default: `sqlite:///data/snpguard.db?mode=rwc`)
 - `RUST_LOG`: Log level (default: `info`)
 - `TLS_CERT`/`TLS_KEY`: Optional TLS certificates for HTTPS
+- `MASTER_PASSWORD_HASH_PATH`: Path to stored Argon2 hash of the master password (default: `/data/master_password.hash`)
+
+### Master Password (Web UI)
+
+- On first container start, the service generates a human-readable master password, prints it once to the logs, hashes it with Argon2, and stores only the hash.
+- Keep that password safe; it is not stored in plaintext and won’t be shown again unless you delete the hash file to regenerate a new one.
+- Web login uses HTTP Basic Auth; username is ignored—enter any value, and supply the master password in the password field.
 
 ### Volumes
 

@@ -54,14 +54,17 @@ pub async fn master_auth_middleware(
         next.run(request).await
     } else {
         let mut headers = HeaderMap::new();
+        // Explain that only the master password matters; username is ignored.
         headers.insert(
             header::WWW_AUTHENTICATE,
-            "Basic realm=\"SnpGuard Management\"".parse().unwrap(),
+            "Basic realm=\"SnpGuard Management (enter master password; username ignored)\""
+                .parse()
+                .unwrap(),
         );
         Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .header(header::WWW_AUTHENTICATE, "Basic realm=\"SnpGuard Management\"")
-            .body(Body::from("Unauthorized"))
+            .body(Body::from("Unauthorized - use any username and the master password"))
             .unwrap()
     }
 }
