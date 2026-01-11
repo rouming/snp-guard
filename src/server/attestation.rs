@@ -9,7 +9,6 @@ use axum::body::to_bytes;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
 use entity::vm;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 use std::io::Write;
 use std::path::Path;
@@ -115,6 +114,7 @@ pub async fn get_nonce_handler(
 }
 
 /// Handler for /attestation/verify - Verify attestation report
+#[allow(dead_code)]
 pub async fn verify_report_handler(
     Extension(state): Extension<Arc<AttestationState>>,
     req: Request<Body>,

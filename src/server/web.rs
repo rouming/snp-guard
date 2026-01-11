@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Multipart},
+    extract::{Path, Multipart},
     response::{Html, IntoResponse, Redirect},
     body::Body,
 };
