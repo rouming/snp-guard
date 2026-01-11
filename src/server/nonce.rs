@@ -14,8 +14,8 @@ pub enum NonceError {
     InvalidLength,
     #[error("nonce MAC invalid")]
     InvalidMac,
-    #[error("nonce expired")]
-    Expired,
+    #[error("nonce timestamp invalid or expired")]
+    InvalidTimestamp,
     #[error("system time error")]
     Time,
 }
@@ -55,9 +55,10 @@ pub fn verify_nonce(secret: &[u8], nonce: &[u8]) -> Result<(), NonceError> {
 
     let ts = u64::from_be_bytes(ts_bytes.try_into().unwrap());
     let now = current_unix_time().map_err(|_| NonceError::Time)?;
-    let skew = if now > ts { now - ts } else { ts - now };
-    if skew > MAX_SKEW_SECS {
-        return Err(NonceError::Expired);
+
+    // Reject future timestamps and stale nonces
+    if ts > now || now - ts > MAX_SKEW_SECS {
+        return Err(NonceError::InvalidTimestamp);
     }
 
     Ok(())
