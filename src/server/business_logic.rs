@@ -28,12 +28,6 @@ pub struct CreateRecordRequest {
 }
 
 #[derive(Debug)]
-pub struct CreateRecordResponse {
-    pub id: String,
-    pub error_message: Option<String>,
-}
-
-#[derive(Debug)]
 pub struct UpdateRecordRequest {
     pub id: String,
     pub os_name: Option<String>,
@@ -67,7 +61,7 @@ pub struct UpdateRecordResponse {
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     req: CreateRecordRequest,
-) -> Result<CreateRecordResponse, String> {
+) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
 
     // Generate unique image_id as UUID (16 bytes)
@@ -154,10 +148,7 @@ pub async fn create_record_logic(
     new_vm.insert(db).await
         .map_err(|e| format!("Failed to save record to database: {}", e))?;
 
-    Ok(CreateRecordResponse {
-        id: new_id,
-        error_message: None,
-    })
+    Ok(new_id)
 }
 
 pub async fn update_record_logic(

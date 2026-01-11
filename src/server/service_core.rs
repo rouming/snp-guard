@@ -310,7 +310,7 @@ pub async fn create_record_core(state: &Arc<ServiceState>, req: CreateRecordRequ
     };
 
     let res = business_logic::create_record_logic(&state.attestation_state.db, create_req).await?;
-    Ok(res.id)
+    Ok(res)
 }
 
 pub async fn update_record_core(state: &Arc<ServiceState>, req: UpdateRecordRequest) -> Result<(), String> {
