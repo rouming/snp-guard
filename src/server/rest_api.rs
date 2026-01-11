@@ -11,7 +11,7 @@ use axum::{
 use prost::Message;
 
 use crate::auth::master_auth_middleware;
-use crate::grpc_service::GrpcServiceState;
+use crate::service_core::ServiceState;
 use crate::nonce;
 use crate::master_password::MasterAuth;
 use common::snpguard::{
@@ -23,7 +23,7 @@ use common::snpguard::{
 
 const PROTO_CT: &str = "application/x-protobuf";
 
-pub fn router(state: Arc<GrpcServiceState>, master: Arc<MasterAuth>) -> Router {
+pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     let public = Router::new()
         .route("/health", get(health))
         .route("/attest/nonce", post(attest_nonce))
@@ -66,7 +66,7 @@ fn proto_error(status: StatusCode, msg: &str) -> Response {
 }
 
 async fn attest_nonce(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     body: Bytes,
 ) -> Response {
     let req = match NonceRequest::decode(&body[..]) {
@@ -79,7 +79,7 @@ async fn attest_nonce(
 }
 
 async fn attest_report(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     body: Bytes,
 ) -> Response {
     let req = match AttestationRequest::decode(&body[..]) {
@@ -87,14 +87,14 @@ async fn attest_report(
         Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode AttestationRequest"),
     };
 
-    let resp = crate::grpc_service::verify_report_core(state.clone(), req).await;
+    let resp = crate::service_core::verify_report_core(state.clone(), req).await;
     proto_response(resp)
 }
 
 async fn list_records(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
 ) -> Response {
-    let records = match crate::grpc_service::list_records_core(&state).await {
+    let records = match crate::service_core::list_records_core(&state).await {
         Ok(r) => r,
         Err(e) => return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     };
@@ -102,31 +102,31 @@ async fn list_records(
 }
 
 async fn get_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::grpc_service::get_record_core(&state, id).await {
+    match crate::service_core::get_record_core(&state, id).await {
         Ok(opt) => proto_response(GetRecordResponse { record: opt }),
         Err(e) => proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
 async fn create_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     body: Bytes,
 ) -> Response {
     let req = match CreateRecordRequest::decode(&body[..]) {
         Ok(r) => r,
         Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode CreateRecordRequest"),
     };
-    match crate::grpc_service::create_record_core(&state, req).await {
+    match crate::service_core::create_record_core(&state, req).await {
         Ok(id) => proto_response(CreateRecordResponse { id, error_message: None }),
         Err(e) => proto_response(CreateRecordResponse { id: String::new(), error_message: Some(e) }),
     }
 }
 
 async fn update_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     body: Bytes,
 ) -> Response {
@@ -135,43 +135,43 @@ async fn update_record(
         Err(_) => return proto_error(StatusCode::BAD_REQUEST, "Failed to decode UpdateRecordRequest"),
     };
     req.id = id;
-    match crate::grpc_service::update_record_core(&state, req).await {
+    match crate::service_core::update_record_core(&state, req).await {
         Ok(_) => proto_response(UpdateRecordResponse { success: true, error_message: None }),
         Err(e) => proto_response(UpdateRecordResponse { success: false, error_message: Some(e) }),
     }
 }
 
 async fn delete_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::grpc_service::delete_record_core(&state, id).await {
+    match crate::service_core::delete_record_core(&state, id).await {
         Ok(_) => proto_response(DeleteRecordResponse { success: true, error_message: None }),
         Err(e) => proto_response(DeleteRecordResponse { success: false, error_message: Some(e) }),
     }
 }
 
 async fn enable_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Response {
     toggle_record(state, id, true).await
 }
 
 async fn disable_record(
-    State(state): State<Arc<GrpcServiceState>>,
+    State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Response {
     toggle_record(state, id, false).await
 }
 
 async fn toggle_record(
-    state: Arc<GrpcServiceState>,
+    state: Arc<ServiceState>,
     id: String,
     enabled: bool,
 ) -> Response {
     let req = ToggleEnabledRequest { id };
-    match crate::grpc_service::toggle_enabled_core(&state, req, enabled).await {
+    match crate::service_core::toggle_enabled_core(&state, req, enabled).await {
         Ok(enabled) => proto_response(ToggleEnabledResponse { enabled, error_message: None }),
         Err(e) => proto_response(ToggleEnabledResponse { enabled: !enabled, error_message: Some(e) }),
     }

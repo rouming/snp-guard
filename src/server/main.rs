@@ -14,9 +14,8 @@ mod attestation;
 mod web;
 mod snpguest_wrapper;
 mod auth;
-mod grpc_service;
+mod service_core;
 mod business_logic;
-mod grpc_client;
 mod master_password;
 mod nonce;
 mod rest_api;
@@ -36,8 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret,
     });
 
-    // 3. gRPC Service (for both attestation and management)
-    let grpc_state = Arc::new(grpc_service::GrpcServiceState {
+    // 3. Service core state (shared)
+    let grpc_state = Arc::new(service_core::ServiceState {
         db: conn.clone(),
         attestation_state: attestation_state.clone(),
     });

@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Multipart},
+    extract::{Extension, Path, Multipart},
     response::{Html, IntoResponse, Redirect},
     body::Body,
 };
@@ -8,8 +8,9 @@ use askama::Template;
 use std::path::PathBuf;
 use std::fs;
 use std::process::Command;
-use crate::grpc_client;
 use common::snpguard::AttestationRecord;
+use std::sync::Arc;
+use crate::service_core::{self, ServiceState};
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -23,8 +24,8 @@ struct CreateTemplate {}
 #[template(path = "edit.html")]
 struct EditTemplate { vm: AttestationRecord }
 
-pub async fn index() -> impl IntoResponse {
-    match grpc_client::list_records().await {
+pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
+    match service_core::list_records_core(&state).await {
         Ok(vms) => {
             let template = IndexTemplate { vms };
             match template.render() {
@@ -44,7 +45,10 @@ pub async fn create_form() -> impl IntoResponse {
     }
 }
 
-pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
+pub async fn create_action(
+    Extension(state): Extension<Arc<ServiceState>>,
+    mut multipart: Multipart
+) -> impl IntoResponse {
     let mut os_name = String::new();
     let mut secret = String::new();
     let mut vcpus: u32 = 1;
@@ -119,13 +123,13 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
         return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
-    match grpc_client::create_record(
+    let req = common::snpguard::CreateRecordRequest {
         os_name,
-        Some(id_key.unwrap()),
-        Some(auth_key.unwrap()),
-        Some(firmware.unwrap()),
-        Some(kernel.unwrap()),
-        Some(initrd.unwrap()),
+        id_key: id_key.unwrap(),
+        auth_key: auth_key.unwrap(),
+        firmware: firmware.unwrap(),
+        kernel: kernel.unwrap(),
+        initrd: initrd.unwrap(),
         kernel_params,
         vcpus,
         vcpu_type,
@@ -138,14 +142,15 @@ pub async fn create_action(mut multipart: Multipart) -> impl IntoResponse {
         min_tcb_tee,
         min_tcb_snp,
         min_tcb_microcode,
-    ).await {
+    };
+    match service_core::create_record_core(&state, req).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Creating Record</h1><p>{}</p>", e)).into_response(),
     }
 }
 
-pub async fn view_record(Path(id): Path<String>) -> impl IntoResponse {
-    match grpc_client::get_record(id).await {
+pub async fn view_record(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+    match service_core::get_record_core(&state, id).await {
         Ok(Some(vm)) => {
             let template = EditTemplate { vm };
             match template.render() {
@@ -159,11 +164,12 @@ pub async fn view_record(Path(id): Path<String>) -> impl IntoResponse {
 }
 
 pub async fn update_action(
+    Extension(state): Extension<Arc<ServiceState>>,
     Path(id): Path<String>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     // Get current record first to populate defaults
-    let current_record = match grpc_client::get_record(id.clone()).await {
+    let current_record = match service_core::get_record_core(&state, id.clone()).await {
         Ok(Some(record)) => record,
         Ok(None) => return Html("<h1>Not Found</h1><p>Record not found</p>").into_response(),
         Err(e) => return Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e)).into_response(),
@@ -245,8 +251,8 @@ pub async fn update_action(
         }
     }
 
-    match grpc_client::update_record(
-        id.clone(),
+    let req = common::snpguard::UpdateRecordRequest {
+        id: id.clone(),
         os_name,
         id_key,
         auth_key,
@@ -266,21 +272,23 @@ pub async fn update_action(
         min_tcb_tee,
         min_tcb_snp,
         min_tcb_microcode,
-    ).await {
+    };
+    match service_core::update_record_core(&state, req).await {
         Ok(_) => Redirect::to(&format!("/view/{}", id)).into_response(),
         Err(e) => Html(format!("<h1>Error Updating Record</h1><p>{}</p>", e)).into_response(),
     }
 }
 
-pub async fn toggle_enabled(Path(id): Path<String>) -> impl IntoResponse {
-    match grpc_client::toggle_enabled(id).await {
+pub async fn toggle_enabled(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+    let req = common::snpguard::ToggleEnabledRequest { id: id.clone() };
+    match service_core::toggle_enabled_core(&state, req, true).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error</h1><p>Failed to toggle enabled status: {}</p>", e)).into_response(),
     }
 }
 
-pub async fn delete_action(Path(id): Path<String>) -> impl IntoResponse {
-    match grpc_client::delete_record(id).await {
+pub async fn delete_action(Extension(state): Extension<Arc<ServiceState>>, Path(id): Path<String>) -> impl IntoResponse {
+    match service_core::delete_record_core(&state, id).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!("<h1>Error Deleting Record</h1><p>{}</p>", e)).into_response(),
     }

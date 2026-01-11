@@ -48,6 +48,4 @@ ring = "0.17"
 thiserror = "1.0"
 sev = { version = "7.1.0", default-features = false, features = ["snp"] }
 
-# gRPC
-tonic = "0.12"
-tonic-build = "0.12"
+# gRPC (removed)
