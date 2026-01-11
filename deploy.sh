@@ -20,7 +20,7 @@ docker run -d \
 
 echo "✅ SNP-Guard is now running!"
 echo "🌐 Web UI: http://localhost:3000"
-echo "📊 gRPC API: localhost:50051"
+echo "📊 REST API: https://localhost:3000/v1"
 echo ""
 echo "To view logs: docker logs -f snp-guard"
 echo "To stop: docker stop snp-guard && docker rm snp-guard"

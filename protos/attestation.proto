@@ -10,7 +10,7 @@ service AttestationService {
   rpc VerifyReport (AttestationRequest) returns (AttestationResponse);
 }
 
-// Management Service - used by management tools (future CLI tool, web UI calls gRPC internally)
+// Management messages - used by management tools and web UI over HTTPS+protobuf (no gRPC)
 service ManagementService {
   // List all attestation records
   rpc ListRecords (ListRecordsRequest) returns (ListRecordsResponse);

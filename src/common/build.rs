@@ -1,6 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Generate both prost messages and tonic gRPC services
-    // tonic-build generates both the gRPC service traits and prost message types
+    // Generate prost messages (no gRPC services emitted/used)
     tonic_build::configure()
         .build_server(true)
         .build_client(true)  // Generate both server and client code

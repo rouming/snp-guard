@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(middleware::from_fn(auth::master_auth_middleware))
         .layer(TraceLayer::new_for_http());
 
-    // 5. Attestation API (HTTPS/TLS with protobuf) - calls gRPC internally
+    // 5. Attestation API (HTTPS/TLS with protobuf)
     let attestation_app = Router::new()
         .route("/attestation/nonce", post(attestation::get_nonce_handler))
         .layer(Extension(attestation_state))

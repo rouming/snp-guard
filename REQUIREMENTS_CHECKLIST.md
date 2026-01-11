@@ -186,4 +186,4 @@
 - Family-ID and Image-ID are NOT generated from URL (as per clarification)
 - URL from `rd.attest.url` is only used for client connection, not for ID generation
 - All requirements from the original specification have been implemented
-- **Bonus**: gRPC-first architecture provides better scalability and API consistency
+- **Bonus**: (deprecated) gRPC-first architecture. Current implementation uses HTTPS + protobuf REST endpoints.
