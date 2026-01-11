@@ -396,6 +396,12 @@ The application will be available at `http://localhost:3000`.
 
 - The server parses SEV-SNP attestation reports using the `sev` crate’s `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (nonce), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
 
+### TLS and Client Pinning
+
+- Server: HTTPS-only. Provide `TLS_CERT` and `TLS_KEY` (PEM paths) at startup; any cert type works (self-signed, private CA, public CA). No client certificate is required.
+- Client: Always verifies TLS using a pinned CA cert at `/etc/snpguard/ca.pem` inside the initrd; system trust store is not used. No skip/unsafe mode.
+- `scripts/repack-initrd.sh` installs the client and copies the CA cert from `${CA_CERT:-./certs/ca.pem}` to `/etc/snpguard/ca.pem` inside the initrd.
+
 ### Volumes
 
 - `/data`: Persistent storage for the SQLite database

@@ -1,15 +1,19 @@
 use clap::Parser;
-use anyhow::{Result, Context};
+use anyhow::{Result, Context, bail};
 use std::io::Write;
 use prost::Message;
 use common::snpguard::{NonceRequest, NonceResponse, AttestationRequest, AttestationResponse};
 use sev::firmware::guest::Firmware;
+use reqwest::Certificate;
+use std::fs;
 
 #[derive(Parser, Debug)]
 struct Args {
     #[arg(short, long)]
     url: String,
 }
+
+const CA_CERT_PATH: &str = "/etc/snpguard/ca.pem";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,15 +27,22 @@ async fn main() -> Result<()> {
     };
     
     if !url.starts_with("https://") {
-        eprintln!("ERROR: URL must use HTTPS for secure attestation");
-        std::process::exit(1);
+        bail!("URL must use HTTPS for secure attestation");
     }
     
-    // Create HTTP client with TLS verification
+    // Load pinned CA certificate (or self-signed server cert) from initrd path
+    let ca_pem = fs::read(CA_CERT_PATH)
+        .with_context(|| format!("Failed to read pinned CA certificate at {}", CA_CERT_PATH))?;
+    let ca_cert = Certificate::from_pem(&ca_pem)
+        .context("Pinned CA certificate is not valid PEM")?;
+
+    // Create HTTP client with strict TLS using only the pinned CA
     let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(false) // Verify certificates
+        .danger_accept_invalid_certs(false)
+        .tls_built_in_root_certs(false)
+        .add_root_certificate(ca_cert)
         .build()
-        .context("Failed to create HTTP client")?;
+        .context("Failed to create HTTP client with pinned CA")?;
     
     // 1. Get Nonce
     let nonce_request = NonceRequest {

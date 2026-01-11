@@ -4,6 +4,8 @@ set -e
 INITRD_IN=$1
 INITRD_OUT=$2
 CLIENT_BIN="./target/x86_64-unknown-linux-musl/release/snpguard-client"
+CA_CERT_DEFAULT="./certs/ca.pem"
+CA_SRC="${CA_CERT:-$CA_CERT_DEFAULT}"
 
 if [ -z "$INITRD_IN" ] || [ -z "$INITRD_OUT" ]; then
     echo "Usage: $0 <in-img> <out-img>"
@@ -50,6 +52,15 @@ echo "Installing snpguard-client..."
 mkdir -p "$WORKDIR/initrd/bin"
 cp "$CLIENT_BIN" "$WORKDIR/initrd/bin/snpguard-client"
 chmod +x "$WORKDIR/initrd/bin/snpguard-client"
+
+echo "Installing pinned CA certificate..."
+mkdir -p "$WORKDIR/initrd/etc/snpguard"
+if [ -f "$CA_SRC" ]; then
+    cp "$CA_SRC" "$WORKDIR/initrd/etc/snpguard/ca.pem"
+    echo "  Copied CA cert from $CA_SRC to /etc/snpguard/ca.pem"
+else
+    echo "  Warning: CA cert not found at $CA_SRC; client TLS will fail without it."
+fi
 
 echo "Installing attestation hook..."
 

@@ -3,6 +3,7 @@ use axum::{
     Router, Extension,
     middleware,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use sea_orm::Database;
 use std::net::SocketAddr;
 use tower_http::trace::TraceLayer;
@@ -76,14 +77,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/v1", rest_router);
 
     // 7. TLS Configuration
+    // 7. TLS Configuration - HTTPS only
+    let tls_cert = std::env::var("TLS_CERT").expect("TLS_CERT must be set (path to PEM certificate)");
+    let tls_key = std::env::var("TLS_KEY").expect("TLS_KEY must be set (path to PEM private key)");
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
 
-    println!("WARNING: Running in HTTP mode. Place behind TLS-terminating proxy for production.");
-    println!("Management UI listening on http://{}", addr);
-    println!("REST API listening on http://{}/v1", addr);
+    println!("Management UI listening on https://{}", addr);
+    println!("REST API listening on https://{}/v1", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-    
+    let config = RustlsConfig::from_pem_file(tls_cert, tls_key).await?;
+    axum_server::bind_rustls(addr, config)
+        .serve(app.into_make_service())
+        .await?;
+
     Ok(())
 }
