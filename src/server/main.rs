@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 3. Service core state (shared)
-    let grpc_state = Arc::new(service_core::ServiceState {
+    let service_state = Arc::new(service_core::ServiceState {
         db: conn.clone(),
         attestation_state: attestation_state.clone(),
     });
@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let master_auth = Arc::new(master_password::load_or_create_master_password()?);
     
     // REST API router
-    let rest_router = rest_api::router(grpc_state.clone(), master_auth.clone());
+    let rest_router = rest_api::router(service_state.clone(), master_auth.clone());
 
     // 4. Web UI (Management)
     let management_app = Router::new()
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/tokens", get(web::tokens_page).post(web::create_token))
         .route("/tokens/:id/revoke", post(web::revoke_token))
         .nest_service("/static", ServeDir::new("ui/static"))
-        .layer(Extension(grpc_state.clone()))
+        .layer(Extension(service_state.clone()))
         .layer(Extension(master_auth.clone()))
         .layer(middleware::from_fn(auth::master_auth_middleware))
         .layer(TraceLayer::new_for_http());

@@ -1,35 +1,7 @@
 syntax = "proto3";
 package snpguard;
 
-// Attestation Service - used by guest VMs
-service AttestationService {
-  // Request a random 64-byte nonce for attestation report generation
-  rpc GetNonce (NonceRequest) returns (NonceResponse);
-  
-  // Verify an attestation report and return secret if successful
-  rpc VerifyReport (AttestationRequest) returns (AttestationResponse);
-}
-
-// Management messages - used by management tools and web UI over HTTPS+protobuf (no gRPC)
-service ManagementService {
-  // List all attestation records
-  rpc ListRecords (ListRecordsRequest) returns (ListRecordsResponse);
-  
-  // Get a single attestation record
-  rpc GetRecord (GetRecordRequest) returns (GetRecordResponse);
-  
-  // Create a new attestation record
-  rpc CreateRecord (CreateRecordRequest) returns (CreateRecordResponse);
-  
-  // Update an attestation record
-  rpc UpdateRecord (UpdateRecordRequest) returns (UpdateRecordResponse);
-  
-  // Delete an attestation record
-  rpc DeleteRecord (DeleteRecordRequest) returns (DeleteRecordResponse);
-  
-  // Toggle enabled/disabled status
-  rpc ToggleEnabled (ToggleEnabledRequest) returns (ToggleEnabledResponse);
-}
+// Messages used by attestation clients and management tools over HTTPS+protobuf (no gRPC services)
 
 // Attestation messages
 message NonceRequest {

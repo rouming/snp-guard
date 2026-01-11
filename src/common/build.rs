@@ -1,8 +1,8 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Generate prost messages (no gRPC services emitted/used)
+    // Generate prost messages only (no gRPC services emitted)
     tonic_build::configure()
-        .build_server(true)
-        .build_client(true)  // Generate both server and client code
+        .build_server(false)
+        .build_client(false)
         .out_dir(std::env::var("OUT_DIR")?)
         .compile_protos(&["../../protos/attestation.proto"], &["../../protos"])?;
 
