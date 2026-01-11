@@ -8,10 +8,7 @@ use axum::{
 use axum::body::to_bytes;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, Set, ActiveModelTrait};
 use entity::vm;
-use rand::RngCore;
-use rand::rngs::OsRng;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 use std::io::Write;
@@ -20,22 +17,13 @@ use prost::Message;
 
 use common::snpguard::{NonceRequest, NonceResponse, AttestationRequest, AttestationResponse};
 use crate::snpguest_wrapper;
-
-#[derive(Clone)]
-pub struct NonceEntry {
-    #[allow(unused)]
-    pub nonce: Vec<u8>,
-    pub created_at: u64, // Unix timestamp
-}
+use crate::nonce;
 
 pub struct AttestationState {
     #[allow(unused)]
     pub db: DatabaseConnection,
-    pub nonces: Arc<Mutex<HashMap<String, NonceEntry>>>,
+    pub secret: [u8; 32],
 }
-
-const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
-const MAX_NONCES: usize = 10000; // Prevent memory exhaustion
 
 /// Custom extractor for raw request body bytes
 pub struct RawBody(pub bytes::Bytes);
@@ -98,7 +86,7 @@ pub async fn get_nonce_handler(
     RawBody(body_bytes): RawBody,
 ) -> impl IntoResponse {
 
-    let req = match NonceRequest::decode(&body_bytes[..]) {
+    let _req = match NonceRequest::decode(&body_bytes[..]) {
         Ok(r) => r,
         Err(_) => return Response::builder()
             .status(StatusCode::BAD_REQUEST)
@@ -107,45 +95,9 @@ pub async fn get_nonce_handler(
             .unwrap(),
     };
     
-    // Use cryptographically secure RNG
-    let mut rng = OsRng;
-    let mut nonce = vec![0u8; 64];
-    rng.fill_bytes(&mut nonce);
-    
-    let vm_id = req.vm_id;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    
-    // Clean up expired nonces and limit size
-    let mut nonces = state.nonces.lock().unwrap();
-    if nonces.len() >= MAX_NONCES {
-        // Remove oldest entries (simple cleanup)
-        let expired_keys: Vec<String> = nonces.iter()
-            .filter(|(_, entry)| now.saturating_sub(entry.created_at) > NONCE_EXPIRY_SECONDS)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for key in expired_keys {
-            nonces.remove(&key);
-        }
-        // If still too many, remove oldest
-        if nonces.len() >= MAX_NONCES {
-            let oldest_key = nonces.iter()
-                .min_by_key(|(_, entry)| entry.created_at)
-                .map(|(k, _)| k.clone());
-            if let Some(key) = oldest_key {
-                nonces.remove(&key);
-            }
-        }
-    }
-    
-    nonces.insert(vm_id, NonceEntry {
-        nonce: nonce.clone(),
-        created_at: now,
-    });
-    
-    let response = NonceResponse { nonce };
+    // Stateless nonce generation
+    let nonce_bytes = nonce::generate_nonce(&state.secret);
+    let response = NonceResponse { nonce: nonce_bytes.to_vec() };
     let mut response_bytes = Vec::new();
     if response.encode(&mut response_bytes).is_err() {
         return Response::builder()
@@ -201,38 +153,12 @@ pub async fn verify_report_handler(
     }
     
     // 2. Extract and verify nonce (offset 0x50, 64 bytes)
-    let report_nonce = &report_data[0x50..0x50 + 64];
-    
-    // Verify nonce was issued by us and not expired
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    
-    let mut nonces = state.nonces.lock().unwrap();
-    let mut nonce_found = false;
-    
-    // Find matching nonce
-    nonces.retain(|_, entry| {
-        if entry.nonce == report_nonce {
-            let age = now.saturating_sub(entry.created_at);
-            if age <= NONCE_EXPIRY_SECONDS {
-                nonce_found = true;
-                false // Remove after use (one-time nonce)
-            } else {
-                false // Expired, remove
-            }
-        } else {
-            // Keep non-expired nonces
-            now.saturating_sub(entry.created_at) <= NONCE_EXPIRY_SECONDS
-        }
-    });
-    
-    if !nonce_found {
+    let report_nonce = &report_data[0x50..0x50 + crate::nonce::NONCE_SIZE];
+    if let Err(e) = crate::nonce::verify_nonce(&state.secret, report_nonce) {
         let response = AttestationResponse {
             success: false,
             secret: vec![],
-            error_message: "Invalid or expired nonce".to_string(),
+            error_message: format!("Invalid or expired nonce: {:?}", e),
         };
         return encode_response(response);
     }

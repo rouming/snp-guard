@@ -44,6 +44,8 @@ argon2 = "0.5"
 tempfile = "3.8"
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.5"
+ring = "0.17"
+thiserror = "1.0"
 
 # gRPC
 tonic = "0.12"

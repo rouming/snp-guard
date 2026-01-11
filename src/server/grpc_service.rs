@@ -1,10 +1,7 @@
 use tonic::{Request, Response, Status};
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, Set, ActiveModelTrait, QueryOrder, ColumnTrait};
 use entity::vm;
-use rand::RngCore;
-use rand::rngs::OsRng;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::path::Path;
 use std::fs;
 
@@ -14,7 +11,8 @@ use common::snpguard::{
     management_service_server::{ManagementService},
     *,
 };
-use crate::attestation::{AttestationState, NonceEntry};
+use crate::attestation::AttestationState;
+use crate::nonce;
 use crate::snpguest_wrapper;
 use crate::business_logic;
 // snpguest wrapper not used directly in gRPC service paths
@@ -62,51 +60,13 @@ pub struct AttestationServiceImpl {
 #[tonic::async_trait]
 impl AttestationService for AttestationServiceImpl {
     async fn get_nonce(&self, request: Request<NonceRequest>) -> Result<Response<NonceResponse>, Status> {
-        let mut rng = OsRng;
-        let mut nonce = vec![0u8; 64];
-        rng.fill_bytes(&mut nonce);
-        
-        let vm_id = request.into_inner().vm_id;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
-        let mut nonces = self.state.attestation_state.nonces.lock().unwrap();
-        
-        // Clean up expired nonces
-        const MAX_NONCES: usize = 10000;
-        const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
-        
-        if nonces.len() >= MAX_NONCES {
-            let expired_keys: Vec<String> = nonces.iter()
-                .filter(|(_, entry)| now.saturating_sub(entry.created_at) > NONCE_EXPIRY_SECONDS)
-                .map(|(k, _)| k.clone())
-                .collect();
-            for key in expired_keys {
-                nonces.remove(&key);
-            }
-            if nonces.len() >= MAX_NONCES {
-                let oldest_key = nonces.iter()
-                    .min_by_key(|(_, entry)| entry.created_at)
-                    .map(|(k, _)| k.clone());
-                if let Some(key) = oldest_key {
-                    nonces.remove(&key);
-                }
-            }
-        }
-        
-        nonces.insert(vm_id, NonceEntry {
-            nonce: nonce.clone(),
-            created_at: now,
-        });
-        
-        Ok(Response::new(NonceResponse { nonce }))
+        let _vm_id = request.into_inner().vm_id;
+        let nonce = nonce::generate_nonce(&self.state.attestation_state.secret);
+        Ok(Response::new(NonceResponse { nonce: nonce.to_vec() }))
     }
 
     async fn verify_report(&self, request: Request<AttestationRequest>) -> Result<Response<AttestationResponse>, Status> {
 
-const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
         use tempfile::NamedTempFile;
         use std::io::Write;
         use std::path::Path;
@@ -125,42 +85,14 @@ const NONCE_EXPIRY_SECONDS: u64 = 300; // 5 minutes
         }
 
         // 2. Extract and verify nonce (offset 0x50, 64 bytes)
-        let report_nonce = &report_data[0x50..0x50 + 64];
-
-        // Verify nonce was issued by us and not expired
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        {
-            let mut nonces = self.state.attestation_state.nonces.lock().unwrap();
-            let mut nonce_found = false;
-
-            // Find matching nonce
-            nonces.retain(|_, entry| {
-                if entry.nonce == report_nonce {
-                    let age = now.saturating_sub(entry.created_at);
-                    if age <= NONCE_EXPIRY_SECONDS {
-                        nonce_found = true;
-                        false // Remove after use (one-time nonce)
-                    } else {
-                        false // Expired, remove
-                    }
-                } else {
-                    // Keep non-expired nonces
-                    now.saturating_sub(entry.created_at) <= NONCE_EXPIRY_SECONDS
-                }
-            });
-
-            if !nonce_found {
-                let response = AttestationResponse {
-                    success: false,
-                    secret: vec![],
-                    error_message: "Invalid or expired nonce".to_string(),
-                };
-                return Ok(Response::new(response));
-            }
+        let report_nonce = &report_data[0x50..0x50 + nonce::NONCE_SIZE];
+        if let Err(e) = nonce::verify_nonce(&self.state.attestation_state.secret, report_nonce) {
+            let response = AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!("Invalid or expired nonce: {:?}", e),
+            };
+            return Ok(Response::new(response));
         }
 
         // 3. Detect CPU family from report

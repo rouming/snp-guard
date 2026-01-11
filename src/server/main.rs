@@ -7,8 +7,8 @@ use std::net::SocketAddr;
 use tower_http::trace::TraceLayer;
 use tower_http::services::ServeDir;
 use axum::middleware;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
+use std::sync::Arc;
+use rand::RngCore;
 
 mod attestation;
 mod web;
@@ -18,6 +18,7 @@ mod grpc_service;
 mod business_logic;
 mod grpc_client;
 mod master_password;
+mod nonce;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,9 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = Database::connect(db_url).await?;
 
     // 2. Attestation state (shared between endpoints)
+    let mut secret = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret);
+
     let attestation_state = Arc::new(attestation::AttestationState {
         db: conn.clone(),
-        nonces: Arc::new(Mutex::new(HashMap::new())),
+        secret,
     });
 
     // 3. gRPC Service (for both attestation and management)
