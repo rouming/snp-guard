@@ -47,6 +47,47 @@ fn decode_tcb_version(tcb_version: u64, cpu_family: &str) -> (u8, u8, u8, u8) {
     }
 }
 
+struct ParsedReport<'a> {
+    nonce: &'a [u8],
+    id_digest: &'a [u8],
+    auth_digest: &'a [u8],
+    image_id: Vec<u8>,
+    policy: u64,
+    tcb_version: u64,
+    raw: &'a [u8],
+}
+
+fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
+    if report_data.len() < 0x110 + 48 {
+        return Err("Report too short".to_string());
+    }
+
+    let nonce = &report_data[0x50..0x50 + nonce::NONCE_SIZE];
+    let image_id = report_data[0x20..0x20 + 16].to_vec();
+    let id_digest = &report_data[0xE0..0xE0 + 48];
+    let auth_digest = &report_data[0x110..0x110 + 48];
+    let policy_bytes = &report_data[0x08..0x08 + 8];
+    let policy = u64::from_le_bytes(policy_bytes.try_into().unwrap());
+    let tcb_bytes = &report_data[0x38..0x38 + 8];
+    let tcb_version = u64::from_le_bytes(tcb_bytes.try_into().unwrap());
+
+    Ok(ParsedReport {
+        nonce,
+        id_digest,
+        auth_digest,
+        image_id,
+        policy,
+        tcb_version,
+        raw: report_data,
+    })
+}
+
+fn verify_nonce_step(secret: &[u8], nonce_bytes: &[u8]) -> Result<(), String> {
+    crate::nonce::verify_nonce(secret, nonce_bytes)
+        .map_err(|e| format!("Invalid or expired nonce: {:?}", e))
+}
+
+
 pub struct GrpcServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
@@ -74,31 +115,32 @@ impl AttestationService for AttestationServiceImpl {
         let req = request.into_inner();
         let report_data = req.report_data;
 
-        // 1. Check report length
-        if report_data.len() < 0x50 + 64 {
+        // 1) Parse SNP report (length checks + essential fields)
+        let parsed = match parse_snp_report(&report_data) {
+            Ok(p) => p,
+            Err(e) => {
+                let response = AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: e,
+                };
+                return Ok(Response::new(response));
+            }
+        };
+
+        // 2) Verify nonce BEFORE crypto verification
+        if let Err(e) = verify_nonce_step(&self.state.attestation_state.secret, parsed.nonce) {
             let response = AttestationResponse {
                 success: false,
                 secret: vec![],
-                error_message: "Report too short".to_string(),
+                error_message: e,
             };
             return Ok(Response::new(response));
         }
 
-        // 2. Extract and verify nonce (offset 0x50, 64 bytes)
-        let report_nonce = &report_data[0x50..0x50 + nonce::NONCE_SIZE];
-        if let Err(e) = nonce::verify_nonce(&self.state.attestation_state.secret, report_nonce) {
-            let response = AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: format!("Invalid or expired nonce: {:?}", e),
-            };
-            return Ok(Response::new(response));
-        }
-
-        // 3. Detect CPU family from report
-        let cpu_family = match crate::attestation::detect_cpu_family(&report_data) {
+        // 3) Detect CPU family
+        let cpu_family = match crate::attestation::detect_cpu_family(parsed.raw) {
             Ok(family) => {
-                // Use hint if provided, otherwise use detected
                 if !req.cpu_family_hint.is_empty() {
                     req.cpu_family_hint.clone()
                 } else {
@@ -110,12 +152,12 @@ impl AttestationService for AttestationServiceImpl {
                 if !req.cpu_family_hint.is_empty() {
                     req.cpu_family_hint.clone()
                 } else {
-                    "genoa".to_string() // Default fallback
+                    "genoa".to_string()
                 }
             }
         };
 
-        // 4. Dump report to disk for verification tools
+        // 4) Verify SNP signature / cert chain
         let mut temp_report = match NamedTempFile::new() {
             Ok(f) => f,
             Err(_) => return Ok(Response::new(AttestationResponse {
@@ -124,7 +166,7 @@ impl AttestationService for AttestationServiceImpl {
                 error_message: "Failed to create temporary file".to_string(),
             })),
         };
-        if temp_report.write_all(&report_data).is_err() {
+        if temp_report.write_all(parsed.raw).is_err() {
             return Ok(Response::new(AttestationResponse {
                 success: false,
                 secret: vec![],
@@ -133,7 +175,6 @@ impl AttestationService for AttestationServiceImpl {
         }
         let report_path = temp_report.path();
 
-        // 5. Verify signature (uses temporary certs directory internally)
         if let Err(e) = snpguest_wrapper::verify_report_signature(report_path, Path::new(""), &cpu_family) {
             let response = AttestationResponse {
                 success: false,
@@ -143,36 +184,11 @@ impl AttestationService for AttestationServiceImpl {
             return Ok(Response::new(response));
         }
 
-        // 6. Extract image_id (0x20, 16 bytes)
-        if report_data.len() < 0x20 + 16 {
-            let response = AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Report too short for image_id".to_string(),
-            };
-            return Ok(Response::new(response));
-        }
-
-        let image_id: Vec<u8> = report_data[0x20..0x20 + 16].to_vec();
-
-        // 7. Extract key digests (0xE0 and 0x110, 48 bytes each)
-        if report_data.len() < 0x110 + 48 {
-            let response = AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Report too short for key digests".to_string(),
-            };
-            return Ok(Response::new(response));
-        }
-
-        let id_digest = &report_data[0xE0..0xE0 + 48];
-        let auth_digest = &report_data[0x110..0x110 + 48];
-
         // 8. DB lookup by image_id and key digests
         let record = match vm::Entity::find()
-            .filter(vm::Column::ImageId.eq(image_id))
-            .filter(vm::Column::IdKeyDigest.eq(id_digest))
-            .filter(vm::Column::AuthKeyDigest.eq(auth_digest))
+            .filter(vm::Column::ImageId.eq(parsed.image_id.clone()))
+            .filter(vm::Column::IdKeyDigest.eq(parsed.id_digest))
+            .filter(vm::Column::AuthKeyDigest.eq(parsed.auth_digest))
             .one(&self.state.attestation_state.db)
             .await
         {
@@ -185,20 +201,8 @@ impl AttestationService for AttestationServiceImpl {
         };
 
         if let Some(vm) = record {
-            // 9. Extract and verify policy flags
-            if report_data.len() < 0x08 + 8 {
-                let response = AttestationResponse {
-                    success: false,
-                    secret: vec![],
-                    error_message: "Report too short for policy".to_string(),
-                };
-                return Ok(Response::new(response));
-            }
-
-            let policy_bytes = &report_data[0x08..0x08 + 8];
-            let policy = u64::from_le_bytes(policy_bytes.try_into().unwrap());
-
-            // Extract policy bits (bit 19 = debug, bit 18 = migrate_ma, bit 16 = smt)
+            // 9. Verify policy flags
+            let policy = parsed.policy;
             let report_debug = (policy & (1 << 19)) != 0;
             let report_migrate_ma = (policy & (1 << 18)) != 0;
             let report_smt = (policy & (1 << 16)) != 0;
@@ -229,21 +233,9 @@ impl AttestationService for AttestationServiceImpl {
                 return Ok(Response::new(response));
             }
 
-            // 10. Extract and verify TCB version requirements
-            if report_data.len() < 0x38 + 8 {
-                let response = AttestationResponse {
-                    success: false,
-                    secret: vec![],
-                    error_message: "Report too short for TCB version".to_string(),
-                };
-                return Ok(Response::new(response));
-            }
-
-            let tcb_bytes = &report_data[0x38..0x38 + 8];
-            let tcb_version = u64::from_le_bytes(tcb_bytes.try_into().unwrap());
-
-            // Decode TCB version based on CPU family
-            let (current_microcode, current_snp, current_tee, current_bootloader) = decode_tcb_version(tcb_version, &cpu_family);
+            // 10. Verify TCB version requirements
+            let (current_microcode, current_snp, current_tee, current_bootloader) =
+                decode_tcb_version(parsed.tcb_version, &cpu_family);
 
             // Check minimum TCB requirements
             if current_bootloader < vm.min_tcb_bootloader as u8 {
