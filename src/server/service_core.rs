@@ -427,10 +427,20 @@ pub async fn update_record_core(
 }
 
 pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result<(), String> {
-    vm::Entity::delete_by_id(id)
+    // Remove DB record
+    vm::Entity::delete_by_id(&id)
         .exec(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
+
+    // Remove artifacts directory if present
+    let artifact_dir = std::path::Path::new("artifacts").join(&id);
+    if artifact_dir.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
+            eprintln!("Warning: failed to remove artifacts for {}: {}", id, e);
+        }
+    }
+
     Ok(())
 }
 
