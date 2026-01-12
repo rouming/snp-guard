@@ -11,6 +11,7 @@ use common::snpguard::{
 use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
 use sev::parser::ByteParser;
+use sev::Generation;
 
 use crate::business_logic;
 use crate::snpguest_wrapper;
@@ -52,27 +53,17 @@ fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
         return Err("Report too short".to_string());
     }
 
-    let family_id = report_data[0x188];
-    let model_id = report_data[0x189];
+    let family = report_data[0x188];
+    let model = report_data[0x189];
 
-    match (family_id, model_id) {
-        (0x1A, 0x00..=0x1F) => Ok("genoa".to_string()),
-        (0x1A, 0x90..=0xAF) | (0x1A, 0xC0..=0xCF) => Ok("turin".to_string()),
-        (0x19, 0x00..=0x0F) => Ok("milan".to_string()),
-        _ => {
-            if family_id == 0x1A {
-                if (0x90..=0xAF).contains(&model_id) || (0xC0..=0xCF).contains(&model_id) {
-                    Ok("turin".to_string())
-                } else {
-                    Ok("genoa".to_string())
-                }
-            } else if family_id == 0x19 {
-                Ok("milan".to_string())
-            } else {
-                Ok("genoa".to_string())
-            }
-        }
-    }
+    let generation = Generation::identify_cpu(family, model)
+        .map_err(|e| format!("Failed to identify CPU: {e}"))?;
+
+    Ok(match generation {
+        Generation::Turin => "turin".to_string(),
+        Generation::Genoa => "genoa".to_string(),
+        Generation::Milan => "milan".to_string(),
+    })
 }
 
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
