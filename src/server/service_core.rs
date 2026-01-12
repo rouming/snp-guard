@@ -12,7 +12,6 @@ use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
 use sev::parser::ByteParser;
 
-use crate::attestation::AttestationState;
 use crate::business_logic;
 use crate::snpguest_wrapper;
 use argon2::{
@@ -28,6 +27,12 @@ pub struct ServiceState {
     pub attestation_state: Arc<AttestationState>,
 }
 
+#[derive(Clone)]
+pub struct AttestationState {
+    pub db: DatabaseConnection,
+    pub secret: [u8; 32],
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct TokenInfo {
     pub id: String,
@@ -40,6 +45,34 @@ pub struct TokenInfo {
 struct ParsedReport<'a> {
     report: AttestationReport,
     raw: &'a [u8],
+}
+
+fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
+    if report_data.len() < 0x18A {
+        return Err("Report too short".to_string());
+    }
+
+    let family_id = report_data[0x188];
+    let model_id = report_data[0x189];
+
+    match (family_id, model_id) {
+        (0x1A, 0x00..=0x1F) => Ok("genoa".to_string()),
+        (0x1A, 0x90..=0xAF) | (0x1A, 0xC0..=0xCF) => Ok("turin".to_string()),
+        (0x19, 0x00..=0x0F) => Ok("milan".to_string()),
+        _ => {
+            if family_id == 0x1A {
+                if (0x90..=0xAF).contains(&model_id) || (0xC0..=0xCF).contains(&model_id) {
+                    Ok("turin".to_string())
+                } else {
+                    Ok("genoa".to_string())
+                }
+            } else if family_id == 0x19 {
+                Ok("milan".to_string())
+            } else {
+                Ok("genoa".to_string())
+            }
+        }
+    }
 }
 
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
@@ -81,7 +114,7 @@ pub async fn verify_report_core(
         };
     }
 
-    let cpu_family = match crate::attestation::detect_cpu_family(parsed.raw) {
+    let cpu_family = match detect_cpu_family(parsed.raw) {
         Ok(family) => {
             if !req.cpu_family_hint.is_empty() {
                 req.cpu_family_hint.clone()

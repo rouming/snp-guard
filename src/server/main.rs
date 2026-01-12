@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
-mod attestation;
 mod auth;
 mod business_logic;
 mod master_password;
@@ -31,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut secret = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut secret);
 
-    let attestation_state = Arc::new(attestation::AttestationState {
+    let attestation_state = Arc::new(service_core::AttestationState {
         db: conn.clone(),
         secret,
     });
@@ -64,17 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(middleware::from_fn(auth::master_auth_middleware))
         .layer(TraceLayer::new_for_http());
 
-    // 5. Attestation API (HTTPS/TLS with protobuf)
-    let attestation_app = Router::new()
-        .route("/attestation/nonce", post(attestation::get_nonce_handler))
-        .layer(Extension(attestation_state))
-        .layer(TraceLayer::new_for_http());
-
-    // 6. Combined app
-    let app = Router::new()
-        .merge(management_app)
-        .merge(attestation_app)
-        .nest("/v1", rest_router);
+    // 5. Combined app (REST API + web UI)
+    let app = Router::new().merge(management_app).nest("/v1", rest_router);
 
     // 7. TLS Configuration
     // 7. TLS Configuration - HTTPS only
