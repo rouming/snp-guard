@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
+use openssl::ec::EcKey;
 use std::path::Path;
 use std::process::Command;
 
@@ -16,6 +17,9 @@ pub fn generate_measurement_and_block(
     output_dir: &Path,
     image_id_hex: String,
 ) -> Result<()> {
+    validate_ec_key(id_key)?;
+    validate_ec_key(auth_key)?;
+
     // 1. Calculate Measurement
     let snpguest_path = std::env::current_exe()?
         .parent()
@@ -97,6 +101,8 @@ fn decode_base64_file(path: &Path) -> Result<()> {
 }
 
 pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
+    validate_ec_key(key_path)?;
+
     let snpguest_path = std::env::current_exe()?
         .parent()
         .ok_or_else(|| anyhow!("Cannot get executable directory"))?
@@ -125,6 +131,18 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
     let bytes = hex::decode(hex_token)
         .map_err(|e| anyhow!("Failed to decode key digest '{}': {}", hex_token, e))?;
     Ok(bytes)
+}
+
+fn validate_ec_key(path: &Path) -> Result<()> {
+    let pem =
+        std::fs::read(path).with_context(|| format!("Failed to read key: {}", path.display()))?;
+    EcKey::private_key_from_pem(&pem).with_context(|| {
+        format!(
+            "Invalid EC private key PEM (expecting secp384r1) at {}",
+            path.display()
+        )
+    })?;
+    Ok(())
 }
 
 pub fn verify_report_signature(
