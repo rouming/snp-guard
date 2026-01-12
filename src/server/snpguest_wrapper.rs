@@ -118,7 +118,6 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-#[allow(unused)]
 pub fn verify_report_signature(
     report_path: &Path,
     _certs_dir: &Path,

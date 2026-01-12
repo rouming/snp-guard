@@ -45,9 +45,7 @@ async fn main() -> Result<()> {
         .context("Failed to create HTTP client with pinned CA")?;
 
     // 1. Get Nonce
-    let nonce_request = NonceRequest {
-        vm_id: "guest".to_string(),
-    };
+    let nonce_request = NonceRequest {};
     let mut request_bytes = Vec::new();
     nonce_request.encode(&mut request_bytes)?;
 
@@ -90,10 +88,7 @@ async fn main() -> Result<()> {
         .context("Failed to get attestation report from SEV firmware")?;
 
     // 3. Verify Report
-    let verify_request = AttestationRequest {
-        report_data,
-        cpu_family_hint: String::new(), // Will be auto-detected from report
-    };
+    let verify_request = AttestationRequest { report_data };
 
     let mut request_bytes = Vec::new();
     verify_request.encode(&mut request_bytes)?;

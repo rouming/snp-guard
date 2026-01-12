@@ -119,20 +119,10 @@ pub async fn verify_report_core(
     }
 
     let cpu_family = match detect_cpu_family(&parsed) {
-        Ok(family) => {
-            if !req.cpu_family_hint.is_empty() {
-                req.cpu_family_hint.clone()
-            } else {
-                family
-            }
-        }
+        Ok(family) => family,
         Err(e) => {
             eprintln!("Failed to detect CPU family: {}", e);
-            if !req.cpu_family_hint.is_empty() {
-                req.cpu_family_hint.clone()
-            } else {
-                "genoa".to_string()
-            }
+            "genoa".to_string()
         }
     };
 
