@@ -127,16 +127,18 @@ pub async fn create_action(
     let mut kernel: Option<Vec<u8>> = None;
     let mut initrd: Option<Vec<u8>> = None;
 
-    while let Some(field) = match multipart.next_field().await {
-        Ok(f) => f,
-        Err(e) => {
-            return Html(format!(
-                "<h1>Error</h1><p>Failed to read form data: {}</p>",
-                e
-            ))
-            .into_response()
-        }
-    } {
+    while let Some(field_res) = multipart.next_field().await.transpose() {
+        let field = match field_res {
+            Ok(f) => f,
+            Err(e) => {
+                return Html(format!(
+                    "<h1>Error</h1><p>Failed to read form data: {}</p>",
+                    e
+                ))
+                .into_response()
+            }
+        };
+
         let name = match field.name() {
             Some(n) => n.to_string(),
             None => continue,
