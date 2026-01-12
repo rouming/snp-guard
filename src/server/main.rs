@@ -1,3 +1,4 @@
+use axum::extract::DefaultBodyLimit;
 use axum::{
     middleware,
     routing::{get, post},
@@ -68,6 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(service_state.clone()))
         .layer(Extension(master_auth.clone()))
         .layer(middleware::from_fn(auth::master_auth_middleware))
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024)) // allow large multipart uploads
         .layer(TraceLayer::new_for_http());
 
     // 5. Combined app (REST API + web UI)
