@@ -1,5 +1,6 @@
 CARGO := cargo
-DB_URL := sqlite://data/snpguard.db?mode=rwc
+DATA_DIR ?= ./data
+DB_URL := sqlite://$(DATA_DIR)/db/snpguard.sqlite?mode=rwc
 CLIENT_TARGET := x86_64-unknown-linux-musl
 
 .PHONY: all build build-server build-client build-snpguest db-setup clean repack help
@@ -25,11 +26,12 @@ build-snpguest: ## Build snpguest tool (Static)
 	cd snpguest && $(CARGO) build --release --target $(CLIENT_TARGET)
 
 db-setup: ## Initialize SQLite Database
-	mkdir -p data
+	mkdir -p $(DATA_DIR)/db
 	export DATABASE_URL="$(DB_URL)"; \
 	$(CARGO) run -p migration
 
 run-server: db-setup ## Run the Server locally
+	export DATA_DIR="$(DATA_DIR)"; \
 	export DATABASE_URL="$(DB_URL)"; \
 	$(CARGO) run --bin snpguard-server
 

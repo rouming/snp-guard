@@ -4,6 +4,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 
+use crate::config::DataPaths;
 use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
     ToggleEnabledRequest, UpdateRecordRequest,
@@ -27,6 +28,7 @@ use uuid::Uuid;
 pub struct ServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
+    pub data_paths: Arc<DataPaths>,
 }
 
 #[derive(Clone)]
@@ -391,7 +393,12 @@ pub async fn create_record_core(
         min_tcb_microcode: req.min_tcb_microcode,
     };
 
-    let res = business_logic::create_record_logic(&state.attestation_state.db, create_req).await?;
+    let res = business_logic::create_record_logic(
+        &state.attestation_state.db,
+        &state.data_paths,
+        create_req,
+    )
+    .await?;
     Ok(res)
 }
 
@@ -422,7 +429,12 @@ pub async fn update_record_core(
         min_tcb_microcode: req.min_tcb_microcode,
     };
 
-    let res = business_logic::update_record_logic(&state.attestation_state.db, update_req).await?;
+    let res = business_logic::update_record_logic(
+        &state.attestation_state.db,
+        &state.data_paths,
+        update_req,
+    )
+    .await?;
     if res.success {
         Ok(())
     } else {
@@ -438,7 +450,7 @@ pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result
         .map_err(|e| format!("Database error: {}", e))?;
 
     // Remove artifacts directory if present
-    let artifact_dir = std::path::Path::new("artifacts").join(&id);
+    let artifact_dir = state.data_paths.attestations_dir.join(&id);
     if artifact_dir.exists() {
         if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
             eprintln!("Warning: failed to remove artifacts for {}: {}", id, e);

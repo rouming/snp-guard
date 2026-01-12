@@ -55,3 +55,4 @@ sev = { version = "7.1.0", default-features = false, features = ["snp"] }
 once_cell = "1.19"
 cookie = "0.18"
 openssl = { version = "0.10", features = ["vendored"] }
+rcgen = "0.12"

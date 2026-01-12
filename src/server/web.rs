@@ -8,7 +8,6 @@ use axum::{
 use chrono::Duration;
 use common::snpguard::AttestationRecord;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use tokio_util::io::ReaderStream;
@@ -552,11 +551,14 @@ pub async fn revoke_token(
     }
 }
 
-pub async fn download_artifact(Path((id, file_name)): Path<(String, String)>) -> impl IntoResponse {
+pub async fn download_artifact(
+    Extension(state): Extension<Arc<ServiceState>>,
+    Path((id, file_name)): Path<(String, String)>,
+) -> impl IntoResponse {
     if file_name.contains("..") {
         return "Invalid path".into_response();
     }
-    let artifact_dir = PathBuf::from("artifacts").join(&id);
+    let artifact_dir = state.data_paths.attestations_dir.join(&id);
     let path = artifact_dir.join(&file_name);
 
     // SquashFS Generator

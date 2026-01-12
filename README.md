@@ -111,42 +111,49 @@ make db-setup
 
 This creates the SQLite database and runs migrations.
 
-### 2. Configure Authentication
+### 2. Configure DATA_DIR (single persistence root)
 
-The management UI uses a master password (no username). On first start the service:
-- Generates a Diceware passphrase (EFF large wordlist), prints it once to the console.
-- Stores only the Argon2 hash at `MASTER_PASSWORD_HASH_PATH` (default `/data/master_password.hash`).
-
-For automation, create management API tokens from the web UI (Tokens page) and use them as Bearer tokens.
-
-### 3. Configure TLS (required)
-
-Provide TLS certificate and key, and a path to store the master password hash:
+All persistent state lives under one directory (default `/data`). Override for local dev:
 
 ```bash
-export TLS_CERT="/path/to/cert.pem"
-export TLS_KEY="/path/to/key.pem"
-export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
+export DATA_DIR="$(pwd)/data"
 ```
 
-### 4. Run Server
+Expected layout (created automatically on startup):
+
+```
+/data/
+ ├── tls/            (server.crt, server.key, ca.pem)
+ ├── auth/           (master.pw.hash)
+ ├── db/             (snpguard.sqlite)
+ ├── artifacts/
+ │    ├── attestations/<attestation-id>/
+ │    └── tmp/
+ └── logs/
+```
+
+### 3. Authentication
+
+On first start the service:
+- Generates a Diceware passphrase (EFF large wordlist), prints it once to the console.
+- Stores only the Argon2 hash at `/data/auth/master.pw.hash` (or `${DATA_DIR}/auth/master.pw.hash`).
+
+Tokens (created from the web UI) can be used as Bearer tokens for management APIs.
+
+### 4. TLS (required)
+
+If `/data/tls/server.crt` and `/data/tls/server.key` are absent, the service auto-generates a self-signed pair (and `ca.pem`) for development. Provide your own by placing them under `/data/tls/` before start.
+
+### 5. Run Server
 
 ```bash
-export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
-export TLS_CERT="/path/to/cert.pem"
-export TLS_KEY="/path/to/key.pem"
-export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
-make run-server
+DATA_DIR="$(pwd)/data" make run-server
 ```
 
 Or manually:
 
 ```bash
-export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
-export TLS_CERT="/path/to/cert.pem"
-export TLS_KEY="/path/to/key.pem"
-export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
-cargo run --bin snpguard-server
+DATA_DIR="$(pwd)/data" cargo run --bin snpguard-server
 ```
 
 The server listens on HTTPS:

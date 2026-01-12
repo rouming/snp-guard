@@ -1,8 +1,7 @@
-use crate::snpguest_wrapper;
+use crate::{config::DataPaths, snpguest_wrapper};
 use entity::vm;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use std::fs;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -59,6 +58,7 @@ pub struct UpdateRecordResponse {
 
 pub async fn create_record_logic(
     db: &DatabaseConnection,
+    paths: &DataPaths,
     req: CreateRecordRequest,
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
@@ -66,7 +66,7 @@ pub async fn create_record_logic(
     // Generate unique image_id as UUID (16 bytes)
     let image_id = Uuid::new_v4();
 
-    let artifact_dir = PathBuf::from("artifacts").join(&new_id);
+    let artifact_dir = paths.attestations_dir.join(&new_id);
     fs::create_dir_all(&artifact_dir)
         .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 
@@ -157,9 +157,10 @@ pub async fn create_record_logic(
 
 pub async fn update_record_logic(
     db: &DatabaseConnection,
+    paths: &DataPaths,
     req: UpdateRecordRequest,
 ) -> Result<UpdateRecordResponse, String> {
-    let artifact_dir = PathBuf::from("artifacts").join(&req.id);
+    let artifact_dir = paths.attestations_dir.join(&req.id);
     fs::create_dir_all(&artifact_dir)
         .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 

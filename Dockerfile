@@ -52,12 +52,7 @@ WORKDIR /app
 
 # Environment variables
 ENV RUST_LOG=info
-ENV DATABASE_URL=sqlite:///data/snpguard.db?mode=rwc
-ENV MASTER_PASSWORD_HASH_PATH=/data/master_password.hash
-
-# Optional TLS environment variables (commented out by default)
-# ENV TLS_CERT=/path/to/cert.pem
-# ENV TLS_KEY=/path/to/key.pem
+ENV DATA_DIR=/data
 
 # Create data directory
 RUN mkdir -p /data
@@ -73,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:3000/ || exit 1
 
 # Run migration first, then start the server
-ENTRYPOINT ["/bin/sh", "-c", "cd /app && DATABASE_URL=$DATABASE_URL /usr/local/bin/migration && DATABASE_URL=$DATABASE_URL /usr/local/bin/snpguard-server"]
+ENTRYPOINT ["/bin/sh", "-c", "cd /app && DATA_DIR=${DATA_DIR:-/data} && DATABASE_URL=\"sqlite://${DATA_DIR}/db/snpguard.sqlite?mode=rwc\" /usr/local/bin/migration && DATA_DIR=${DATA_DIR:-/data} /usr/local/bin/snpguard-server"]

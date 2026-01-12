@@ -8,7 +8,6 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-const DEFAULT_HASH_PATH: &str = "/data/master_password.hash";
 const WORDLIST: &str = include_str!("../../assets/diceware/eff_large_wordlist.txt");
 
 static WORDS: Lazy<Vec<&'static str>> = Lazy::new(|| {
@@ -27,12 +26,11 @@ pub struct MasterAuth {
     pub hash: String,
 }
 
-pub fn load_or_create_master_password() -> Result<MasterAuth, Box<dyn std::error::Error>> {
-    let path = std::env::var("MASTER_PASSWORD_HASH_PATH")
-        .unwrap_or_else(|_| DEFAULT_HASH_PATH.to_string());
-
-    if Path::new(&path).exists() {
-        let hash = fs::read_to_string(&path)?.trim().to_string();
+pub fn load_or_create_master_password(
+    path: &Path,
+) -> Result<MasterAuth, Box<dyn std::error::Error>> {
+    if path.exists() {
+        let hash = fs::read_to_string(path)?.trim().to_string();
         if hash.is_empty() {
             return Err("Existing master password hash file is empty".into());
         }
@@ -51,10 +49,20 @@ pub fn load_or_create_master_password() -> Result<MasterAuth, Box<dyn std::error
         .to_string();
 
     // Persist hash only
-    if let Some(parent) = Path::new(&path).parent() {
+    if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
     }
-    let mut file = fs::File::create(&path)?;
+    let mut file = fs::File::create(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
     file.write_all(hash.as_bytes())?;
 
     // Show the password once to the operator
