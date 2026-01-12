@@ -127,10 +127,31 @@ pub async fn create_action(
     let mut kernel: Option<Vec<u8>> = None;
     let mut initrd: Option<Vec<u8>> = None;
 
-    while let Some(field) = multipart.next_field().await.unwrap() {
-        let name = field.name().unwrap().to_string();
+    while let Some(field) = match multipart.next_field().await {
+        Ok(f) => f,
+        Err(e) => {
+            return Html(format!(
+                "<h1>Error</h1><p>Failed to read form data: {}</p>",
+                e
+            ))
+            .into_response()
+        }
+    } {
+        let name = match field.name() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
         if let Some(_) = field.file_name() {
-            let data = field.bytes().await.unwrap();
+            let data = match field.bytes().await {
+                Ok(d) => d,
+                Err(e) => {
+                    return Html(format!(
+                        "<h1>Error</h1><p>Failed to read uploaded file '{}': {}</p>",
+                        name, e
+                    ))
+                    .into_response()
+                }
+            };
             if data.is_empty() {
                 continue;
             }
@@ -161,7 +182,16 @@ pub async fn create_action(
                 _ => {}
             }
         } else {
-            let txt = field.text().await.unwrap();
+            let txt = match field.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    return Html(format!(
+                        "<h1>Error</h1><p>Failed to read field '{}': {}</p>",
+                        name, e
+                    ))
+                    .into_response()
+                }
+            };
             match name.as_str() {
                 "os_name" => os_name = txt,
                 "secret" => secret = txt,
