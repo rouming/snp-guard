@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/view/:id", get(web::view_record).post(web::update_action))
         .route("/delete/:id", get(web::delete_action))
         .route("/download/:id/:file", get(web::download_artifact))
+        .route("/logout", get(web::logout))
         .route("/toggle/:id", post(web::toggle_enabled))
         .route("/tokens", get(web::tokens_page).post(web::create_token))
         .route("/tokens/:id/revoke", post(web::revoke_token))

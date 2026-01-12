@@ -137,6 +137,16 @@ pub fn issue_session(master: &MasterAuth) -> String {
     base64::engine::general_purpose::STANDARD.encode(tag.as_ref())
 }
 
+pub fn clear_session_cookie() -> String {
+    Cookie::build((SESSION_COOKIE, ""))
+        .path("/")
+        .http_only(true)
+        .same_site(cookie::SameSite::Lax)
+        .max_age(cookie::time::Duration::seconds(0))
+        .build()
+        .to_string()
+}
+
 fn validate_session(master: &MasterAuth, val: &str) -> bool {
     let key = hmac::Key::new(hmac::HMAC_SHA256, master.hash.as_bytes());
     if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(val) {

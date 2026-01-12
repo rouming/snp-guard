@@ -1,3 +1,4 @@
+use crate::auth;
 use crate::service_core::{self, ServiceState, TokenInfo};
 use askama::Template;
 use axum::{
@@ -549,6 +550,15 @@ pub async fn revoke_token(
         ))
         .into_response(),
     }
+}
+
+pub async fn logout() -> impl IntoResponse {
+    let mut resp = Redirect::to("/login").into_response();
+    resp.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        auth::clear_session_cookie().parse().unwrap(),
+    );
+    resp
 }
 
 pub async fn download_artifact(
