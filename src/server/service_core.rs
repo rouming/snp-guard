@@ -10,6 +10,7 @@ use common::snpguard::{
 };
 use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
+use sev::firmware::guest::ReportVariant;
 use sev::parser::ByteParser;
 use sev::Generation;
 
@@ -49,6 +50,19 @@ struct ParsedReport<'a> {
 }
 
 fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
+    let variant = ReportVariant::from_bytes(
+        report_data
+            .get(0..4)
+            .ok_or_else(|| "Report too short for variant".to_string())?,
+    )
+    .map_err(|e| format!("Failed to parse report variant: {e}"))?;
+
+    if let ReportVariant::V2 = variant {
+        return Err(
+            "Unsupported attestation report variant V2 (older CPUs unsupported)".to_string(),
+        );
+    }
+
     if report_data.len() < 0x18A {
         return Err("Report too short".to_string());
     }
