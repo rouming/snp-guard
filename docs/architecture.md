@@ -38,8 +38,8 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 │                    SnpGuard Server                              │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Attestation Service                                      │  │
-│  │  - /attestation/nonce                                     │  │
-│  │  - /attestation/verify                                    │  │
+│  │  - /v1/attest/nonce                                       │  │
+│  │  - /v1/attest/report                                      │  │
 │  │  - Verifies AMD certificate chain                         │  │
 │  │  - Validates attestation reports                          │  │
 │  │  - Releases secrets                                       │  │
@@ -134,7 +134,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
    ├─> Initrd hook runs (snpguard_attest)
    │
    ├─> Client requests nonce
-   │   POST /attestation/nonce
+   │   POST /v1/attest/nonce
    │   │
    │   └─> Server generates 64-byte nonce
    │       Returns: NonceResponse
@@ -145,7 +145,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
    │   └─> SEV-SNP hardware generates report
    │
    ├─> Client sends report
-   │   POST /attestation/verify
+   │   POST /v1/attest/report
    │   │
    │   └─> Server verifies:
    │       ├─> Extract nonce (offset 0x50)

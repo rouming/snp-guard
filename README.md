@@ -111,20 +111,17 @@ make db-setup
 
 This creates the SQLite database and runs migrations.
 
-### 2. Configure Authentication (Optional)
+### 2. Configure Authentication
 
-Set environment variables for management UI authentication:
+The management UI uses a master password (no username). On first start the service:
+- Generates a Diceware passphrase (EFF large wordlist), prints it once to the console.
+- Stores only the Argon2 hash at `MASTER_PASSWORD_HASH_PATH` (default `/data/master_password.hash`).
 
-```bash
-export SNPGUARD_USERNAME="admin"
-export SNPGUARD_PASSWORD="your-secure-password"
-```
+For automation, create management API tokens from the web UI (Tokens page) and use them as Bearer tokens.
 
-Default credentials are `admin`/`secret` if not set.
+### 3. Configure TLS (required)
 
-### 3. Configure TLS (Production)
-
-For production, provide TLS certificate and key:
+Provide TLS certificate and key:
 
 ```bash
 export TLS_CERT="/path/to/cert.pem"
@@ -135,6 +132,8 @@ export TLS_KEY="/path/to/key.pem"
 
 ```bash
 export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
+export TLS_CERT="/path/to/cert.pem"
+export TLS_KEY="/path/to/key.pem"
 make run-server
 ```
 
@@ -142,12 +141,15 @@ Or manually:
 
 ```bash
 export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
+export TLS_CERT="/path/to/cert.pem"
+export TLS_KEY="/path/to/key.pem"
 cargo run --bin snpguard-server
 ```
 
-The server will listen on:
-- **Management UI**: `http://localhost:3000` (or `https://` if TLS is configured)
-- **Attestation API**: `http://localhost:3000/attestation/*` (or `https://` if TLS is configured)
+The server listens on HTTPS:
+- **Management UI**: `https://localhost:3000`
+- **Attestation API**: `https://localhost:3000/v1/attest/nonce` and `/v1/attest/report`
+- **Management API**: `https://localhost:3000/v1/records/*`, `/v1/tokens/*`
 
 ## Usage
 
@@ -194,7 +196,7 @@ From the record view page, you can download:
 1. **Repack Initrd** with the attestation client:
 
 ```bash
-make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img
+make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./certs/ca.pem
 ```
 
 Or manually:
@@ -217,7 +219,7 @@ Both hooks run after network initialization but before root filesystem mounting,
 rd.attest.url=https://your-attestation-service.com
 ```
 
-4. **Boot the VM**: The attestation will happen automatically during boot
+4. **Boot the VM**: The attestation will happen automatically during boot (client pins `/etc/snpguard/ca.pem`; no insecure TLS fallback)
 
 ### Attestation Flow
 

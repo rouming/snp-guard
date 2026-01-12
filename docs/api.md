@@ -4,8 +4,8 @@
 
 SnpGuard provides two main API interfaces:
 
-1. **Attestation API**: Used by guest VMs to perform attestation (HTTPS + Protobuf)
-2. **Management API**: Used by the web UI for managing attestation records (HTTP/HTTPS + HTML/JSON)
+1. **Attestation API**: Used by guest VMs to perform attestation (HTTPS + Protobuf, REST)
+2. **Management API**: Used by the web UI/automation for managing attestation records (HTTPS + Protobuf/JSON)
 
 ## Attestation API
 
@@ -26,15 +26,13 @@ Content-Type: application/x-protobuf
 
 ### Endpoints
 
-#### POST `/attestation/nonce`
+#### POST `/v1/attest/nonce`
 
 Request a random 64-byte nonce for attestation report generation.
 
 **Request**:
 ```protobuf
-message NonceRequest {
-  string vm_id = 1;  // Optional identifier for the VM
-}
+message NonceRequest {}
 ```
 
 **Response** (200 OK):
@@ -58,7 +56,7 @@ echo -n -e '\x0a\x05\x67\x75\x65\x73\x74' | \
     --output nonce.bin
 ```
 
-#### POST `/attestation/verify`
+#### POST `/v1/attest/report`
 
 Verify an attestation report and return secret if successful.
 
@@ -66,7 +64,6 @@ Verify an attestation report and return secret if successful.
 ```protobuf
 message AttestationRequest {
   bytes report_data = 1;           // SEV-SNP attestation report (binary)
-  string cpu_family_hint = 2;      // Optional: "genoa", "milan", "turin"
 }
 ```
 
@@ -82,14 +79,14 @@ message AttestationResponse {
 **Verification Process**:
 
 1. Extract nonce from report (offset 0x50, 64 bytes)
-2. Detect CPU family from report (CPUID_FAM_ID at 0x188, CPUID_MOD_ID at 0x189)
+2. Detect CPU family from report (cpuid fields parsed from AttestationReport)
 3. Fetch AMD certificates (CA and VCEK) from AMD KDS using integrated `snpguest`
 4. Verify certificate chain using integrated `snpguest`
 5. Verify attestation report signature using integrated `snpguest`
 6. Extract key digests:
    - ID_KEY_DIGEST at offset 0xE0 (48 bytes)
    - AUTHOR_KEY_DIGEST at offset 0x110 (48 bytes)
-7. Look up attestation record by key digests
+7. Look up attestation record by image_id + key digests, check policy flags/TCB minimums
 8. Check if record is enabled
 9. Return success with secret if all checks pass
 
@@ -110,14 +107,17 @@ cat report.bin | \
     --output response.bin
 ```
 
-## Management API
+## Management API (HTTPS)
 
-The Management API is used by the web UI. It uses standard HTTP methods with HTML forms or JSON.
+Authentication:
+- Master password (Diceware, printed once, Argon2 hash stored)
+- Bearer tokens for automation (create/revoke via web UI Tokens page)
 
-### Authentication
-
-All management endpoints require HTTP Basic Authentication. Credentials can be set via:
-- Environment variables: `SNPGUARD_USERNAME` and `SNPGUARD_PASSWORD`
+Endpoints (protobuf payloads, `application/x-protobuf`):
+- `GET/POST /v1/records` (list/create)
+- `GET/PATCH/DELETE /v1/records/{id}`
+- `POST /v1/records/{id}/enable`, `/disable`
+- `GET/POST /v1/tokens`, `POST /v1/tokens/{id}/revoke`
 - Default: `admin` / `secret`
 
 ### Endpoints
