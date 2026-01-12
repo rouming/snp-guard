@@ -1,5 +1,5 @@
 # build stage
-FROM --platform=linux/amd64 rust:latest as builder
+FROM --platform=$BUILDPLATFORM rust:latest AS builder
 
 WORKDIR /usr/src/snp-guard
 
