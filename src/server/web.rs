@@ -2,7 +2,7 @@ use crate::service_core::{self, ServiceState, TokenInfo};
 use askama::Template;
 use axum::{
     body::Body,
-    extract::{Extension, Multipart, Path},
+    extract::{Extension, Form, Multipart, Path},
     response::{Html, IntoResponse, Redirect},
 };
 use chrono::Duration;
@@ -37,6 +37,12 @@ struct TokensTemplate {
     show_token: bool,
 }
 
+#[derive(Template)]
+#[template(path = "login.html")]
+struct LoginTemplate {
+    error: String,
+}
+
 pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
     match service_core::list_records_core(&state).await {
         Ok(vms) => {
@@ -55,6 +61,46 @@ pub async fn create_form() -> impl IntoResponse {
     match template.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => Html(format!("Template error: {}", e)).into_response(),
+    }
+}
+
+pub async fn login_form() -> impl IntoResponse {
+    let template = LoginTemplate {
+        error: String::new(),
+    };
+    match template.render() {
+        Ok(html) => Html(html).into_response(),
+        Err(e) => Html(format!("Template error: {}", e)).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LoginForm {
+    password: String,
+}
+
+pub async fn login_submit(
+    Extension(master): Extension<Arc<crate::master_password::MasterAuth>>,
+    Form(form): Form<LoginForm>,
+) -> impl IntoResponse {
+    if crate::auth::verify_password(&master, &form.password) {
+        let session = crate::auth::issue_session(&master);
+        let mut resp = Redirect::to("/").into_response();
+        resp.headers_mut().insert(
+            axum::http::header::SET_COOKIE,
+            format!("master_session={}; Path=/; HttpOnly; SameSite=Lax", session)
+                .parse()
+                .unwrap(),
+        );
+        resp
+    } else {
+        let template = LoginTemplate {
+            error: "Invalid password".to_string(),
+        };
+        match template.render() {
+            Ok(html) => Html(html).into_response(),
+            Err(e) => Html(format!("Template error: {}", e)).into_response(),
+        }
     }
 }
 

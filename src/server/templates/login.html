@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="max-w-md mx-auto mt-12 bg-white rounded-xl shadow-md border border-slate-200 p-8 space-y-6">
+    <div class="text-center space-y-2">
+        <h1 class="text-2xl font-bold text-slate-800">Welcome to SnpGuard</h1>
+        <p class="text-sm text-slate-500">Enter the master password to continue.</p>
+    </div>
+    {% if error != "" %}
+    <div class="bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-2 text-sm">
+        {{ error }}
+    </div>
+    {% endif %}
+    <form action="/login" method="POST" class="space-y-4">
+        <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Master Password</label>
+            <input name="password" type="password" class="w-full border-slate-300 rounded-lg shadow-sm" required autofocus>
+        </div>
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg shadow transition">
+            Sign in
+        </button>
+    </form>
+</div>
+{% endblock %}
