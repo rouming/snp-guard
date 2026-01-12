@@ -130,4 +130,5 @@ message AttestationRecord {
   uint32 min_tcb_tee = 17;   // Minimum SNP firmware version
   uint32 min_tcb_snp = 18;   // Minimum SNP implementation version
   uint32 min_tcb_microcode = 19; // Minimum CPU microcode version
+  uint32 vcpus = 20;
 }

@@ -27,6 +27,7 @@ struct CreateTemplate {}
 #[template(path = "edit.html")]
 struct EditTemplate {
     vm: AttestationRecord,
+    service_url: String,
 }
 
 #[derive(Template)]
@@ -41,6 +42,14 @@ struct TokensTemplate {
 #[template(path = "login.html")]
 struct LoginTemplate {
     error: String,
+}
+
+fn extract_service_url(params: &str) -> Option<String> {
+    params
+        .split("rd.attest.url=")
+        .nth(1)
+        .and_then(|url_part| url_part.split_whitespace().next())
+        .map(|s| s.to_string())
 }
 
 pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
@@ -258,7 +267,8 @@ pub async fn view_record(
 ) -> impl IntoResponse {
     match service_core::get_record_core(&state, id).await {
         Ok(Some(vm)) => {
-            let template = EditTemplate { vm };
+            let service_url = extract_service_url(&vm.kernel_params).unwrap_or_default();
+            let template = EditTemplate { vm, service_url };
             match template.render() {
                 Ok(html) => Html(html).into_response(),
                 Err(e) => Html(format!("Template error: {}", e)).into_response(),
@@ -288,11 +298,11 @@ pub async fn update_action(
 
     let mut os_name = Some(current_record.os_name);
     let mut secret = Some(current_record.secret);
-    let mut enabled = Some(true); // Default to enabled unless explicitly disabled
-    let mut vcpus = Some(4u32);
+    let enabled = Some(current_record.enabled);
+    let mut vcpus = Some(current_record.vcpus as u32);
     let mut vcpu_type = Some(current_record.vcpu_type);
     let mut kernel_params = Some(current_record.kernel_params.clone());
-    let mut service_url = None;
+    let mut service_url = extract_service_url(&current_record.kernel_params);
     let mut allowed_debug = Some(current_record.allowed_debug);
     let mut allowed_migrate_ma = Some(current_record.allowed_migrate_ma);
     let mut allowed_smt = Some(current_record.allowed_smt);
@@ -306,17 +316,33 @@ pub async fn update_action(
     let mut kernel: Option<Vec<u8>> = None;
     let mut initrd: Option<Vec<u8>> = None;
 
-    // Extract existing service URL from kernel params
-    if let Some(params) = &kernel_params {
-        if let Some(url_part) = params.split("rd.attest.url=").nth(1) {
-            service_url = Some(url_part.split_whitespace().next().unwrap_or("").to_string());
-        }
-    }
+    while let Some(field_res) = multipart.next_field().await.transpose() {
+        let field = match field_res {
+            Ok(f) => f,
+            Err(e) => {
+                return Html(format!(
+                    "<h1>Error</h1><p>Failed to read form data: {}</p>",
+                    e
+                ))
+                .into_response()
+            }
+        };
 
-    while let Some(field) = multipart.next_field().await.unwrap() {
-        let name = field.name().unwrap().to_string();
+        let name = match field.name() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
         if let Some(_) = field.file_name() {
-            let data = field.bytes().await.unwrap();
+            let data = match field.bytes().await {
+                Ok(d) => d,
+                Err(e) => {
+                    return Html(format!(
+                        "<h1>Error</h1><p>Failed to read uploaded file '{}': {}</p>",
+                        name, e
+                    ))
+                    .into_response()
+                }
+            };
             if data.is_empty() {
                 continue;
             }
@@ -347,15 +373,27 @@ pub async fn update_action(
                 _ => {}
             }
         } else {
-            let txt = field.text().await.unwrap();
+            let txt = match field.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    return Html(format!(
+                        "<h1>Error</h1><p>Failed to read field '{}': {}</p>",
+                        name, e
+                    ))
+                    .into_response()
+                }
+            };
             match name.as_str() {
                 "os_name" => os_name = Some(txt),
                 "secret" => secret = Some(txt),
-                "enabled" => enabled = Some(true),
-                "vcpus" => vcpus = Some(txt.parse().unwrap_or(4)),
+                "vcpus" => vcpus = Some(txt.parse().unwrap_or(current_record.vcpus as u32)),
                 "vcpu_type" => vcpu_type = Some(txt),
                 "kernel_params" => kernel_params = Some(txt),
-                "service_url" => service_url = Some(txt),
+                "service_url" => {
+                    if !txt.trim().is_empty() {
+                        service_url = Some(txt)
+                    }
+                }
                 "allowed_debug" => allowed_debug = Some(txt == "true"),
                 "allowed_migrate_ma" => allowed_migrate_ma = Some(txt == "true"),
                 "allowed_smt" => allowed_smt = Some(txt == "true"),

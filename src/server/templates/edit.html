@@ -67,7 +67,7 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
                     <label class="block text-sm font-medium mb-1">vCPUs</label>
-                    <input type="number" name="vcpus" value="4" min="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <input type="number" name="vcpus" value="{{ vm.vcpus }}" min="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1">vCPU Type</label>
@@ -85,7 +85,7 @@
             </div>
             <div>
                 <label class="block text-sm font-medium mb-1">Attestation Service URL</label>
-                <input type="text" name="service_url" value="" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" placeholder="https://attest.example.com">
+                <input type="text" name="service_url" value="{{ service_url }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" placeholder="https://attest.example.com">
             </div>
         </div>
 
