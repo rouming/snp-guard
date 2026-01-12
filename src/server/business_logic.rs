@@ -139,7 +139,8 @@ pub async fn create_record_logic(
         min_tcb_tee: Set(req.min_tcb_tee as i32),
         min_tcb_snp: Set(req.min_tcb_snp as i32),
         min_tcb_microcode: Set(req.min_tcb_microcode as i32),
-        kernel_params: Set(full_params),
+        kernel_params: Set(req.kernel_params),
+        service_url: Set(req.service_url),
         request_count: Set(0),
         firmware_path: Set("firmware-code.fd".into()),
         kernel_path: Set("vmlinuz".into()),
@@ -198,25 +199,20 @@ pub async fn update_record_logic(
     }
 
     // Update kernel params if needed
-    let mut full_params = vm_model.kernel_params.clone();
+    let mut base_params = vm_model.kernel_params.clone();
+    let mut service_url_val = vm_model.service_url.clone();
     let mut params_changed = false;
 
     if let Some(new_kernel_params) = req.kernel_params {
-        full_params = new_kernel_params;
+        base_params = new_kernel_params;
         params_changed = true;
     }
     if let Some(service_url) = req.service_url {
-        full_params = format!(
-            "{} rd.attest.url={}",
-            full_params
-                .split("rd.attest.url=")
-                .next()
-                .unwrap_or("")
-                .trim(),
-            service_url
-        );
+        service_url_val = service_url;
         params_changed = true;
     }
+
+    let full_params = format!("{} rd.attest.url={}", base_params, service_url_val);
 
     // Check if we need to regenerate blocks
     let needs_regeneration = params_changed
@@ -331,7 +327,8 @@ pub async fn update_record_logic(
     }
 
     if params_changed {
-        active_model.kernel_params = Set(full_params.clone());
+        active_model.kernel_params = Set(base_params.clone());
+        active_model.service_url = Set(service_url_val.clone());
         fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
             .map_err(|e| format!("Failed to update kernel params file: {}", e))?;
     }

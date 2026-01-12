@@ -33,7 +33,8 @@ pub struct Model {
     pub auth_key_digest: Vec<u8>,
 
     pub created_at: DateTime,
-    pub kernel_params: String,
+    pub kernel_params: String, // base params without rd.attest.url
+    pub service_url: String,   // attestation service URL
 
     // Stored filenames relative to artifact dir
     pub firmware_path: String,

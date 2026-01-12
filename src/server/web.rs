@@ -44,14 +44,6 @@ struct LoginTemplate {
     error: String,
 }
 
-fn extract_service_url(params: &str) -> Option<String> {
-    params
-        .split("rd.attest.url=")
-        .nth(1)
-        .and_then(|url_part| url_part.split_whitespace().next())
-        .map(|s| s.to_string())
-}
-
 pub async fn index(Extension(state): Extension<Arc<ServiceState>>) -> impl IntoResponse {
     match service_core::list_records_core(&state).await {
         Ok(vms) => {
@@ -267,7 +259,7 @@ pub async fn view_record(
 ) -> impl IntoResponse {
     match service_core::get_record_core(&state, id).await {
         Ok(Some(vm)) => {
-            let service_url = extract_service_url(&vm.kernel_params).unwrap_or_default();
+            let service_url = vm.service_url.clone();
             let template = EditTemplate { vm, service_url };
             match template.render() {
                 Ok(html) => Html(html).into_response(),
@@ -302,7 +294,7 @@ pub async fn update_action(
     let mut vcpus = Some(current_record.vcpus as u32);
     let mut vcpu_type = Some(current_record.vcpu_type);
     let mut kernel_params = Some(current_record.kernel_params.clone());
-    let mut service_url = extract_service_url(&current_record.kernel_params);
+    let mut service_url = Some(current_record.service_url.clone());
     let mut allowed_debug = Some(current_record.allowed_debug);
     let mut allowed_migrate_ma = Some(current_record.allowed_migrate_ma);
     let mut allowed_smt = Some(current_record.allowed_smt);

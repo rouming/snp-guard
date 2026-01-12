@@ -305,6 +305,7 @@ pub async fn list_records_core(
             min_tcb_tee: vm.min_tcb_tee as u32,
             min_tcb_snp: vm.min_tcb_snp as u32,
             min_tcb_microcode: vm.min_tcb_microcode as u32,
+            service_url: vm.service_url,
         })
         .collect();
 
@@ -341,6 +342,7 @@ pub async fn get_record_core(
         min_tcb_tee: vm.min_tcb_tee as u32,
         min_tcb_snp: vm.min_tcb_snp as u32,
         min_tcb_microcode: vm.min_tcb_microcode as u32,
+        service_url: vm.service_url,
     }))
 }
 

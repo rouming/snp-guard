@@ -118,7 +118,7 @@ message AttestationRecord {
   string vcpu_type = 5;
   bool enabled = 6;
   string created_at = 7;
-  string kernel_params = 8;  // Includes rd.attest.url
+  string kernel_params = 8;  // Base kernel params (without rd.attest.url)
   string firmware_path = 9;
   string kernel_path = 10;
   string initrd_path = 11;
@@ -131,4 +131,5 @@ message AttestationRecord {
   uint32 min_tcb_snp = 18;   // Minimum SNP implementation version
   uint32 min_tcb_microcode = 19; // Minimum CPU microcode version
   uint32 vcpus = 20;
+  string service_url = 21;   // Attestation service URL
 }

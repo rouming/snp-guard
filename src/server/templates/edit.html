@@ -81,7 +81,7 @@
             </div>
             <div class="mb-4">
                 <label class="block text-sm font-medium mb-1">Kernel Parameters</label>
-                <textarea name="kernel_params" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm font-mono text-sm">{{ vm.kernel_params.split("rd.attest.url=").next().unwrap_or("").trim() }}</textarea>
+                <textarea name="kernel_params" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm font-mono text-sm">{{ vm.kernel_params }}</textarea>
             </div>
             <div>
                 <label class="block text-sm font-medium mb-1">Attestation Service URL</label>
