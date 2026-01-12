@@ -400,8 +400,21 @@ pub async fn toggle_enabled(
     Extension(state): Extension<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    // Fetch current state to determine target
+    let current = match service_core::get_record_core(&state, id.clone()).await {
+        Ok(Some(vm)) => vm,
+        Ok(None) => {
+            return Html(format!("<h1>Error</h1><p>Record {} not found</p>", id)).into_response()
+        }
+        Err(e) => {
+            return Html(format!("<h1>Error</h1><p>Failed to load record: {}</p>", e))
+                .into_response()
+        }
+    };
+    let target_enabled = !current.enabled;
+
     let req = common::snpguard::ToggleEnabledRequest { id: id.clone() };
-    match service_core::toggle_enabled_core(&state, req, true).await {
+    match service_core::toggle_enabled_core(&state, req, target_enabled).await {
         Ok(_) => Redirect::to("/").into_response(),
         Err(e) => Html(format!(
             "<h1>Error</h1><p>Failed to toggle enabled status: {}</p>",
