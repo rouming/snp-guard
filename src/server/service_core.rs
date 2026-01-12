@@ -49,9 +49,10 @@ struct ParsedReport<'a> {
     raw: &'a [u8],
 }
 
-fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
+fn detect_cpu_family(parsed: &ParsedReport) -> Result<String, String> {
     let variant = ReportVariant::from_bytes(
-        report_data
+        parsed
+            .raw
             .get(0..4)
             .ok_or_else(|| "Report too short for variant".to_string())?,
     )
@@ -63,12 +64,12 @@ fn detect_cpu_family(report_data: &[u8]) -> Result<String, String> {
         );
     }
 
-    if report_data.len() < 0x18A {
-        return Err("Report too short".to_string());
+    if parsed.raw.len() < 0x18A {
+        return Err("Report too short for family/model".to_string());
     }
 
-    let family = report_data[0x188];
-    let model = report_data[0x189];
+    let family = parsed.raw[0x188];
+    let model = parsed.raw[0x189];
 
     let generation = Generation::identify_cpu(family, model)
         .map_err(|e| format!("Failed to identify CPU: {e}"))?;
@@ -119,7 +120,7 @@ pub async fn verify_report_core(
         };
     }
 
-    let cpu_family = match detect_cpu_family(parsed.raw) {
+    let cpu_family = match detect_cpu_family(&parsed) {
         Ok(family) => {
             if !req.cpu_family_hint.is_empty() {
                 req.cpu_family_hint.clone()
