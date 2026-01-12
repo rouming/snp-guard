@@ -2,12 +2,25 @@ use argon2::{
     password_hash::{PasswordHasher, SaltString},
     Argon2,
 };
-use rand::{rngs::OsRng, seq::SliceRandom, RngCore};
+use once_cell::sync::Lazy;
+use rand::{rngs::OsRng, Rng};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
 const DEFAULT_HASH_PATH: &str = "/data/master_password.hash";
+const WORDLIST: &str = include_str!("../../assets/diceware/eff_large_wordlist.txt");
+
+static WORDS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    WORDLIST
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            parts.next()?;
+            parts.next()
+        })
+        .collect()
+});
 
 #[derive(Clone)]
 pub struct MasterAuth {
@@ -55,130 +68,12 @@ pub fn load_or_create_master_password() -> Result<MasterAuth, Box<dyn std::error
 }
 
 fn generate_memorable_password() -> String {
-    // Short word list for memorability; 2048+ combinations per word gives strong entropy.
-    // 6 words ~ 66 bits of entropy.
-    const WORDS: &[&str] = &[
-        "anchor",
-        "apricot",
-        "arctic",
-        "atom",
-        "autumn",
-        "avocado",
-        "badge",
-        "bamboo",
-        "battery",
-        "beacon",
-        "bicycle",
-        "blossom",
-        "breeze",
-        "bridge",
-        "bronze",
-        "canyon",
-        "carbon",
-        "castle",
-        "cedar",
-        "ceramic",
-        "cobalt",
-        "comet",
-        "coral",
-        "cotton",
-        "crimson",
-        "crystal",
-        "cypress",
-        "dahlia",
-        "delta",
-        "desert",
-        "ember",
-        "falcon",
-        "fiesta",
-        "forest",
-        "fossil",
-        "galaxy",
-        "ginger",
-        "granite",
-        "harbor",
-        "hazel",
-        "helium",
-        "horizon",
-        "jade",
-        "jungle",
-        "lagoon",
-        "lemon",
-        "lilac",
-        "lunar",
-        "magnet",
-        "maple",
-        "marble",
-        "meadow",
-        "mercury",
-        "midnight",
-        "mint",
-        "nebula",
-        "nectar",
-        "oak",
-        "onyx",
-        "opal",
-        "orbit",
-        "orchid",
-        "oxygen",
-        "papaya",
-        "pebble",
-        "pepper",
-        "petal",
-        "phoenix",
-        "pistachio",
-        "plasma",
-        "plume",
-        "prairie",
-        "quartz",
-        "quasar",
-        "raven",
-        "redwood",
-        "reef",
-        "river",
-        "saffron",
-        "sage",
-        "sandal",
-        "saturn",
-        "scarlet",
-        "sequoia",
-        "shadow",
-        "silk",
-        "silver",
-        "skyline",
-        "smoky",
-        "sonic",
-        "sparrow",
-        "spice",
-        "spruce",
-        "stellar",
-        "stone",
-        "summit",
-        "sunset",
-        "tango",
-        "terra",
-        "thunder",
-        "tidal",
-        "topaz",
-        "tundra",
-        "vanilla",
-        "velvet",
-        "violet",
-        "walnut",
-        "willow",
-        "zenith",
-        "zephyr",
-    ];
-
     let mut rng = OsRng;
-    let mut words = Vec::with_capacity(6);
-    for _ in 0..6 {
-        let w = WORDS.choose(&mut rng).unwrap();
-        words.push(*w);
+    let count = 6;
+    let mut words = Vec::with_capacity(count);
+    for _ in 0..count {
+        let idx = rng.gen_range(0..WORDS.len());
+        words.push(WORDS[idx]);
     }
-    let number = rng.next_u32() % 10000; // add extra entropy without hurting memorability
-    format!(
-        "{}-{}-{}-{}-{}-{}-{:04}",
-        words[0], words[1], words[2], words[3], words[4], words[5], number
-    )
+    words.join("-")
 }
