@@ -64,12 +64,14 @@ fn detect_cpu_family(parsed: &ParsedReport) -> Result<String, String> {
         );
     }
 
-    if parsed.raw.len() < 0x18A {
-        return Err("Report too short for family/model".to_string());
-    }
-
-    let family = parsed.raw[0x188];
-    let model = parsed.raw[0x189];
+    let family = parsed
+        .report
+        .cpuid_fam_id
+        .ok_or_else(|| "Report missing cpuid family id".to_string())?;
+    let model = parsed
+        .report
+        .cpuid_mod_id
+        .ok_or_else(|| "Report missing cpuid model id".to_string())?;
 
     let generation = Generation::identify_cpu(family, model)
         .map_err(|e| format!("Failed to identify CPU: {e}"))?;
