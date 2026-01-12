@@ -23,6 +23,7 @@
             <h3 class="font-bold text-lg text-slate-700">Policy Flags</h3>
             <div class="grid grid-cols-1 gap-4">
                 <div class="flex items-center">
+                    <input type="hidden" name="allowed_debug" value="false">
                     <input type="checkbox" id="allowed_debug" name="allowed_debug" value="true" class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
                     <label for="allowed_debug" class="text-sm font-medium text-gray-700">
                         Allow Debug Mode
@@ -30,6 +31,7 @@
                     </label>
                 </div>
                 <div class="flex items-center">
+                    <input type="hidden" name="allowed_migrate_ma" value="false">
                     <input type="checkbox" id="allowed_migrate_ma" name="allowed_migrate_ma" value="true" class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
                     <label for="allowed_migrate_ma" class="text-sm font-medium text-gray-700">
                         Allow Migration with MA
@@ -37,6 +39,7 @@
                     </label>
                 </div>
                 <div class="flex items-center">
+                    <input type="hidden" name="allowed_smt" value="false">
                     <input type="checkbox" id="allowed_smt" name="allowed_smt" value="true" checked class="mr-3 h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
                     <label for="allowed_smt" class="text-sm font-medium text-gray-700">
                         Allow Simultaneous Multithreading
