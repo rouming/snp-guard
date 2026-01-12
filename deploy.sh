@@ -10,17 +10,6 @@ docker build -t snp-guard .
 echo "📁 Creating data directory..."
 mkdir -p data/tls data/auth data/db data/artifacts/attestations data/artifacts/tmp data/logs
 
-# Generate self-signed certs if not present
-if [ ! -f "data/tls/server.crt" ] || [ ! -f "data/tls/server.key" ]; then
-  echo "🔐 Generating self-signed TLS certificate in ./data ..."
-  openssl req -x509 -nodes -newkey rsa:4096 \
-    -keyout data/tls/server.key \
-    -out data/tls/server.crt \
-    -days 365 \
-    -subj "/CN=localhost"
-  cp data/tls/server.crt data/tls/ca.pem
-fi
-
 echo "🚀 Starting SNP-Guard container..."
 docker run -d \
   --name snp-guard \
