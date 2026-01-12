@@ -63,12 +63,8 @@ impl DataPaths {
         // Logs can be readable by group
         create_dir_secure(&self.logs_dir, 0o750)?;
 
-        // Ensure placeholder files exist for TLS/DB dirs so mounts are predictable
-        touch_if_missing(&self.tls_cert, 0o600)?;
-        touch_if_missing(&self.tls_key, 0o600)?;
-        touch_if_missing(&self.ca_cert, 0o644)?;
+        // Optional: create empty DB file so path exists; TLS files are created later by generator
         if !self.db_file.exists() {
-            // parent exists; just create empty file with 600 perms
             touch_if_missing(&self.db_file, 0o600)?;
         }
         Ok(())
