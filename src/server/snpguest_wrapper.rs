@@ -109,12 +109,21 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
         .output()?;
 
     if !output.status.success() {
-        return Err(anyhow!("Failed to get key digest"));
+        return Err(anyhow!(
+            "Failed to get key digest: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
 
-    // Output is Hex. Convert to binary.
-    let hex_str = String::from_utf8(output.stdout)?.trim().to_string();
-    let bytes = hex::decode(hex_str)?;
+    let stdout = String::from_utf8(output.stdout)?.trim().to_string();
+    // Try to extract the first hex-looking token
+    let hex_token = stdout
+        .split_whitespace()
+        .find(|tok| tok.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| anyhow!("Failed to parse key digest from output: {}", stdout))?;
+
+    let bytes = hex::decode(hex_token)
+        .map_err(|e| anyhow!("Failed to decode key digest '{}': {}", hex_token, e))?;
     Ok(bytes)
 }
 
