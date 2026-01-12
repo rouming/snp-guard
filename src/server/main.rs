@@ -70,7 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(TraceLayer::new_for_http());
 
     // 5. Combined app (REST API + web UI)
-    let app = Router::new().merge(management_app).nest("/v1", rest_router);
+    let app = Router::new()
+        .merge(management_app)
+        .nest("/v1", rest_router)
+        .layer(Extension(master_auth.clone()));
 
     // 7. TLS Configuration
     // 7. TLS Configuration - HTTPS only
