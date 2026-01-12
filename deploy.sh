@@ -27,6 +27,7 @@ docker run -d \
   -v "$(pwd)/data:/data" \
   -e TLS_CERT=/data/tls.crt \
   -e TLS_KEY=/data/tls.key \
+  -e MASTER_PASSWORD_HASH_PATH=/data/master_password.hash \
   --restart unless-stopped \
   snp-guard
 

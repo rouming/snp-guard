@@ -53,6 +53,7 @@ WORKDIR /app
 # Environment variables
 ENV RUST_LOG=info
 ENV DATABASE_URL=sqlite:///data/snpguard.db?mode=rwc
+ENV MASTER_PASSWORD_HASH_PATH=/data/master_password.hash
 
 # Optional TLS environment variables (commented out by default)
 # ENV TLS_CERT=/path/to/cert.pem

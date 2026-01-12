@@ -121,11 +121,12 @@ For automation, create management API tokens from the web UI (Tokens page) and u
 
 ### 3. Configure TLS (required)
 
-Provide TLS certificate and key:
+Provide TLS certificate and key, and a path to store the master password hash:
 
 ```bash
 export TLS_CERT="/path/to/cert.pem"
 export TLS_KEY="/path/to/key.pem"
+export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
 ```
 
 ### 4. Run Server
@@ -134,6 +135,7 @@ export TLS_KEY="/path/to/key.pem"
 export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
 export TLS_CERT="/path/to/cert.pem"
 export TLS_KEY="/path/to/key.pem"
+export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
 make run-server
 ```
 
@@ -143,6 +145,7 @@ Or manually:
 export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
 export TLS_CERT="/path/to/cert.pem"
 export TLS_KEY="/path/to/key.pem"
+export MASTER_PASSWORD_HASH_PATH="/data/master_password.hash"
 cargo run --bin snpguard-server
 ```
 
