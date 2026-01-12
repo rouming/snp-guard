@@ -150,6 +150,7 @@ The server listens on HTTPS:
 - **Management UI**: `https://localhost:3000`
 - **Attestation API**: `https://localhost:3000/v1/attest/nonce` and `/v1/attest/report`
 - **Management API**: `https://localhost:3000/v1/records/*`, `/v1/tokens/*`
+- `./deploy.sh` will generate a self-signed cert/key in `./data` if missing and pass them as `TLS_CERT`/`TLS_KEY`.
 
 ## Usage
 
@@ -196,7 +197,10 @@ From the record view page, you can download:
 1. **Repack Initrd** with the attestation client:
 
 ```bash
-make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./certs/ca.pem
+# If using deploy.sh self-signed certs:
+make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./data/tls.crt
+# Otherwise point CA_CERT at your CA / server cert:
+# make repack ... CA_CERT=./certs/ca.pem
 ```
 
 Or manually:
