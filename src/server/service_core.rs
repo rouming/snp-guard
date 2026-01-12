@@ -76,11 +76,7 @@ fn detect_cpu_family(parsed: &ParsedReport) -> Result<String, String> {
     let generation = Generation::identify_cpu(family, model)
         .map_err(|e| format!("Failed to identify CPU: {e}"))?;
 
-    Ok(match generation {
-        Generation::Turin => "turin".to_string(),
-        Generation::Genoa => "genoa".to_string(),
-        Generation::Milan => "milan".to_string(),
-    })
+    Ok(generation.titlecase().to_lowercase())
 }
 
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
