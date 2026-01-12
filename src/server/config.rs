@@ -62,12 +62,42 @@ impl DataPaths {
 
         // Logs can be readable by group
         create_dir_secure(&self.logs_dir, 0o750)?;
+
+        // Ensure placeholder files exist for TLS/DB dirs so mounts are predictable
+        touch_if_missing(&self.tls_cert, 0o600)?;
+        touch_if_missing(&self.tls_key, 0o600)?;
+        touch_if_missing(&self.ca_cert, 0o644)?;
+        if !self.db_file.exists() {
+            // parent exists; just create empty file with 600 perms
+            touch_if_missing(&self.db_file, 0o600)?;
+        }
         Ok(())
     }
 }
 
 fn create_dir_secure(path: &Path, mode: u32) -> std::io::Result<()> {
     fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    Ok(())
+}
+
+fn touch_if_missing(path: &Path, mode: u32) -> std::io::Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    fs::write(path, &[])?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

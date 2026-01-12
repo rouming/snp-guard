@@ -7,9 +7,6 @@ set -e
 echo "🐳 Building SNP-Guard Docker image..."
 docker build -t snp-guard .
 
-echo "📁 Creating data directory..."
-mkdir -p data/tls data/auth data/db data/artifacts/attestations data/artifacts/tmp data/logs
-
 echo "🚀 Starting SNP-Guard container..."
 docker run -d \
   --name snp-guard \
