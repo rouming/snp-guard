@@ -5,6 +5,7 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use rand::RngCore;
+use rustls::crypto::ring::default_provider as ring_crypto_provider;
 use sea_orm::Database;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,6 +23,11 @@ mod web;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Ensure rustls has a crypto provider (ring) installed
+    ring_crypto_provider()
+        .install_default()
+        .expect("install ring crypto provider");
+
     // 1. DB
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let conn = Database::connect(db_url).await?;
