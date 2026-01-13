@@ -145,11 +145,7 @@ fn validate_ec_key(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn verify_report_signature(
-    report_path: &Path,
-    _certs_dir: &Path,
-    cpu_family: &str,
-) -> Result<()> {
+pub fn verify_report_signature(report_path: &Path) -> Result<()> {
     let snpguest_path = std::env::current_exe()?
         .parent()
         .ok_or_else(|| anyhow!("Cannot get executable directory"))?
@@ -165,8 +161,9 @@ pub fn verify_report_signature(
         .arg("fetch")
         .arg("ca")
         .arg("pem")
-        .arg(cpu_family)
         .arg(certs_dir)
+        .arg("-r")
+        .arg(report_path)
         .status()?;
     if !status.success() {
         return Err(anyhow!("Failed to fetch CA certificates"));
@@ -177,7 +174,6 @@ pub fn verify_report_signature(
         .arg("fetch")
         .arg("vcek")
         .arg("pem")
-        .arg(cpu_family)
         .arg(certs_dir)
         .arg(report_path)
         .status()?;

@@ -11,9 +11,7 @@ use common::snpguard::{
 };
 use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
-use sev::firmware::guest::ReportVariant;
 use sev::parser::ByteParser;
-use sev::Generation;
 
 use crate::business_logic;
 use crate::snpguest_wrapper;
@@ -55,36 +53,6 @@ struct ParsedReport<'a> {
     raw: &'a [u8],
 }
 
-fn detect_cpu_family(parsed: &ParsedReport) -> Result<String, String> {
-    let variant = ReportVariant::from_bytes(
-        parsed
-            .raw
-            .get(0..4)
-            .ok_or_else(|| "Report too short for variant".to_string())?,
-    )
-    .map_err(|e| format!("Failed to parse report variant: {e}"))?;
-
-    if let ReportVariant::V2 = variant {
-        return Err(
-            "Unsupported attestation report variant V2 (older CPUs unsupported)".to_string(),
-        );
-    }
-
-    let family = parsed
-        .report
-        .cpuid_fam_id
-        .ok_or_else(|| "Report missing cpuid family id".to_string())?;
-    let model = parsed
-        .report
-        .cpuid_mod_id
-        .ok_or_else(|| "Report missing cpuid model id".to_string())?;
-
-    let generation = Generation::identify_cpu(family, model)
-        .map_err(|e| format!("Failed to identify CPU: {e}"))?;
-
-    Ok(generation.titlecase().to_lowercase())
-}
-
 fn parse_snp_report(report_data: &[u8]) -> Result<ParsedReport<'_>, String> {
     AttestationReport::from_bytes(report_data)
         .map(|r| ParsedReport {
@@ -124,14 +92,6 @@ pub async fn verify_report_core(
         };
     }
 
-    let cpu_family = match detect_cpu_family(&parsed) {
-        Ok(family) => family,
-        Err(e) => {
-            eprintln!("Failed to detect CPU family: {}", e);
-            "genoa".to_string()
-        }
-    };
-
     let temp_dir = tempfile::TempDir::new();
     let report_path = match temp_dir {
         Ok(dir) => {
@@ -154,11 +114,7 @@ pub async fn verify_report_core(
         }
     };
 
-    if let Err(e) = snpguest_wrapper::verify_report_signature(
-        &report_path,
-        std::path::Path::new(""),
-        &cpu_family,
-    ) {
+    if let Err(e) = snpguest_wrapper::verify_report_signature(&report_path) {
         return AttestationResponse {
             success: false,
             secret: vec![],
