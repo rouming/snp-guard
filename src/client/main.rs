@@ -241,7 +241,7 @@ async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
         .send()
         .await
         .context("Failed to request nonce")?;
-    ensure_success(&resp, "nonce")?;
+    let resp = ensure_success(resp, "nonce").await?;
     let bytes = resp.bytes().await?;
     let nonce_resp = NonceResponse::decode(&bytes[..]).context("Decode nonce response")?;
     if nonce_resp.nonce.len() != 64 {
@@ -268,7 +268,7 @@ async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
         .send()
         .await
         .context("Failed to verify report")?;
-    ensure_success(&resp, "verify")?;
+    let resp = ensure_success(resp, "verify").await?;
     let bytes = resp.bytes().await?;
     let verify_resp =
         AttestationResponse::decode(&bytes[..]).context("Decode verification response")?;
@@ -312,7 +312,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .bearer_auth(&token)
                 .send()
                 .await?;
-            ensure_success(&resp, "list")?;
+            let resp = ensure_success(resp, "list").await?;
             let bytes = resp.bytes().await?;
             let list = ListRecordsResponse::decode(&bytes[..])?;
             print_list(list.records, json)?;
@@ -323,7 +323,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .bearer_auth(&token)
                 .send()
                 .await?;
-            ensure_success(&resp, "get")?;
+            let resp = ensure_success(resp, "show").await?;
             let bytes = resp.bytes().await?;
             let rec = GetRecordResponse::decode(&bytes[..])?;
             if let Some(r) = rec.record {
@@ -340,7 +340,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .bearer_auth(&token)
                 .send()
                 .await?;
-            ensure_success(&resp, "delete")?;
+            let resp = ensure_success(resp, "delete").await?;
             let bytes = resp.bytes().await?;
             let _ = DeleteRecordResponse::decode(&bytes[..])?;
         }
@@ -355,7 +355,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .bearer_auth(&token)
                 .send()
                 .await?;
-            ensure_success(&resp, "export")?;
+            let resp = ensure_success(resp, "export").await?;
             let bytes = resp.bytes().await?;
             fs::write(&out, &bytes)?;
         }
@@ -436,10 +436,16 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .body(buf)
                 .send()
                 .await?;
-            ensure_success(&resp, "create")?;
+            let resp = ensure_success(resp, "create").await?;
             let bytes = resp.bytes().await?;
             let created = CreateRecordResponse::decode(&bytes[..])?;
+            if let Some(err) = created.error_message {
+                bail!("create failed: {}", err);
+            }
             let id = created.id;
+            if id.is_empty() {
+                bail!("create failed: empty id returned");
+            }
             if disable {
                 toggle(&client, &base, &token, &id, false).await?;
             }
@@ -674,17 +680,19 @@ async fn toggle(
         .bearer_auth(token)
         .send()
         .await?;
-    ensure_success(&resp, "toggle")?;
+    let resp = ensure_success(resp, "toggle").await?;
     let bytes = resp.bytes().await?;
     let _ = ToggleEnabledResponse::decode(&bytes[..])?;
     Ok(())
 }
 
-fn ensure_success(resp: &reqwest::Response, op: &str) -> Result<()> {
+async fn ensure_success(resp: reqwest::Response, op: &str) -> Result<reqwest::Response> {
     if !resp.status().is_success() {
-        bail!("{} failed: {}", op, resp.status());
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("{} failed: {} {}", op, status, body);
     }
-    Ok(())
+    Ok(resp)
 }
 
 fn normalize_https(url: &str) -> Result<String> {
