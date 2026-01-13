@@ -67,9 +67,14 @@ enum ConfigCmd {
 
 #[derive(Subcommand, Debug)]
 enum ManageCmd {
-    List,
+    List {
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     Show {
         id: String,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     Enable {
         id: String,
@@ -301,7 +306,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
     };
     let client = build_client(&ca_path)?;
     match action {
-        ManageCmd::List => {
+        ManageCmd::List { json } => {
             let resp = client
                 .get(format!("{}/v1/records", base))
                 .bearer_auth(&token)
@@ -310,19 +315,9 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             ensure_success(&resp, "list")?;
             let bytes = resp.bytes().await?;
             let list = ListRecordsResponse::decode(&bytes[..])?;
-            println!(
-                "{:<36}  {:<24}  {:>8}  {:<8}",
-                "ID", "OS NAME", "REQUESTS", "STATUS"
-            );
-            for r in list.records {
-                let status = if r.enabled { "enabled" } else { "disabled" };
-                println!(
-                    "{:<36}  {:<24}  {:>8}  {:<8}",
-                    r.id, r.os_name, r.request_count, status
-                );
-            }
+            print_list(list.records, json)?;
         }
-        ManageCmd::Show { id } => {
+        ManageCmd::Show { id, json } => {
             let resp = client
                 .get(format!("{}/v1/records/{}", base, id))
                 .bearer_auth(&token)
@@ -332,22 +327,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             let bytes = resp.bytes().await?;
             let rec = GetRecordResponse::decode(&bytes[..])?;
             if let Some(r) = rec.record {
-                print_kv("ID", &r.id);
-                print_kv("OS Name", &r.os_name);
-                print_kv("Requests", &r.request_count.to_string());
-                print_kv("Status", if r.enabled { "enabled" } else { "disabled" });
-                print_kv("Service URL", &r.service_url);
-                print_kv("vCPUs", &r.vcpus.to_string());
-                print_kv("vCPU Type", &r.vcpu_type);
-                print_kv("Allowed Debug", &r.allowed_debug.to_string());
-                print_kv("Allowed Migrate MA", &r.allowed_migrate_ma.to_string());
-                print_kv("Allowed SMT", &r.allowed_smt.to_string());
-                print_kv("Min TCB Bootloader", &r.min_tcb_bootloader.to_string());
-                print_kv("Min TCB TEE", &r.min_tcb_tee.to_string());
-                print_kv("Min TCB SNP", &r.min_tcb_snp.to_string());
-                print_kv("Min TCB Microcode", &r.min_tcb_microcode.to_string());
-                print_kv("Image ID", &hex::encode(r.image_id));
-                print_kv("Created At", &r.created_at);
+                print_record(&r, json)?;
             } else {
                 println!("Record not found");
             }
@@ -584,6 +564,103 @@ fn print_kv(key: &str, val: &str) {
     println!("{:<20}: {}", key, val);
 }
 
+fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<()> {
+    if json {
+        #[derive(serde::Serialize)]
+        struct JsonRecord<'a> {
+            id: &'a str,
+            os_name: &'a str,
+            request_count: i32,
+            enabled: bool,
+            service_url: &'a str,
+            vcpus: u32,
+            vcpu_type: &'a str,
+            allowed_debug: bool,
+            allowed_migrate_ma: bool,
+            allowed_smt: bool,
+            min_tcb_bootloader: u32,
+            min_tcb_tee: u32,
+            min_tcb_snp: u32,
+            min_tcb_microcode: u32,
+            image_id: String,
+            created_at: &'a str,
+        }
+        let jr = JsonRecord {
+            id: &r.id,
+            os_name: &r.os_name,
+            request_count: r.request_count,
+            enabled: r.enabled,
+            service_url: &r.service_url,
+            vcpus: r.vcpus,
+            vcpu_type: &r.vcpu_type,
+            allowed_debug: r.allowed_debug,
+            allowed_migrate_ma: r.allowed_migrate_ma,
+            allowed_smt: r.allowed_smt,
+            min_tcb_bootloader: r.min_tcb_bootloader,
+            min_tcb_tee: r.min_tcb_tee,
+            min_tcb_snp: r.min_tcb_snp,
+            min_tcb_microcode: r.min_tcb_microcode,
+            image_id: hex::encode(&r.image_id),
+            created_at: &r.created_at,
+        };
+        let val = serde_json::to_string_pretty(&jr)?;
+        println!("{}", val);
+    } else {
+        print_kv("ID", &r.id);
+        print_kv("OS Name", &r.os_name);
+        print_kv("Requests", &r.request_count.to_string());
+        print_kv("Status", if r.enabled { "enabled" } else { "disabled" });
+        print_kv("Service URL", &r.service_url);
+        print_kv("vCPUs", &r.vcpus.to_string());
+        print_kv("vCPU Type", &r.vcpu_type);
+        print_kv("Allowed Debug", &r.allowed_debug.to_string());
+        print_kv("Allowed Migrate MA", &r.allowed_migrate_ma.to_string());
+        print_kv("Allowed SMT", &r.allowed_smt.to_string());
+        print_kv("Min TCB Bootloader", &r.min_tcb_bootloader.to_string());
+        print_kv("Min TCB TEE", &r.min_tcb_tee.to_string());
+        print_kv("Min TCB SNP", &r.min_tcb_snp.to_string());
+        print_kv("Min TCB Microcode", &r.min_tcb_microcode.to_string());
+        print_kv("Image ID", &hex::encode(&r.image_id));
+        print_kv("Created At", &r.created_at);
+    }
+    Ok(())
+}
+
+fn print_list(records: Vec<common::snpguard::AttestationRecord>, json: bool) -> Result<()> {
+    if json {
+        #[derive(serde::Serialize)]
+        struct JsonRec<'a> {
+            id: &'a str,
+            os_name: &'a str,
+            request_count: i32,
+            enabled: bool,
+        }
+        let out: Vec<JsonRec> = records
+            .iter()
+            .map(|r| JsonRec {
+                id: &r.id,
+                os_name: &r.os_name,
+                request_count: r.request_count,
+                enabled: r.enabled,
+            })
+            .collect();
+        let val = serde_json::to_string_pretty(&out)?;
+        println!("{}", val);
+    } else {
+        println!(
+            "{:<36}  {:<24}  {:>8}  {:<8}",
+            "ID", "OS NAME", "REQUESTS", "STATUS"
+        );
+        for r in records {
+            let status = if r.enabled { "enabled" } else { "disabled" };
+            println!(
+                "{:<36}  {:<24}  {:>8}  {:<8}",
+                r.id, r.os_name, r.request_count, status
+            );
+        }
+    }
+    Ok(())
+}
 async fn toggle(
     client: &reqwest::Client,
     base: &str,
