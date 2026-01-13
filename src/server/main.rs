@@ -15,6 +15,8 @@ use std::sync::Arc;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
+pub const MAX_BODY_BYTES: usize = 300 * 1024 * 1024;
+
 mod auth;
 mod business_logic;
 mod config;
@@ -93,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(service_state.clone()))
         .layer(Extension(master_auth.clone()))
         .layer(middleware::from_fn(auth::master_auth_middleware))
-        .layer(DefaultBodyLimit::max(300 * 1024 * 1024)) // allow large multipart uploads
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES)) // allow large multipart uploads
         .layer(TraceLayer::new_for_http());
 
     // 5. Combined app (REST API + web UI)

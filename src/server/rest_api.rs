@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::MAX_BODY_BYTES;
 use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, State},
@@ -54,7 +55,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 
     public
         .merge(management)
-        .layer(DefaultBodyLimit::max(300 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
 async fn health(State(state): State<Arc<ServiceState>>, headers: HeaderMap) -> Response {
