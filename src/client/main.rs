@@ -58,6 +58,8 @@ enum ConfigCmd {
         token: String,
         #[arg(long, value_name = "URL")]
         url: String,
+        #[arg(long, value_name = "PATH")]
+        ca_cert: String,
     },
     /// Remove stored token
     Logout,
@@ -146,10 +148,16 @@ fn token_path() -> Result<PathBuf> {
     Ok(base.join("snpguard").join("config"))
 }
 
+fn ca_dest_path() -> Result<PathBuf> {
+    let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
+    Ok(base.join("snpguard").join("ca.pem"))
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct StoredConfig {
     token: Option<String>,
     url: Option<String>,
+    ca_cert: Option<String>, // stored filename under config dir (e.g., ca.pem)
 }
 
 fn load_config() -> Result<StoredConfig> {
@@ -273,7 +281,17 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
     } else {
         bail!("URL not provided and not stored; pass --url or login with a URL")
     };
-    let client = build_client(ca_cert)?;
+    let ca_path = if let Some(stored) = cfg.ca_cert {
+        config_dir()
+            .unwrap_or_default()
+            .join("snpguard")
+            .join(stored)
+            .to_string_lossy()
+            .to_string()
+    } else {
+        ca_cert.to_string()
+    };
+    let client = build_client(&ca_path)?;
     match action {
         ManageCmd::List => {
             let resp = client
@@ -470,11 +488,35 @@ fn read_bundle(
 
 fn run_config(action: ConfigCmd) -> Result<()> {
     match action {
-        ConfigCmd::Login { token, url } => {
+        ConfigCmd::Login {
+            token,
+            url,
+            ca_cert,
+        } => {
             let mut cfg = load_config()?;
             let base = normalize_https(&url)?;
+            let ca_dest = ca_dest_path()?;
+
+            // Copy CA into config dir with 0600 perms
+            let ca_bytes = fs::read(&ca_cert)
+                .with_context(|| format!("Failed to read CA certificate from {}", ca_cert))?;
+            if let Some(parent) = ca_dest.parent() {
+                fs::create_dir_all(parent)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                }
+            }
+            fs::write(&ca_dest, &ca_bytes)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
+            }
+
             // Validate token via health (management auth)
-            let client = build_client(DEFAULT_CA_CERT)?;
+            let client = build_client(&ca_dest.to_string_lossy())?;
             let resp = client
                 .get(format!("{}/v1/health", base))
                 .bearer_auth(&token)
@@ -486,6 +528,7 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             if resp.status().is_success() {
                 cfg.token = Some(token);
                 cfg.url = Some(base);
+                cfg.ca_cert = Some("ca.pem".to_string());
                 save_config(&cfg)?;
                 println!("Successfully logged in, config stored");
             } else {
