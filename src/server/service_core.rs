@@ -139,7 +139,7 @@ pub async fn verify_report_core(
 
     if let Some(vm) = record {
         // Measurement check (even if ID/AUTH blocks are bypassed in future)
-        let report_measurement_hex = hex::encode(parsed.report.measurement);
+        let report_measurement_hex = format!("0x{}", hex::encode(parsed.report.measurement));
         if vm.measurement != report_measurement_hex {
             return AttestationResponse {
                 success: false,
