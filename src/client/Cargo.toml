@@ -18,3 +18,5 @@ sev = { version = "7.1.0", default-features = false, features = ["snp"] }
 dirs = "5"
 tar = "0.4"
 flate2 = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

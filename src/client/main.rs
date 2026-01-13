@@ -37,7 +37,7 @@ enum Command {
     /// Management operations (requires stored token)
     Manage {
         #[arg(long, value_name = "URL")]
-        url: String,
+        url: Option<String>,
         #[arg(long, value_name = "PATH", default_value = DEFAULT_CA_CERT)]
         ca_cert: String,
         #[command(subcommand)]
@@ -56,6 +56,8 @@ enum ConfigCmd {
     Login {
         #[arg(long)]
         token: String,
+        #[arg(long, value_name = "URL")]
+        url: String,
     },
     /// Remove stored token
     Logout,
@@ -134,28 +136,35 @@ async fn main() -> Result<()> {
             url,
             ca_cert,
             action,
-        } => run_manage(&url, &ca_cert, action).await,
+        } => run_manage(url.as_deref(), &ca_cert, action).await,
         Command::Config { action } => run_config(action),
     }
 }
 
 fn token_path() -> Result<PathBuf> {
     let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
-    Ok(base.join("snpguard").join("token"))
+    Ok(base.join("snpguard").join("config"))
 }
 
-fn load_token() -> Result<String> {
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct StoredConfig {
+    token: Option<String>,
+    url: Option<String>,
+}
+
+fn load_config() -> Result<StoredConfig> {
     let path = token_path()?;
-    let data = fs::read_to_string(&path).with_context(|| {
-        format!(
-            "Token not found; run `snpguard-client config login --token <TOKEN>` ({} )",
-            path.display()
-        )
-    })?;
-    Ok(data.trim().to_string())
+    if !path.exists() {
+        return Ok(StoredConfig::default());
+    }
+    let data = fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read config at {}", path.display()))?;
+    let cfg: StoredConfig = serde_json::from_str(&data)
+        .with_context(|| format!("Config file at {} is invalid JSON", path.display()))?;
+    Ok(cfg)
 }
 
-fn save_token(token: &str) -> Result<()> {
+fn save_config(cfg: &StoredConfig) -> Result<()> {
     let path = token_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -165,7 +174,8 @@ fn save_token(token: &str) -> Result<()> {
             fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
         }
     }
-    fs::write(&path, token)?;
+    let data = serde_json::to_string(cfg)?;
+    fs::write(&path, data)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -174,7 +184,7 @@ fn save_token(token: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete_token() -> Result<()> {
+fn delete_config() -> Result<()> {
     let path = token_path()?;
     if path.exists() {
         fs::remove_file(path)?;
@@ -250,10 +260,20 @@ async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
     }
 }
 
-async fn run_manage(url: &str, ca_cert: &str, action: ManageCmd) -> Result<()> {
-    let token = load_token()?;
+async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Result<()> {
+    let cfg = load_config()?;
+    let token = cfg
+        .token
+        .clone()
+        .ok_or_else(|| anyhow!("Token not found; run config login"))?;
+    let base = if let Some(u) = url {
+        normalize_https(u)?
+    } else if let Some(u) = cfg.url {
+        u
+    } else {
+        bail!("URL not provided and not stored; pass --url or login with a URL")
+    };
     let client = build_client(ca_cert)?;
-    let base = normalize_https(url)?;
     match action {
         ManageCmd::List => {
             let resp = client
@@ -450,12 +470,15 @@ fn read_bundle(
 
 fn run_config(action: ConfigCmd) -> Result<()> {
     match action {
-        ConfigCmd::Login { token } => {
-            save_token(&token)?;
+        ConfigCmd::Login { token, url } => {
+            let mut cfg = load_config()?;
+            cfg.token = Some(token);
+            cfg.url = Some(normalize_https(&url)?);
+            save_config(&cfg)?;
             println!("Token saved");
         }
         ConfigCmd::Logout => {
-            delete_token()?;
+            delete_config()?;
             println!("Token removed");
         }
     }
