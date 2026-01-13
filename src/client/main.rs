@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
 
 fn token_path() -> Result<PathBuf> {
     let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
-    Ok(base.join("snpguard").join("config"))
+    Ok(base.join("snpguard").join("config.json"))
 }
 
 fn ca_dest_path() -> Result<PathBuf> {
