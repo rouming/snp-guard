@@ -4,7 +4,7 @@ use axum::{
     body::{Body, Bytes},
     extract::{Path, State},
     http::{HeaderValue, StatusCode},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
@@ -42,6 +42,8 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
         )
         .route("/records/:id/enable", post(enable_record))
         .route("/records/:id/disable", post(disable_record))
+        .route("/records/:id/export/tar", get(export_tar))
+        .route("/records/:id/export/squash", get(export_squash))
         .route("/tokens", get(list_tokens).post(create_token))
         .route("/tokens/:id/revoke", post(revoke_token))
         .with_state(state.clone())
@@ -263,6 +265,86 @@ async fn disable_record(
     Path(id): Path<String>,
 ) -> Response {
     toggle_record(state, id, false).await
+}
+
+async fn export_tar(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    export_artifact(&state, &id, "artifacts.tar.gz").await
+}
+
+async fn export_squash(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    export_artifact(&state, &id, "artifacts.squashfs").await
+}
+
+async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) -> Response {
+    use axum::body::Body;
+    use tokio_util::io::ReaderStream;
+
+    let artifact_dir = state.data_paths.attestations_dir.join(id);
+    let path = artifact_dir.join(filename);
+
+    // Generate on demand if missing
+    if filename.ends_with(".squashfs") && !path.exists() {
+        let def_path = artifact_dir.join("squash.def");
+        if let Err(e) = std::fs::write(
+            &def_path,
+            "/ d 755 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n",
+        ) {
+            return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+        }
+        if let Err(e) = std::process::Command::new("mksquashfs")
+            .arg(&artifact_dir)
+            .arg(&path)
+            .arg("-noappend")
+            .arg("-all-root")
+            .arg("-pf")
+            .arg(&def_path)
+            .status()
+        {
+            return proto_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Failed to create squashfs: {e}"),
+            );
+        }
+    } else if filename.ends_with(".tar.gz") && !path.exists() {
+        let status = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&path)
+            .arg("-C")
+            .arg(&artifact_dir)
+            .arg("--transform=s|^|/|")
+            .arg("firmware-code.fd")
+            .arg("vmlinuz")
+            .arg("initrd.img")
+            .arg("kernel-params.txt")
+            .arg("id-block.bin")
+            .arg("id-auth.bin")
+            .status();
+        if status.is_err() {
+            return proto_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create tarball",
+            );
+        }
+    }
+
+    match tokio::fs::File::open(path).await {
+        Ok(file) => {
+            let stream = ReaderStream::new(file);
+            let body = Body::from_stream(stream);
+            let content_disposition = format!("attachment; filename=\"{}\"", filename);
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                "Content-Type",
+                HeaderValue::from_static("application/octet-stream"),
+            );
+            headers.insert(
+                "Content-Disposition",
+                HeaderValue::from_str(&content_disposition).unwrap(),
+            );
+            (headers, body).into_response()
+        }
+        Err(_) => proto_error(StatusCode::NOT_FOUND, "File not found"),
+    }
 }
 
 async fn toggle_record(state: Arc<ServiceState>, id: String, enabled: bool) -> Response {
