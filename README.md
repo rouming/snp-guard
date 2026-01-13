@@ -274,7 +274,7 @@ message NonceResponse {
 }
 ```
 
-#### POST `/attestation/verify`
+#### POST `/v1/attest/report`
 
 Verify an attestation report and return secret if successful.
 
@@ -282,7 +282,6 @@ Verify an attestation report and return secret if successful.
 ```protobuf
 message AttestationRequest {
   bytes report_data = 1;
-  string cpu_family_hint = 2;  // Optional: "genoa", "milan", "turin"
 }
 ```
 
@@ -295,31 +294,41 @@ message AttestationResponse {
 }
 ```
 
-### Management Endpoints
+### Management Endpoints (HTTPS + protobuf)
 
-- `GET /` - List all attestation records
-- `GET /create` - Create new record form
-- `POST /create` - Submit new record
-- `GET /view/:id` - View/edit record
-- `POST /view/:id` - Update record
-- `POST /toggle/:id` - Enable/disable record
-- `GET /delete/:id` - Delete record
-- `GET /download/:id/:file` - Download artifact
+- `GET /v1/records` - List records
+- `GET /v1/records/{id}` - Get single record
+- `POST /v1/records` - Create record
+- `PATCH /v1/records/{id}` - Update record
+- `POST /v1/records/{id}/enable|disable` - Toggle enabled
+- `DELETE /v1/records/{id}` - Delete record
+- `GET /v1/records/{id}/export/tar|squash` - Export latest artifacts
+- `GET /v1/tokens` / `POST /v1/tokens` / `POST /v1/tokens/{id}/revoke` - Manage tokens
+- `GET /v1/health` - Health; accepts Bearer token (200 if valid)
 
 ## Command Line
 
-### Client
+### Client (subcommands)
 
 ```bash
-snpguard-client --url https://attestation-service.com
+# Store URL/token/CA after validating token via /v1/health
+snpguard-client config login --url https://attest.example.com --token <TOKEN> --ca-cert ./ca.pem
+snpguard-client config logout
+
+# Attestation (uses pinned CA from config)
+snpguard-client attest --report /path/to/report.bin --url https://attest.example.com --ca-cert ./ca.pem
+
+# Management (defaults to stored config)
+snpguard-client manage list
+snpguard-client manage show <id>
+snpguard-client manage create --os-name ubuntu --service-url https://attest.example.com --secret supersecret \
+  --vcpus 4 --vcpu-type EPYC --kernel-params "console=ttyS0" \
+  --firmware firmware-code.fd --kernel vmlinuz --initrd initrd.img \
+  --id-key id-block-key.pem --auth-key id-auth-key.pem
+snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz
 ```
 
-The client:
-- Connects to the attestation service via HTTPS
-- Requests a nonce
-- Generates an attestation report using `snpguest`
-- Sends the report for verification
-- Outputs the secret to stdout on success
+`manage show` now prints kernel params and artifact filenames; `manage list/show` also support `--json`.
 
 ## Security Considerations
 
@@ -391,9 +400,9 @@ The application will be available at `https://localhost:3000`.
 
 ### Attestation REST API (HTTPS + Protobuf)
 
-- All attestation and management APIs are exposed as REST-style HTTPS endpoints using protobuf payloads (`application/x-protobuf`).
+- All attestation and management APIs are REST-style HTTPS with protobuf payloads (`application/x-protobuf`).
 - Endpoints (prefix `/v1`):
-  - `POST /v1/attest/nonce` -> `NonceRequest` / `NonceResponse`
+  - `POST /v1/attest/nonce` -> `NonceResponse` (no request fields)
   - `POST /v1/attest/report` -> `AttestationRequest` / `AttestationResponse`
   - `GET /v1/records` -> `ListRecordsResponse`
   - `GET /v1/records/{id}` -> `GetRecordResponse`
@@ -401,10 +410,11 @@ The application will be available at `https://localhost:3000`.
   - `PATCH /v1/records/{id}` -> `UpdateRecordRequest` / `UpdateRecordResponse`
   - `POST /v1/records/{id}/enable` -> `ToggleEnabledResponse`
   - `POST /v1/records/{id}/disable` -> `ToggleEnabledResponse`
-  - `DELETE /v1/records/{id}` -> `DeleteRecordResponse`
-  - `GET /v1/health` -> 200 OK
+  - `GET /v1/records/{id}/export/tar|squash` -> latest artifacts (regenerated each time)
+  - `GET /v1/tokens`, `POST /v1/tokens`, `POST /v1/tokens/{id}/revoke` -> token CRUD
+  - `GET /v1/health` -> 200; with Bearer token returns 200 if valid else 401
 - Attestation client uses the same protobuf messages over HTTPS with full TLS verification.
-- Management routes are protected by the master password (HTTP Basic; username ignored).
+- Management routes are protected by master password or Bearer token (for automation).
 
 ### Attestation Report Parsing
 

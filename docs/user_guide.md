@@ -184,25 +184,18 @@ Disabled records will cause attestation requests to fail, but the record remains
 
 Click **"Delete"** on the main page or record view page. This permanently removes the record and all associated artifacts.
 
-## Using the Client Directly
+## Using the Client
 
-You can also use the client tool directly (useful for testing):
+Subcommands:
 
+- `config login --url <URL> --token <TOKEN> --ca-cert <PATH>`: validates the token via `/v1/health`, then stores URL/token and copies CA to `~/.config/snpguard/`. `config logout` removes them.
+- `attest --report <REPORT_PATH> --url <URL> --ca-cert <PATH>`: submit a pre-generated report over HTTPS+protobuf with pinned CA (no system trust).
+- `manage list|show|create|enable|disable|delete|export`: management calls using stored config by default. `manage show` prints kernel params and artifact filenames; `--json` is available for list/show.
+- `manage create`: accepts `--artifacts-bundle` or individual `--firmware/--kernel/--initrd/--kernel-params` plus `--id-key/--auth-key` (required). Bundle may include keys and kernel params.
+
+**Example (management export)**:
 ```bash
-snpguard-client --url https://attest.example.com
-```
-
-The client will:
-1. Request a nonce
-2. Generate an attestation report
-3. Send it for verification
-4. Output the secret to stdout on success
-
-**Example** (piping secret to cryptsetup):
-
-```bash
-SECRET=$(snpguard-client --url https://attest.example.com)
-echo -n "$SECRET" | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
+snpguard-client manage export --id <record-id> --format tar --out artifacts.tar.gz
 ```
 
 ## Troubleshooting
