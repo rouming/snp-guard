@@ -298,8 +298,8 @@ async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) ->
     let artifact_dir = state.data_paths.attestations_dir.join(id);
     let path = artifact_dir.join(filename);
 
-    // Generate on demand if missing
-    if filename.ends_with(".squashfs") && !path.exists() {
+    // Always regenerate archives to reflect the latest artifacts
+    if filename.ends_with(".squashfs") {
         let def_path = artifact_dir.join("squash.def");
         if let Err(e) = std::fs::write(
             &def_path,
@@ -307,6 +307,8 @@ async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) ->
         ) {
             return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
         }
+        // Remove stale file first to avoid reusing old content
+        let _ = std::fs::remove_file(&path);
         if let Err(e) = std::process::Command::new("mksquashfs")
             .arg(&artifact_dir)
             .arg(&path)
@@ -321,7 +323,9 @@ async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) ->
                 &format!("Failed to create squashfs: {e}"),
             );
         }
-    } else if filename.ends_with(".tar.gz") && !path.exists() {
+    } else if filename.ends_with(".tar.gz") {
+        // Remove stale file first to ensure updated contents
+        let _ = std::fs::remove_file(&path);
         let status = std::process::Command::new("tar")
             .arg("-czf")
             .arg(&path)
