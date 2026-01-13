@@ -40,6 +40,7 @@ pub struct Model {
     pub firmware_path: String,
     pub kernel_path: String,
     pub initrd_path: String,
+    pub measurement: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

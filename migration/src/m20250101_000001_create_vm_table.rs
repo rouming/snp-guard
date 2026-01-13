@@ -116,6 +116,12 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
+                        ColumnDef::new(Alias::new("measurement"))
+                            .string()
+                            .not_null()
+                            .default(""),
+                    )
+                    .col(
                         ColumnDef::new(Alias::new("kernel_params"))
                             .string()
                             .not_null(),

@@ -100,7 +100,7 @@ pub async fn create_record_logic(
     let image_id_hex = hex::encode(image_id.as_bytes());
 
     // Generate Measurements and Blocks
-    snpguest_wrapper::generate_measurement_and_block(
+    let measurement = snpguest_wrapper::generate_measurement_and_block(
         &artifact_dir.join("firmware-code.fd"),
         &artifact_dir.join("vmlinuz"),
         &artifact_dir.join("initrd.img"),
@@ -132,6 +132,7 @@ pub async fn create_record_logic(
         created_at: Set(chrono::Utc::now().naive_utc()),
         enabled: Set(true),
         image_id: Set(image_id.as_bytes().to_vec()),
+        measurement: Set(measurement),
         allowed_debug: Set(req.allowed_debug),
         allowed_migrate_ma: Set(req.allowed_migrate_ma),
         allowed_smt: Set(req.allowed_smt),
@@ -243,7 +244,7 @@ pub async fn update_record_logic(
         // Convert image_id bytes to hex string (32 characters, 16 bytes when decoded)
         let image_id_hex = hex::encode(&vm_model.image_id);
 
-        snpguest_wrapper::generate_measurement_and_block(
+        let measurement = snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
             &kernel_path,
             &initrd_path,
@@ -265,6 +266,7 @@ pub async fn update_record_logic(
 
         vm_model.id_key_digest = id_digest;
         vm_model.auth_key_digest = auth_digest;
+        vm_model.measurement = measurement;
     }
 
     // Update database record

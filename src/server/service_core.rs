@@ -180,6 +180,16 @@ pub async fn verify_report_core(
     };
 
     if let Some(vm) = record {
+        // Measurement check (even if ID/AUTH blocks are bypassed in future)
+        let report_measurement_hex = hex::encode(parsed.report.measurement);
+        if vm.measurement != report_measurement_hex {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Measurement mismatch".to_string(),
+            };
+        }
+
         let policy = parsed.report.policy;
         if policy.debug_allowed() && !vm.allowed_debug {
             return AttestationResponse {
@@ -300,6 +310,7 @@ pub async fn list_records_core(
             kernel_path: vm.kernel_path,
             initrd_path: vm.initrd_path,
             image_id: vm.image_id,
+            measurement: vm.measurement.clone(),
             allowed_debug: vm.allowed_debug,
             allowed_migrate_ma: vm.allowed_migrate_ma,
             allowed_smt: vm.allowed_smt,
@@ -337,6 +348,7 @@ pub async fn get_record_core(
         kernel_path: vm.kernel_path,
         initrd_path: vm.initrd_path,
         image_id: vm.image_id,
+        measurement: vm.measurement,
         allowed_debug: vm.allowed_debug,
         allowed_migrate_ma: vm.allowed_migrate_ma,
         allowed_smt: vm.allowed_smt,

@@ -16,7 +16,7 @@ pub fn generate_measurement_and_block(
     auth_key: &Path,
     output_dir: &Path,
     image_id_hex: String,
-) -> Result<()> {
+) -> Result<String> {
     validate_ec_key(id_key)?;
     validate_ec_key(auth_key)?;
 
@@ -67,7 +67,7 @@ pub fn generate_measurement_and_block(
         .arg("id-block")
         .arg(id_key)
         .arg(auth_key)
-        .arg(measurement)
+        .arg(&measurement)
         .arg("--image-id")
         .arg(image_id_hex)
         .arg("--id-file")
@@ -84,7 +84,7 @@ pub fn generate_measurement_and_block(
     decode_base64_file(&output_dir.join("id-block.bin"))?;
     decode_base64_file(&output_dir.join("id-auth.bin"))?;
 
-    Ok(())
+    Ok(measurement)
 }
 
 fn decode_base64_file(path: &Path) -> Result<()> {
