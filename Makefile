@@ -28,12 +28,12 @@ build-snpguest: ## Build snpguest tool (Static)
 db-setup: ## Initialize SQLite Database
 	mkdir -p $(DATA_DIR)/db
 	export DATABASE_URL="$(DB_URL)"; \
-	$(CARGO) run -p migration
+	$(CARGO) run --release -p migration
 
 run-server: db-setup ## Run the Server locally
 	export DATA_DIR="$(DATA_DIR)"; \
 	export DATABASE_URL="$(DB_URL)"; \
-	$(CARGO) run --bin snpguard-server
+	$(CARGO) run --release --bin snpguard-server
 
 clean: ## Clean artifacts
 	$(CARGO) clean
