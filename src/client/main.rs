@@ -605,6 +605,10 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             request_count: i32,
             enabled: bool,
             service_url: &'a str,
+            kernel_params: &'a str,
+            firmware_path: &'a str,
+            kernel_path: &'a str,
+            initrd_path: &'a str,
             vcpus: u32,
             vcpu_type: &'a str,
             allowed_debug: bool,
@@ -623,6 +627,10 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             request_count: r.request_count,
             enabled: r.enabled,
             service_url: &r.service_url,
+            kernel_params: &r.kernel_params,
+            firmware_path: &r.firmware_path,
+            kernel_path: &r.kernel_path,
+            initrd_path: &r.initrd_path,
             vcpus: r.vcpus,
             vcpu_type: &r.vcpu_type,
             allowed_debug: r.allowed_debug,
@@ -643,6 +651,10 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
         print_kv("Requests", &r.request_count.to_string());
         print_kv("Status", if r.enabled { "enabled" } else { "disabled" });
         print_kv("Service URL", &r.service_url);
+        print_kv("Kernel Params", &r.kernel_params);
+        print_kv("Firmware Path", &r.firmware_path);
+        print_kv("Kernel Path", &r.kernel_path);
+        print_kv("Initrd Path", &r.initrd_path);
         print_kv("vCPUs", &r.vcpus.to_string());
         print_kv("vCPU Type", &r.vcpu_type);
         print_kv("Allowed Debug", &r.allowed_debug.to_string());
