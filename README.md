@@ -71,6 +71,16 @@ SnpGuard addresses these needs by providing:
 
 ## Building
 
+### Initial Setup
+
+If you're cloning the repository for the first time, initialize the git submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+This is required because `snpguest` is included as a git submodule.
+
 ### Build Everything
 
 ```bash
@@ -166,7 +176,7 @@ The server listens on HTTPS:
 
 ### Creating an Attestation Record
 
-1. **Access Management UI**: Navigate to `http://localhost:3000` and log in
+1. **Access Management UI**: Navigate to `https://localhost:3000` and log in
 2. **Click "Create New Record"**
 3. **Fill in the form**:
    - **OS Name**: Descriptive name for this VM configuration
@@ -254,23 +264,27 @@ rd.attest.url=https://your-attestation-service.com
 
 ## API Reference
 
+All API endpoints use HTTPS with Protocol Buffers (`application/x-protobuf`) for request/response payloads. For detailed API documentation, see [docs/api.md](docs/api.md).
+
 ### Attestation Endpoints
 
-#### POST `/attestation/nonce`
+These endpoints are used by guest VMs during the attestation process.
+
+#### POST `/v1/attest/nonce`
 
 Request a random 64-byte nonce for attestation report generation.
 
 **Request** (Protobuf):
 ```protobuf
-message NonceRequest {
-  string vm_id = 1;
-}
+message NonceRequest {}
 ```
+
+**Note**: The request message is empty. The `vm_id` field is not used in the current implementation.
 
 **Response** (Protobuf):
 ```protobuf
 message NonceResponse {
-  bytes nonce = 1;  // 64 bytes
+  bytes nonce = 1;  // Exactly 64 bytes
 }
 ```
 
@@ -281,7 +295,7 @@ Verify an attestation report and return secret if successful.
 **Request** (Protobuf):
 ```protobuf
 message AttestationRequest {
-  bytes report_data = 1;
+  bytes report_data = 1;  // SEV-SNP attestation report (binary)
 }
 ```
 
@@ -289,12 +303,14 @@ message AttestationRequest {
 ```protobuf
 message AttestationResponse {
   bool success = 1;
-  bytes secret = 2;
-  string error_message = 3;
+  bytes secret = 2;  // Secret to release (if success)
+  string error_message = 3;  // Error description (if !success)
 }
 ```
 
-### Management Endpoints (HTTPS + protobuf)
+### Management Endpoints
+
+These endpoints require authentication (master password or Bearer token) and are used for managing attestation records.
 
 - `GET /v1/records` - List records
 - `GET /v1/records/{id}` - Get single record
