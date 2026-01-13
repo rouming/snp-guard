@@ -92,27 +92,25 @@ pub async fn verify_report_core(
         };
     }
 
-    let temp_dir = tempfile::TempDir::new();
-    let report_path = match temp_dir {
-        Ok(dir) => {
-            let path = dir.path().join("report.bin");
-            if std::fs::write(&path, parsed.raw).is_err() {
-                return AttestationResponse {
-                    success: false,
-                    secret: vec![],
-                    error_message: "Failed to write report to temp file".to_string(),
-                };
-            }
-            path
-        }
+    let temp_dir = match tempfile::TempDir::new() {
+        Ok(dir) => dir,
         Err(_) => {
             return AttestationResponse {
                 success: false,
                 secret: vec![],
                 error_message: "Failed to create temp dir".to_string(),
-            }
+            };
         }
     };
+
+    let report_path = temp_dir.path().join("report.bin");
+    if std::fs::write(&report_path, parsed.raw).is_err() {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Failed to write report to temp file".to_string(),
+        };
+    }
 
     if let Err(e) = snpguest_wrapper::verify_report_signature(&report_path) {
         return AttestationResponse {
