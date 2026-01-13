@@ -105,6 +105,16 @@ pub async fn login_submit(
     }
 }
 
+fn max_upload_size(name: &str) -> Option<usize> {
+    match name {
+        "firmware" => Some(50 * 1024 * 1024),     // 50 MB
+        "kernel" => Some(50 * 1024 * 1024),       // 50 MB
+        "initrd" => Some(150 * 1024 * 1024),      // 150 MB
+        "id_key" | "auth_key" => Some(10 * 1024), // 10 KB for keys
+        _ => None,
+    }
+}
+
 pub async fn create_action(
     Extension(state): Extension<Arc<ServiceState>>,
     mut multipart: Multipart,
@@ -160,13 +170,11 @@ pub async fn create_action(
             }
 
             // Enforce file size limits
-            let max_size = match name.as_str() {
-                "firmware" => 50 * 1024 * 1024,     // 50 MB
-                "kernel" => 50 * 1024 * 1024,       // 50 MB
-                "initrd" => 150 * 1024 * 1024,      // 150 MB
-                "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
-                _ => continue,
-            };
+            let max_size = max_upload_size(name.as_str());
+            if max_size.is_none() {
+                continue;
+            }
+            let max_size = max_size.unwrap();
 
             if data.len() > max_size {
                 return Html(format!(
@@ -340,13 +348,11 @@ pub async fn update_action(
             }
 
             // Enforce file size limits
-            let max_size = match name.as_str() {
-                "firmware" => 10 * 1024 * 1024,     // 10 MB
-                "kernel" => 50 * 1024 * 1024,       // 50 MB
-                "initrd" => 50 * 1024 * 1024,       // 50 MB
-                "id_key" | "auth_key" => 10 * 1024, // 10 KB for keys
-                _ => continue,
-            };
+            let max_size = max_upload_size(name.as_str());
+            if max_size.is_none() {
+                continue;
+            }
+            let max_size = max_size.unwrap();
 
             if data.len() > max_size {
                 return Html(format!(
