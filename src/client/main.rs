@@ -197,6 +197,10 @@ fn delete_config() -> Result<()> {
     if path.exists() {
         fs::remove_file(path)?;
     }
+    let ca_path = ca_dest_path()?;
+    if ca_path.exists() {
+        fs::remove_file(ca_path)?;
+    }
     Ok(())
 }
 
