@@ -40,10 +40,10 @@ run-server: db-setup ## Run the Server locally
 	export DATABASE_URL="$(DB_URL)"; \
 	$(CARGO) run $(PROFILE_FLAG) --bin snpguard-server
 
-clean: ## Clean artifacts
+clean: ## Clean artifacts and data
 	$(CARGO) clean
-	rm -f data/*.db*
-	rm -rf artifacts/*
+	rm -rf $(DATA_DIR)
+	rm -rf artifacts
 
 repack: build-client ## Embed client into initrd (Usage: make repack INITRD_IN=... INITRD_OUT=...)
 	./scripts/repack-initrd.sh $(INITRD_IN) $(INITRD_OUT)
