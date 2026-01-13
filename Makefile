@@ -1,4 +1,9 @@
 CARGO := cargo
+ifdef DEBUG
+  PROFILE_FLAG :=
+else
+  PROFILE_FLAG := --release
+endif
 DATA_DIR ?= ./data
 DB_URL := sqlite://$(DATA_DIR)/db/snpguard.sqlite?mode=rwc
 CLIENT_TARGET := x86_64-unknown-linux-musl
@@ -13,27 +18,27 @@ help: ## Show this help
 build: build-server build-client build-snpguest ## Build Server, Client and snpguest tool
 
 build-server: ## Build Management Server
-	$(CARGO) build --release --bin snpguard-server
+	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-server
 
 build-client: ## Build Guest Client (Static)
 	@echo "Ensuring MUSL target..."
 	rustup target add $(CLIENT_TARGET) || true
-	$(CARGO) build --release --bin snpguard-client --target $(CLIENT_TARGET)
+	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-client --target $(CLIENT_TARGET)
 
 build-snpguest: ## Build snpguest tool (Static)
 	@echo "Ensuring MUSL target..."
 	rustup target add $(CLIENT_TARGET) || true
-	cd snpguest && $(CARGO) build --release --target $(CLIENT_TARGET)
+	cd snpguest && $(CARGO) build $(PROFILE_FLAG) --target $(CLIENT_TARGET)
 
 db-setup: ## Initialize SQLite Database
 	mkdir -p $(DATA_DIR)/db
 	export DATABASE_URL="$(DB_URL)"; \
-	$(CARGO) run --release -p migration
+	$(CARGO) run $(PROFILE_FLAG) -p migration
 
 run-server: db-setup ## Run the Server locally
 	export DATA_DIR="$(DATA_DIR)"; \
 	export DATABASE_URL="$(DB_URL)"; \
-	$(CARGO) run --release --bin snpguard-server
+	$(CARGO) run $(PROFILE_FLAG) --bin snpguard-server
 
 clean: ## Clean artifacts
 	$(CARGO) clean
