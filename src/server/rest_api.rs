@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -52,7 +52,9 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
             management_auth,
         ));
 
-    public.merge(management)
+    public
+        .merge(management)
+        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
 }
 
 async fn health(State(state): State<Arc<ServiceState>>, headers: HeaderMap) -> Response {
