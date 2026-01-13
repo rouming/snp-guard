@@ -68,7 +68,7 @@ enum ConfigCmd {
 #[derive(Subcommand, Debug)]
 enum ManageCmd {
     List,
-    Get {
+    Show {
         id: String,
     },
     Enable {
@@ -113,8 +113,8 @@ enum ManageCmd {
         #[arg(long, default_value = "0")]
         min_tcb_microcode: u32,
         /// Optional artifacts bundle (.tar or .tar.gz)
-        #[arg(long)]
-        bundle: Option<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        artifacts_bundle: Option<PathBuf>,
         #[arg(long)]
         firmware: Option<PathBuf>,
         #[arg(long)]
@@ -310,11 +310,19 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             ensure_success(&resp, "list")?;
             let bytes = resp.bytes().await?;
             let list = ListRecordsResponse::decode(&bytes[..])?;
+            println!(
+                "{:<36}  {:<24}  {:>8}  {:<8}",
+                "ID", "OS NAME", "REQUESTS", "STATUS"
+            );
             for r in list.records {
-                println!("{} {}", r.id, r.os_name);
+                let status = if r.enabled { "enabled" } else { "disabled" };
+                println!(
+                    "{:<36}  {:<24}  {:>8}  {:<8}",
+                    r.id, r.os_name, r.request_count, status
+                );
             }
         }
-        ManageCmd::Get { id } => {
+        ManageCmd::Show { id } => {
             let resp = client
                 .get(format!("{}/v1/records/{}", base, id))
                 .bearer_auth(&token)
@@ -323,7 +331,26 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             ensure_success(&resp, "get")?;
             let bytes = resp.bytes().await?;
             let rec = GetRecordResponse::decode(&bytes[..])?;
-            println!("{:?}", rec.record);
+            if let Some(r) = rec.record {
+                print_kv("ID", &r.id);
+                print_kv("OS Name", &r.os_name);
+                print_kv("Requests", &r.request_count.to_string());
+                print_kv("Status", if r.enabled { "enabled" } else { "disabled" });
+                print_kv("Service URL", &r.service_url);
+                print_kv("vCPUs", &r.vcpus.to_string());
+                print_kv("vCPU Type", &r.vcpu_type);
+                print_kv("Allowed Debug", &r.allowed_debug.to_string());
+                print_kv("Allowed Migrate MA", &r.allowed_migrate_ma.to_string());
+                print_kv("Allowed SMT", &r.allowed_smt.to_string());
+                print_kv("Min TCB Bootloader", &r.min_tcb_bootloader.to_string());
+                print_kv("Min TCB TEE", &r.min_tcb_tee.to_string());
+                print_kv("Min TCB SNP", &r.min_tcb_snp.to_string());
+                print_kv("Min TCB Microcode", &r.min_tcb_microcode.to_string());
+                print_kv("Image ID", &hex::encode(r.image_id));
+                print_kv("Created At", &r.created_at);
+            } else {
+                println!("Record not found");
+            }
         }
         ManageCmd::Enable { id } => toggle(&client, &base, &token, &id, true).await?,
         ManageCmd::Disable { id } => toggle(&client, &base, &token, &id, false).await?,
@@ -365,7 +392,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             min_tcb_tee,
             min_tcb_snp,
             min_tcb_microcode,
-            bundle,
+            artifacts_bundle,
             firmware,
             kernel,
             initrd,
@@ -377,7 +404,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             let mut initrd_data = None;
             let mut params = None;
 
-            if let Some(bundle_path) = bundle {
+            if let Some(bundle_path) = artifacts_bundle {
                 let (fw, k, i, p) = read_bundle(&bundle_path)?;
                 firmware_data = fw;
                 kernel_data = k;
@@ -551,6 +578,10 @@ fn run_config(action: ConfigCmd) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_kv(key: &str, val: &str) {
+    println!("{:<20}: {}", key, val);
 }
 
 async fn toggle(
