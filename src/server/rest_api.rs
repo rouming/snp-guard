@@ -54,7 +54,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 
     public
         .merge(management)
-        .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(300 * 1024 * 1024))
 }
 
 async fn health(State(state): State<Arc<ServiceState>>, headers: HeaderMap) -> Response {
