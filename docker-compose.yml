@@ -13,10 +13,7 @@ services:
       - ./certs:/certs:ro  # Optional: mount TLS certificates
     environment:
       - RUST_LOG=info
-      - DATABASE_URL=sqlite:///data/snpguard.db?mode=rwc
-      # Optional TLS configuration:
-      # - TLS_CERT=/certs/server.crt
-      # - TLS_KEY=/certs/server.key
+      - DATA_DIR=/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]

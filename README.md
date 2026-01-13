@@ -160,7 +160,7 @@ The server listens on HTTPS:
 - **Management UI**: `https://localhost:3000`
 - **Attestation API**: `https://localhost:3000/v1/attest/nonce` and `/v1/attest/report`
 - **Management API**: `https://localhost:3000/v1/records/*`, `/v1/tokens/*`
-- `./deploy.sh` will generate a self-signed cert/key in `./data` if missing and pass them as `TLS_CERT`/`TLS_KEY`.
+- TLS cert/key are loaded from `${DATA_DIR}/tls` (auto-generated if missing).
 
 ## Usage
 
@@ -207,8 +207,8 @@ From the record view page, you can download:
 1. **Repack Initrd** with the attestation client:
 
 ```bash
-# If using deploy.sh self-signed certs:
-make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./data/tls.crt
+# If using auto-generated self-signed certs:
+make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./data/tls/server.crt
 # Otherwise point CA_CERT at your CA / server cert:
 # make repack ... CA_CERT=./certs/ca.pem
 ```
@@ -376,14 +376,12 @@ For easier deployment with persistent storage:
 docker-compose up -d
 ```
 
-The application will be available at `http://localhost:3000`.
+The application will be available at `https://localhost:3000`.
 
 ### Environment Variables
 
-- `DATABASE_URL`: SQLite database path (default: `sqlite:///data/snpguard.db?mode=rwc`)
+- `DATA_DIR`: Root persistence directory (default: `/data`)
 - `RUST_LOG`: Log level (default: `info`)
-- `TLS_CERT`/`TLS_KEY`: Optional TLS certificates for HTTPS
-- `MASTER_PASSWORD_HASH_PATH`: Path to stored Argon2 hash of the master password (default: `/data/master_password.hash`)
 
 ### Master Password (Web UI)
 
@@ -414,7 +412,7 @@ The application will be available at `http://localhost:3000`.
 
 ### TLS and Client Pinning
 
-- Server: HTTPS-only. Provide `TLS_CERT` and `TLS_KEY` (PEM paths) at startup; any cert type works (self-signed, private CA, public CA). No client certificate is required.
+- Server: HTTPS-only. Certs are read from `${DATA_DIR}/tls/server.crt` and `server.key`; if missing, a self-signed pair (and `ca.pem`) is auto-generated. No client certificate is required.
 - Client: Always verifies TLS using a pinned CA cert at `/etc/snpguard/ca.pem` inside the initrd; system trust store is not used. No skip/unsafe mode.
 - `scripts/repack-initrd.sh` installs the client and copies the CA cert from `${CA_CERT:-./certs/ca.pem}` to `/etc/snpguard/ca.pem` inside the initrd.
 

@@ -20,21 +20,12 @@ make build-snpguest
 make db-setup
 ```
 
-This creates the SQLite database at `data/snpguard.db`.
+This creates the SQLite database at `data/db/snpguard.sqlite`.
 
 ### 3. Start the Server
 
 ```bash
-export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
-make run-server
-```
-
-Or with custom credentials:
-
-```bash
-export DATABASE_URL="sqlite://data/snpguard.db?mode=rwc"
-export SNPGUARD_USERNAME="admin"
-export SNPGUARD_PASSWORD="your-password"
+export DATA_DIR="$(pwd)/data"
 make run-server
 ```
 
@@ -42,10 +33,10 @@ make run-server
 
 Open your browser and navigate to:
 ```
-http://localhost:3000
+https://localhost:3000
 ```
 
-Log in with your credentials (default: `admin` / `secret`).
+Log in with the master password that was printed once on first start (no username).
 
 ## Creating an Attestation Record
 
@@ -319,15 +310,8 @@ You can integrate the attestation API into your own tools. See `docs/api.md` for
 
 ### Environment Variables
 
-**Server**:
-- `DATABASE_URL`: Database connection string (required)
-- `SNPGUARD_USERNAME`: Management UI username (default: "admin")
-- `SNPGUARD_PASSWORD`: Management UI password (default: "secret")
-- `TLS_CERT`: Path to TLS certificate (optional, for HTTPS)
-- `TLS_KEY`: Path to TLS private key (optional, for HTTPS)
-
-**Client**:
-- No environment variables required
+- `DATA_DIR`: Root persistence directory (default: `/data`)
+- `RUST_LOG`: Log level (default: `info`)
 
 ## Getting Help
 
