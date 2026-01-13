@@ -207,8 +207,12 @@ fn delete_config() -> Result<()> {
 fn build_client(ca_cert_path: &str) -> Result<reqwest::Client> {
     let ca_pem = fs::read(ca_cert_path)
         .with_context(|| format!("Failed to read pinned CA certificate at {}", ca_cert_path))?;
+    build_client_from_bytes(&ca_pem)
+}
+
+fn build_client_from_bytes(ca_pem: &[u8]) -> Result<reqwest::Client> {
     let ca_cert =
-        Certificate::from_pem(&ca_pem).context("Pinned CA certificate is not valid PEM")?;
+        Certificate::from_pem(ca_pem).context("Pinned CA certificate is not valid PEM")?;
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(false)
         .tls_built_in_root_certs(false)
@@ -501,26 +505,12 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             let base = normalize_https(&url)?;
             let ca_dest = ca_dest_path()?;
 
-            // Copy CA into config dir with 0600 perms
+            // Read CA from provided path
             let ca_bytes = fs::read(&ca_cert)
                 .with_context(|| format!("Failed to read CA certificate from {}", ca_cert))?;
-            if let Some(parent) = ca_dest.parent() {
-                fs::create_dir_all(parent)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-                }
-            }
-            fs::write(&ca_dest, &ca_bytes)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
-            }
 
-            // Validate token via health (management auth)
-            let client = build_client(&ca_dest.to_string_lossy())?;
+            // Validate token via health (management auth) using in-memory CA
+            let client = build_client_from_bytes(&ca_bytes)?;
             let resp = futures::executor::block_on(
                 client
                     .get(format!("{}/v1/health", base))
@@ -529,6 +519,22 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             )
             .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
             if resp.status().is_success() {
+                // Only now persist CA to config dir with 0600 perms
+                if let Some(parent) = ca_dest.parent() {
+                    fs::create_dir_all(parent)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                    }
+                }
+                fs::write(&ca_dest, &ca_bytes)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
+                }
+
                 cfg.token = Some(token);
                 cfg.url = Some(base);
                 cfg.ca_cert = Some("ca.pem".to_string());
