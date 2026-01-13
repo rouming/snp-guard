@@ -46,6 +46,10 @@ pub struct TokenInfo {
     pub revoked: bool,
 }
 
+fn fmt_ts(ts: chrono::NaiveDateTime) -> String {
+    ts.format("%Y-%m-%d %H:%M UTC").to_string()
+}
+
 struct ParsedReport<'a> {
     report: AttestationReport,
     raw: &'a [u8],
@@ -543,8 +547,8 @@ pub async fn generate_token(
     let info = TokenInfo {
         id,
         label,
-        created_at: now.to_string(),
-        expires_at: expires_at.map(|e| e.to_string()).unwrap_or_default(),
+        created_at: fmt_ts(now),
+        expires_at: expires_at.map(fmt_ts).unwrap_or_default(),
         revoked: false,
     };
 
@@ -563,8 +567,8 @@ pub async fn list_tokens(state: &ServiceState) -> Result<Vec<TokenInfo>, String>
         .map(|t| TokenInfo {
             id: t.id,
             label: t.label,
-            created_at: t.created_at.to_string(),
-            expires_at: t.expires_at.map(|e| e.to_string()).unwrap_or_default(),
+            created_at: fmt_ts(t.created_at),
+            expires_at: t.expires_at.map(fmt_ts).unwrap_or_default(),
             revoked: t.revoked,
         })
         .collect())
