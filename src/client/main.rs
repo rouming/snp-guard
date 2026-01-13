@@ -472,10 +472,26 @@ fn run_config(action: ConfigCmd) -> Result<()> {
     match action {
         ConfigCmd::Login { token, url } => {
             let mut cfg = load_config()?;
-            cfg.token = Some(token);
-            cfg.url = Some(normalize_https(&url)?);
-            save_config(&cfg)?;
-            println!("Token saved");
+            let base = normalize_https(&url)?;
+            // Validate token via health (management auth)
+            let client = build_client(DEFAULT_CA_CERT)?;
+            let resp = client
+                .get(format!("{}/v1/health", base))
+                .bearer_auth(&token)
+                .send();
+            let resp = tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(resp)
+                .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
+            if resp.status().is_success() {
+                cfg.token = Some(token);
+                cfg.url = Some(base);
+                save_config(&cfg)?;
+                println!("Successfully logged in, config stored");
+            } else {
+                println!("Failed to validate token: status {}", resp.status());
+                std::process::exit(1);
+            }
         }
         ConfigCmd::Logout => {
             delete_config()?;
