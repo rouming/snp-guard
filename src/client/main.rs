@@ -87,7 +87,7 @@ enum ManageCmd {
     },
     Export {
         id: String,
-        #[arg(value_parser = ["tar", "squash"])]
+        #[arg(long, value_parser = ["tar", "squash", "squashfs"], default_value = "tar")]
         format: String,
         #[arg(long, value_name = "PATH")]
         out: PathBuf,
@@ -351,7 +351,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
         ManageCmd::Export { id, format, out } => {
             let endpoint = match format.as_str() {
                 "tar" => "export/tar",
-                "squash" => "export/squash",
+                "squash" | "squashfs" => "export/squash",
                 _ => unreachable!(),
             };
             let resp = client

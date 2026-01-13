@@ -195,7 +195,7 @@ Subcommands:
 
 **Example (management export)**:
 ```bash
-snpguard-client manage export --id <record-id> --format tar --out artifacts.tar.gz
+snpguard-client manage export --id <record-id> --format tar --out artifacts.tar.gz   # format: tar|squashfs
 ```
 
 ## Troubleshooting

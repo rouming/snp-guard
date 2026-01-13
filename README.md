@@ -325,7 +325,7 @@ snpguard-client manage create --os-name ubuntu --service-url https://attest.exam
   --vcpus 4 --vcpu-type EPYC --kernel-params "console=ttyS0" \
   --firmware firmware-code.fd --kernel vmlinuz --initrd initrd.img \
   --id-key id-block-key.pem --auth-key id-auth-key.pem
-snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz
+snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz   # format: tar|squashfs
 ```
 
 `manage show` now prints kernel params and artifact filenames; `manage list/show` also support `--json`.
