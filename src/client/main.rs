@@ -521,14 +521,13 @@ fn run_config(action: ConfigCmd) -> Result<()> {
 
             // Validate token via health (management auth)
             let client = build_client(&ca_dest.to_string_lossy())?;
-            let resp = client
-                .get(format!("{}/v1/health", base))
-                .bearer_auth(&token)
-                .send();
-            let resp = tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(resp)
-                .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
+            let resp = futures::executor::block_on(
+                client
+                    .get(format!("{}/v1/health", base))
+                    .bearer_auth(&token)
+                    .send(),
+            )
+            .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
             if resp.status().is_success() {
                 cfg.token = Some(token);
                 cfg.url = Some(base);
