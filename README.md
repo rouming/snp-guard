@@ -20,21 +20,21 @@ SnpGuard addresses these needs by providing:
 ## Architecture
 
 ```
-┌─────────────────┐         HTTPS/TLS + Protobuf        ┌──────────────────┐
-│  Guest VM       │ ───────────────────────────────────> │  SnpGuard Server │
-│  (initrd)       │                                       │                 │
-│                 │ <─────────────────────────────────── │  - Verifies     │
-│  snpguard-client│         Nonce + Attestation Report    │    Reports      │
-│                 │                                       │  - Releases     │
-│  Uses sev lib   │                                       │    Secrets      │
-│  tool           │                                       │  - Manages      │
-└─────────────────┘                                       │    Records      │
+┌─────────────────┐          HTTPS/TLS + Protobuf         ┌──────────────────┐
+│  Guest VM       │ ────────────────────────────────────> │  SnpGuard Server │
+│  (initrd)       │                                       │                  │
+│                 │ <──────────────────────────────────── │  - Verifies      │
+│  snpguard-client│         Nonce + Attestation Report    │    Reports       │
+│                 │                                       │  - Releases      │
+│  Uses sev lib   │                                       │    Secrets       │
+│  tool           │                                       │  - Manages       │
+└─────────────────┘                                       │    Records       │
                                                           └──────────────────┘
                                                                      │
                                                                      │ HTTP
                                                                      ▼
                                                           ┌──────────────────┐
-                                                          │  Management UI    │
+                                                          │  Management UI   │
                                                           │  (Web Frontend)  │
                                                           └──────────────────┘
 ```
@@ -479,7 +479,8 @@ Contributions are welcome! Please:
 
 ## License
 
-[Specify your license here]
+This project is licensed under the Apache License, Version 2.0.
+See the [LICENSE](LICENSE) file for details.
 
 ## References
 
