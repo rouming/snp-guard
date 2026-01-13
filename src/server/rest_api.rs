@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     body::{Body, Bytes},
     extract::{Path, State},
-    http::{HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -55,8 +55,21 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     public.merge(management)
 }
 
-async fn health() -> StatusCode {
-    StatusCode::OK
+async fn health(State(state): State<Arc<ServiceState>>, headers: HeaderMap) -> Response {
+    if let Some(auth) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+    {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            match crate::service_core::auth_token_valid(&state, token).await {
+                Ok(true) => return StatusCode::OK.into_response(),
+                Ok(false) | Err(_) => {
+                    return proto_error(StatusCode::UNAUTHORIZED, "unauthorized");
+                }
+            }
+        }
+    }
+    StatusCode::OK.into_response()
 }
 
 fn proto_response<M: Message>(msg: M) -> Response {
