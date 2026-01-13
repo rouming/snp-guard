@@ -62,98 +62,106 @@ pub async fn create_record_logic(
     req: CreateRecordRequest,
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
-
-    // Generate unique image_id as UUID (16 bytes)
-    let image_id = Uuid::new_v4();
-
     let artifact_dir = paths.attestations_dir.join(&new_id);
-    fs::create_dir_all(&artifact_dir)
-        .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
+    let res: Result<String, String> = async {
+        // Generate unique image_id as UUID (16 bytes)
+        let image_id = Uuid::new_v4();
 
-    // Save uploaded files
-    if let Some(id_key) = req.id_key_pem {
-        fs::write(artifact_dir.join("id-block-key.pem"), id_key)
-            .map_err(|e| format!("Failed to save ID key: {}", e))?;
+        fs::create_dir_all(&artifact_dir)
+            .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
+
+        // Save uploaded files
+        if let Some(id_key) = req.id_key_pem {
+            fs::write(artifact_dir.join("id-block-key.pem"), id_key)
+                .map_err(|e| format!("Failed to save ID key: {}", e))?;
+        }
+        if let Some(auth_key) = req.auth_key_pem {
+            fs::write(artifact_dir.join("id-auth-key.pem"), auth_key)
+                .map_err(|e| format!("Failed to save auth key: {}", e))?;
+        }
+        if let Some(firmware) = req.firmware_data {
+            fs::write(artifact_dir.join("firmware-code.fd"), firmware)
+                .map_err(|e| format!("Failed to save firmware: {}", e))?;
+        }
+        if let Some(kernel) = req.kernel_data {
+            fs::write(artifact_dir.join("vmlinuz"), kernel)
+                .map_err(|e| format!("Failed to save kernel: {}", e))?;
+        }
+        if let Some(initrd) = req.initrd_data {
+            fs::write(artifact_dir.join("initrd.img"), initrd)
+                .map_err(|e| format!("Failed to save initrd: {}", e))?;
+        }
+
+        let full_params = format!("{} rd.attest.url={}", req.kernel_params, req.service_url);
+        fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
+            .map_err(|e| format!("Failed to save kernel params: {}", e))?;
+
+        // Convert UUID to hex string (32 characters, 16 bytes when decoded)
+        let image_id_hex = hex::encode(image_id.as_bytes());
+
+        // Generate Measurements and Blocks
+        let measurement = snpguest_wrapper::generate_measurement_and_block(
+            &artifact_dir.join("firmware-code.fd"),
+            &artifact_dir.join("vmlinuz"),
+            &artifact_dir.join("initrd.img"),
+            &full_params,
+            req.vcpus,
+            &req.vcpu_type,
+            &artifact_dir.join("id-block-key.pem"),
+            &artifact_dir.join("id-auth-key.pem"),
+            &artifact_dir,
+            image_id_hex,
+        )
+        .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
+
+        // Get Digests
+        let id_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-block-key.pem"))
+            .map_err(|e| format!("Failed to get ID key digest: {}", e))?;
+        let auth_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-auth-key.pem"))
+            .map_err(|e| format!("Failed to get auth key digest: {}", e))?;
+
+        // Save to DB
+        let new_vm = vm::ActiveModel {
+            id: Set(new_id.clone()),
+            os_name: Set(req.os_name),
+            secret: Set(req.secret),
+            vcpus: Set(req.vcpus as i32),
+            vcpu_type: Set(req.vcpu_type),
+            id_key_digest: Set(id_digest),
+            auth_key_digest: Set(auth_digest),
+            created_at: Set(chrono::Utc::now().naive_utc()),
+            enabled: Set(true),
+            image_id: Set(image_id.as_bytes().to_vec()),
+            measurement: Set(measurement),
+            allowed_debug: Set(req.allowed_debug),
+            allowed_migrate_ma: Set(req.allowed_migrate_ma),
+            allowed_smt: Set(req.allowed_smt),
+            min_tcb_bootloader: Set(req.min_tcb_bootloader as i32),
+            min_tcb_tee: Set(req.min_tcb_tee as i32),
+            min_tcb_snp: Set(req.min_tcb_snp as i32),
+            min_tcb_microcode: Set(req.min_tcb_microcode as i32),
+            kernel_params: Set(req.kernel_params),
+            service_url: Set(req.service_url),
+            request_count: Set(0),
+            firmware_path: Set("firmware-code.fd".into()),
+            kernel_path: Set("vmlinuz".into()),
+            initrd_path: Set("initrd.img".into()),
+        };
+
+        new_vm
+            .insert(db)
+            .await
+            .map_err(|e| format!("Failed to save record to database: {}", e))?;
+
+        Ok(new_id)
     }
-    if let Some(auth_key) = req.auth_key_pem {
-        fs::write(artifact_dir.join("id-auth-key.pem"), auth_key)
-            .map_err(|e| format!("Failed to save auth key: {}", e))?;
-    }
-    if let Some(firmware) = req.firmware_data {
-        fs::write(artifact_dir.join("firmware-code.fd"), firmware)
-            .map_err(|e| format!("Failed to save firmware: {}", e))?;
-    }
-    if let Some(kernel) = req.kernel_data {
-        fs::write(artifact_dir.join("vmlinuz"), kernel)
-            .map_err(|e| format!("Failed to save kernel: {}", e))?;
-    }
-    if let Some(initrd) = req.initrd_data {
-        fs::write(artifact_dir.join("initrd.img"), initrd)
-            .map_err(|e| format!("Failed to save initrd: {}", e))?;
+    .await;
+
+    if res.is_err() {
+        let _ = fs::remove_dir_all(&artifact_dir);
     }
 
-    let full_params = format!("{} rd.attest.url={}", req.kernel_params, req.service_url);
-    fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
-        .map_err(|e| format!("Failed to save kernel params: {}", e))?;
-
-    // Convert UUID to hex string (32 characters, 16 bytes when decoded)
-    let image_id_hex = hex::encode(image_id.as_bytes());
-
-    // Generate Measurements and Blocks
-    let measurement = snpguest_wrapper::generate_measurement_and_block(
-        &artifact_dir.join("firmware-code.fd"),
-        &artifact_dir.join("vmlinuz"),
-        &artifact_dir.join("initrd.img"),
-        &full_params,
-        req.vcpus,
-        &req.vcpu_type,
-        &artifact_dir.join("id-block-key.pem"),
-        &artifact_dir.join("id-auth-key.pem"),
-        &artifact_dir,
-        image_id_hex,
-    )
-    .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
-
-    // Get Digests
-    let id_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-block-key.pem"))
-        .map_err(|e| format!("Failed to get ID key digest: {}", e))?;
-    let auth_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-auth-key.pem"))
-        .map_err(|e| format!("Failed to get auth key digest: {}", e))?;
-
-    // Save to DB
-    let new_vm = vm::ActiveModel {
-        id: Set(new_id.clone()),
-        os_name: Set(req.os_name),
-        secret: Set(req.secret),
-        vcpus: Set(req.vcpus as i32),
-        vcpu_type: Set(req.vcpu_type),
-        id_key_digest: Set(id_digest),
-        auth_key_digest: Set(auth_digest),
-        created_at: Set(chrono::Utc::now().naive_utc()),
-        enabled: Set(true),
-        image_id: Set(image_id.as_bytes().to_vec()),
-        measurement: Set(measurement),
-        allowed_debug: Set(req.allowed_debug),
-        allowed_migrate_ma: Set(req.allowed_migrate_ma),
-        allowed_smt: Set(req.allowed_smt),
-        min_tcb_bootloader: Set(req.min_tcb_bootloader as i32),
-        min_tcb_tee: Set(req.min_tcb_tee as i32),
-        min_tcb_snp: Set(req.min_tcb_snp as i32),
-        min_tcb_microcode: Set(req.min_tcb_microcode as i32),
-        kernel_params: Set(req.kernel_params),
-        service_url: Set(req.service_url),
-        request_count: Set(0),
-        firmware_path: Set("firmware-code.fd".into()),
-        kernel_path: Set("vmlinuz".into()),
-        initrd_path: Set("initrd.img".into()),
-    };
-
-    new_vm
-        .insert(db)
-        .await
-        .map_err(|e| format!("Failed to save record to database: {}", e))?;
-
-    Ok(new_id)
+    res
 }
 
 pub async fn update_record_logic(
