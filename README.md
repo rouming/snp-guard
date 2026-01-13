@@ -41,15 +41,15 @@ SnpGuard addresses these needs by providing:
 
 ## Features
 
-- ✅ **HTTPS/TLS Communication**: Secure attestation protocol using TLS with certificate verification
-- ✅ **Protocol Buffers**: Efficient binary serialization for attestation messages
-- ✅ **AMD Certificate Verification**: Automatic fetching and verification of AMD VCEK certificates
-- ✅ **CPU Family Detection**: Automatic detection of CPU family (Genoa, Milan, Turin) from attestation reports
-- ✅ **Management Web UI**: Modern, user-friendly interface for managing attestation records
-- ✅ **Static Client Binary**: Client built with musl libc for inclusion in initrd images
-- ✅ **Initrd Integration**: Scripts for embedding attestation into both initramfs-tools and dracut initrds
-- ✅ **Artifact Generation**: Automatic generation of ID-Block and Auth-Block from user-provided keys
-- ✅ **Secret Management**: Secure storage and release of secrets upon successful attestation
+- **HTTPS/TLS Communication**: Secure attestation protocol using TLS with certificate verification
+- **Protocol Buffers**: Efficient binary serialization for attestation messages
+- **AMD Certificate Verification**: Automatic fetching and verification of AMD VCEK certificates
+- **CPU Family Detection**: Automatic detection of CPU family (Genoa, Milan, Turin) from attestation reports
+- **Management Web UI**: Modern, user-friendly interface for managing attestation records
+- **Static Client Binary**: Client built with musl libc for inclusion in initrd images
+- **Initrd Integration**: Scripts for embedding attestation into both initramfs-tools and dracut initrds
+- **Artifact Generation**: Automatic generation of ID-Block and Auth-Block from user-provided keys
+- **Secret Management**: Secure storage and release of secrets upon successful attestation
 
 ## Prerequisites
 
