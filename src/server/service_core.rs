@@ -72,7 +72,6 @@ pub async fn verify_report_core(
     req: AttestationRequest,
 ) -> AttestationResponse {
     let report_data = req.report_data;
-
     let parsed = match parse_snp_report(&report_data) {
         Ok(p) => p,
         Err(e) => {
@@ -89,6 +88,88 @@ pub async fn verify_report_core(
             success: false,
             secret: vec![],
             error_message: e,
+        };
+    }
+
+    let record = match vm::Entity::find()
+        .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
+        .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
+        .filter(vm::Column::AuthKeyDigest.eq(parsed.report.author_key_digest.to_vec()))
+        .one(&state.db)
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: "Database error".to_string(),
+            }
+        }
+    };
+
+    let vm = match record.ok_or("No matching attestation record found") {
+        Ok(vm) => vm,
+        Err(e) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: e.to_string(),
+            }
+        }
+    };
+
+    if !vm.enabled {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: "Attestation record is disabled".to_string(),
+        };
+    }
+
+    let current_bootloader = parsed.report.current_tcb.bootloader;
+    let current_tee = parsed.report.current_tcb.tee;
+    let current_snp = parsed.report.current_tcb.snp;
+    let current_microcode = parsed.report.current_tcb.microcode;
+
+    if current_bootloader < vm.min_tcb_bootloader as u8 {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: format!(
+                "Bootloader TCB version {} below minimum requirement {}",
+                current_bootloader, vm.min_tcb_bootloader
+            ),
+        };
+    }
+    if current_tee < vm.min_tcb_tee as u8 {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: format!(
+                "TEE TCB version {} below minimum requirement {}",
+                current_tee, vm.min_tcb_tee
+            ),
+        };
+    }
+    if current_snp < vm.min_tcb_snp as u8 {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: format!(
+                "SNP TCB version {} below minimum requirement {}",
+                current_snp, vm.min_tcb_snp
+            ),
+        };
+    }
+    if current_microcode < vm.min_tcb_microcode as u8 {
+        return AttestationResponse {
+            success: false,
+            secret: vec![],
+            error_message: format!(
+                "Microcode TCB version {} below minimum requirement {}",
+                current_microcode, vm.min_tcb_microcode
+            ),
         };
     }
 
@@ -120,93 +201,14 @@ pub async fn verify_report_core(
         };
     }
 
-    let record = match vm::Entity::find()
-        .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
-        .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
-        .filter(vm::Column::AuthKeyDigest.eq(parsed.report.author_key_digest.to_vec()))
-        .one(&state.db)
-        .await
-    {
-        Ok(r) => r,
-        Err(_) => {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Database error".to_string(),
-            }
-        }
-    };
+    let mut active: vm::ActiveModel = vm.clone().into();
+    active.request_count = Set(vm.request_count + 1);
+    let _ = active.update(&state.db).await;
 
-    if let Some(vm) = record {
-        let current_bootloader = parsed.report.current_tcb.bootloader;
-        let current_tee = parsed.report.current_tcb.tee;
-        let current_snp = parsed.report.current_tcb.snp;
-        let current_microcode = parsed.report.current_tcb.microcode;
-
-        if current_bootloader < vm.min_tcb_bootloader as u8 {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: format!(
-                    "Bootloader TCB version {} below minimum requirement {}",
-                    current_bootloader, vm.min_tcb_bootloader
-                ),
-            };
-        }
-        if current_tee < vm.min_tcb_tee as u8 {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: format!(
-                    "TEE TCB version {} below minimum requirement {}",
-                    current_tee, vm.min_tcb_tee
-                ),
-            };
-        }
-        if current_snp < vm.min_tcb_snp as u8 {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: format!(
-                    "SNP TCB version {} below minimum requirement {}",
-                    current_snp, vm.min_tcb_snp
-                ),
-            };
-        }
-        if current_microcode < vm.min_tcb_microcode as u8 {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: format!(
-                    "Microcode TCB version {} below minimum requirement {}",
-                    current_microcode, vm.min_tcb_microcode
-                ),
-            };
-        }
-
-        if !vm.enabled {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Attestation record is disabled".to_string(),
-            };
-        }
-
-        let mut active: vm::ActiveModel = vm.clone().into();
-        active.request_count = Set(vm.request_count + 1);
-        let _ = active.update(&state.db).await;
-
-        AttestationResponse {
-            success: true,
-            secret: vm.secret.into_bytes(),
-            error_message: String::new(),
-        }
-    } else {
-        AttestationResponse {
-            success: false,
-            secret: vec![],
-            error_message: "No matching attestation record found".to_string(),
-        }
+    AttestationResponse {
+        success: true,
+        secret: vm.secret.into_bytes(),
+        error_message: String::new(),
     }
 }
 
