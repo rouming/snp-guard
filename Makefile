@@ -35,7 +35,7 @@ db-setup: ## Initialize SQLite Database
 	export DATABASE_URL="$(DB_URL)"; \
 	$(CARGO) run $(PROFILE_FLAG) -p migration
 
-run-server: db-setup ## Run the Server locally
+run-server: build-snpguest db-setup ## Run the Server locally
 	export DATA_DIR="$(DATA_DIR)"; \
 	export DATABASE_URL="$(DB_URL)"; \
 	$(CARGO) run $(PROFILE_FLAG) --bin snpguard-server
