@@ -1,163 +1,226 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow-md border border-slate-200">
+<div class="max-w-6xl mx-auto bg-white p-8 rounded-xl shadow-lg border border-slate-200">
     <div class="flex justify-between items-center mb-8 border-b pb-4">
-        <h2 class="text-2xl font-bold text-slate-800">Edit Attestation Record</h2>
+        <div>
+            <h2 class="text-3xl font-bold text-slate-800 mb-2">Attestation Record</h2>
+            <p class="text-sm font-mono text-slate-500 bg-slate-100 px-3 py-1 rounded inline-block">ID: {{ vm.id }}</p>
+        </div>
         <div class="flex items-center space-x-4">
-            <span class="text-sm font-mono text-slate-500 bg-slate-100 px-3 py-1 rounded">ID: {{ vm.id }}</span>
+            <span class="px-4 py-2 rounded-lg text-sm font-semibold {% if vm.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
+                {% if vm.enabled %}✓ Enabled{% else %}✗ Disabled{% endif %}
+            </span>
             <form action="/toggle/{{ vm.id }}" method="POST">
-                <button type="submit" class="px-4 py-2 rounded-lg {% if vm.enabled %}bg-red-600 hover:bg-red-700{% else %}bg-green-600 hover:bg-green-700{% endif %} text-white font-medium">
+                <button type="submit" class="px-6 py-2 rounded-lg {% if vm.enabled %}bg-red-600 hover:bg-red-700{% else %}bg-green-600 hover:bg-green-700{% endif %} text-white font-medium shadow-md transition">
                     {% if vm.enabled %}Disable{% else %}Enable{% endif %}
                 </button>
             </form>
         </div>
     </div>
     
-    <form action="/view/{{ vm.id }}" method="POST" enctype="multipart/form-data" class="space-y-8">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-                <label class="block text-sm font-medium mb-1">OS Name</label>
-                <input type="text" name="os_name" value="{{ vm.os_name }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" required>
-            </div>
-            <div>
-                <label class="block text-sm font-medium mb-1">Disk Secret</label>
-                <input type="text" name="secret" value="{{ vm.secret }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" required>
-            </div>
-        </div>
-        
-        <div class="border-t pt-6">
-            <h3 class="font-bold text-lg text-slate-700 mb-4">Keys</h3>
+    <div class="space-y-8">
+        <!-- Basic Information -->
+        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-lg border border-blue-100">
+            <h3 class="text-lg font-bold text-slate-700 mb-4 flex items-center">
+                <span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
+                Basic Information
+            </h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium mb-1">ID Block Key (PEM)</label>
-                    <input type="file" name="id_key" accept=".pem" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <p class="text-xs text-slate-400 mt-1">Leave empty to keep current key</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">OS Name</label>
+                    <p class="text-base font-medium text-slate-800">{{ vm.os_name }}</p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">Auth Block Key (PEM)</label>
-                    <input type="file" name="auth_key" accept=".pem" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <p class="text-xs text-slate-400 mt-1">Leave empty to keep current key</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Disk Secret</label>
+                    <p class="text-base font-mono text-slate-800 bg-white px-3 py-2 rounded border border-slate-200 break-all">{{ vm.secret }}</p>
                 </div>
             </div>
         </div>
-        
-        <div class="border-t pt-6">
-            <h3 class="font-bold text-lg text-slate-700 mb-4">Boot Artifacts</h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-sm font-medium mb-1">Firmware Image</label>
-                    <input type="file" name="firmware" accept=".fd" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <a href="/download/{{ vm.id }}/firmware-code.fd" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1">Kernel Binary</label>
-                    <input type="file" name="kernel" accept="*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <a href="/download/{{ vm.id }}/vmlinuz" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1">Initrd Image</label>
-                    <input type="file" name="initrd" accept="*" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <a href="/download/{{ vm.id }}/initrd.img" class="text-xs text-blue-600 hover:underline mt-1 block">Download current</a>
-                </div>
-            </div>
-        </div>
-        
-        <div class="border-t pt-6">
-            <h3 class="font-bold text-lg text-slate-700 mb-4">Configuration</h3>
+
+        <!-- Boot Configuration -->
+        <div class="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-lg border border-purple-100">
+            <h3 class="text-lg font-bold text-slate-700 mb-4 flex items-center">
+                <span class="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                Boot Configuration
+            </h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
-                    <label class="block text-sm font-medium mb-1">vCPUs</label>
-                    <input type="number" name="vcpus" value="{{ vm.vcpus }}" min="1" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">vCPUs</label>
+                    <p class="text-base font-medium text-slate-800">{{ vm.vcpus }}</p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">vCPU Type</label>
-                    <select name="vcpu_type" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
-                        <option value="EPYC" {% if vm.vcpu_type == "EPYC" %}selected{% endif %}>EPYC</option>
-                        <option value="EPYC-Milan" {% if vm.vcpu_type == "EPYC-Milan" %}selected{% endif %}>EPYC-Milan</option>
-                        <option value="EPYC-Rome" {% if vm.vcpu_type == "EPYC-Rome" %}selected{% endif %}>EPYC-Rome</option>
-                        <option value="EPYC-Genoa" {% if vm.vcpu_type == "EPYC-Genoa" %}selected{% endif %}>EPYC-Genoa</option>
-                    </select>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">vCPU Type</label>
+                    <p class="text-base font-medium text-slate-800">{{ vm.vcpu_type }}</p>
                 </div>
             </div>
             <div class="mb-4">
-                <label class="block text-sm font-medium mb-1">Kernel Parameters</label>
-                <textarea name="kernel_params" rows="3" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm font-mono text-sm">{{ vm.kernel_params }}</textarea>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Kernel Parameters</label>
+                <p class="text-base font-mono text-slate-800 bg-white px-3 py-2 rounded border border-slate-200 whitespace-pre-wrap">{{ vm.kernel_params }}</p>
             </div>
             <div>
-                <label class="block text-sm font-medium mb-1">Attestation Service URL</label>
-                <input type="text" name="service_url" value="{{ service_url }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm" placeholder="https://attest.example.com">
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Attestation Service URL</label>
+                <p class="text-base font-mono text-blue-600 bg-white px-3 py-2 rounded border border-slate-200 break-all">{{ service_url }}</p>
             </div>
         </div>
 
-        <div class="border-t pt-6">
-            <h3 class="font-bold text-lg text-slate-700 mb-4">Policy Flags</h3>
+        <!-- Policy Flags -->
+        <div class="bg-gradient-to-r from-amber-50 to-orange-50 p-6 rounded-lg border border-amber-100">
+            <h3 class="text-lg font-bold text-slate-700 mb-4 flex items-center">
+                <span class="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                Policy Flags
+            </h3>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="flex items-center">
-                    <input type="hidden" name="allowed_debug" value="false">
-                    <input type="checkbox" id="allowed_debug" name="allowed_debug" value="true" {% if vm.allowed_debug %}checked{% endif %} class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                    <label for="allowed_debug" class="ml-3 text-sm font-medium text-gray-700 cursor-pointer">
-                        Allow Debug Mode
-                        <span class="text-xs text-gray-500 block">Permits VM debug operations</span>
-                    </label>
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 mt-1">
+                        {% if vm.allowed_debug %}
+                            <span class="text-green-600 text-xl">✓</span>
+                        {% else %}
+                            <span class="text-red-600 text-xl">✗</span>
+                        {% endif %}
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-semibold text-gray-800">Allow Debug Mode</p>
+                        <p class="text-xs text-gray-600 mt-1">Permits VM debug operations</p>
+                    </div>
                 </div>
-                <div class="flex items-center">
-                    <input type="hidden" name="allowed_migrate_ma" value="false">
-                    <input type="checkbox" id="allowed_migrate_ma" name="allowed_migrate_ma" value="true" {% if vm.allowed_migrate_ma %}checked{% endif %} class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                    <label for="allowed_migrate_ma" class="ml-3 text-sm font-medium text-gray-700 cursor-pointer">
-                        Allow Migration with MA
-                        <span class="text-xs text-gray-500 block">Permits VM migration with Migration Agent</span>
-                    </label>
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 mt-1">
+                        {% if vm.allowed_migrate_ma %}
+                            <span class="text-green-600 text-xl">✓</span>
+                        {% else %}
+                            <span class="text-red-600 text-xl">✗</span>
+                        {% endif %}
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-semibold text-gray-800">Allow Migration with MA</p>
+                        <p class="text-xs text-gray-600 mt-1">Permits VM migration with Migration Agent</p>
+                    </div>
                 </div>
-                <div class="flex items-center">
-                    <input type="hidden" name="allowed_smt" value="false">
-                    <input type="checkbox" id="allowed_smt" name="allowed_smt" value="true" {% if vm.allowed_smt %}checked{% endif %} class="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                    <label for="allowed_smt" class="ml-3 text-sm font-medium text-gray-700 cursor-pointer">
-                        Allow Simultaneous Multithreading
-                        <span class="text-xs text-gray-500 block">Permits SMT/hyperthreading</span>
-                    </label>
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 mt-1">
+                        {% if vm.allowed_smt %}
+                            <span class="text-green-600 text-xl">✓</span>
+                        {% else %}
+                            <span class="text-red-600 text-xl">✗</span>
+                        {% endif %}
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-semibold text-gray-800">Allow Simultaneous Multithreading</p>
+                        <p class="text-xs text-gray-600 mt-1">Permits SMT/hyperthreading</p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="border-t pt-6">
-            <h3 class="font-bold text-lg text-slate-700 mb-4">Minimum TCB Versions</h3>
+        <!-- Minimum TCB Versions -->
+        <div class="bg-gradient-to-r from-emerald-50 to-teal-50 p-6 rounded-lg border border-emerald-100">
+            <h3 class="text-lg font-bold text-slate-700 mb-4 flex items-center">
+                <span class="w-2 h-2 bg-emerald-500 rounded-full mr-2"></span>
+                Minimum TCB Versions
+            </h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium mb-1">Bootloader (PSP bootloader)</label>
-                    <input type="number" name="min_tcb_bootloader" min="0" max="255" value="{{ vm.min_tcb_bootloader }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
-                    <p class="text-xs text-slate-400 mt-1">Minimum PSP bootloader version (0 = no restriction)</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Bootloader (PSP bootloader)</label>
+                    <p class="text-base font-medium text-slate-800">
+                        {{ vm.min_tcb_bootloader }}
+                        <span class="text-xs text-slate-500 ml-2">(0 = no restriction)</span>
+                    </p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">TEE (SNP firmware)</label>
-                    <input type="number" name="min_tcb_tee" min="0" max="255" value="{{ vm.min_tcb_tee }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
-                    <p class="text-xs text-slate-400 mt-1">Minimum SNP firmware version (0 = no restriction)</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">TEE (SNP firmware)</label>
+                    <p class="text-base font-medium text-slate-800">
+                        {{ vm.min_tcb_tee }}
+                        <span class="text-xs text-slate-500 ml-2">(0 = no restriction)</span>
+                    </p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">SNP (SNP implementation)</label>
-                    <input type="number" name="min_tcb_snp" min="0" max="255" value="{{ vm.min_tcb_snp }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
-                    <p class="text-xs text-slate-400 mt-1">Minimum SNP implementation version (0 = no restriction)</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">SNP (SNP implementation)</label>
+                    <p class="text-base font-medium text-slate-800">
+                        {{ vm.min_tcb_snp }}
+                        <span class="text-xs text-slate-500 ml-2">(0 = no restriction)</span>
+                    </p>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">Microcode (CPU microcode)</label>
-                    <input type="number" name="min_tcb_microcode" min="0" max="255" value="{{ vm.min_tcb_microcode }}" class="w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm">
-                    <p class="text-xs text-slate-400 mt-1">Minimum CPU microcode version (0 = no restriction)</p>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Microcode (CPU microcode)</label>
+                    <p class="text-base font-medium text-slate-800">
+                        {{ vm.min_tcb_microcode }}
+                        <span class="text-xs text-slate-500 ml-2">(0 = no restriction)</span>
+                    </p>
                 </div>
             </div>
         </div>
 
-        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow transition">Save Changes</button>
-    </form>
-    
-    <div class="mt-12 grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-8">
-        <div class="bg-slate-50 p-4 rounded-lg border border-slate-200">
-            <h4 class="font-bold text-sm text-slate-500 uppercase mb-3">Key Blocks</h4>
-            <a href="/download/{{ vm.id }}/id-block.bin" class="block text-blue-600 hover:underline text-sm mb-2">Download ID-Block</a>
-            <a href="/download/{{ vm.id }}/id-auth.bin" class="block text-blue-600 hover:underline text-sm">Download Auth-Block</a>
+        <!-- Boot Artifacts -->
+        <div class="bg-gradient-to-r from-slate-50 to-gray-50 p-6 rounded-lg border border-slate-200">
+            <h3 class="text-lg font-bold text-slate-700 mb-4 flex items-center">
+                <span class="w-2 h-2 bg-slate-500 rounded-full mr-2"></span>
+                Boot Artifacts
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-white p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs font-semibold text-slate-500 uppercase mb-2">Firmware Image</p>
+                    <a href="/download/{{ vm.id }}/firmware-code.fd" class="text-blue-600 hover:text-blue-800 hover:underline font-medium text-sm flex items-center">
+                        <span class="mr-2">📦</span> Download firmware-code.fd
+                    </a>
+                </div>
+                <div class="bg-white p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs font-semibold text-slate-500 uppercase mb-2">Kernel Binary</p>
+                    <a href="/download/{{ vm.id }}/vmlinuz" class="text-blue-600 hover:text-blue-800 hover:underline font-medium text-sm flex items-center">
+                        <span class="mr-2">📦</span> Download vmlinuz
+                    </a>
+                </div>
+                <div class="bg-white p-4 rounded-lg border border-slate-200">
+                    <p class="text-xs font-semibold text-slate-500 uppercase mb-2">Initrd Image</p>
+                    <a href="/download/{{ vm.id }}/initrd.img" class="text-blue-600 hover:text-blue-800 hover:underline font-medium text-sm flex items-center">
+                        <span class="mr-2">📦</span> Download initrd.img
+                    </a>
+                </div>
+            </div>
         </div>
-        <div class="bg-indigo-50 p-4 rounded-lg border border-indigo-100">
-            <h4 class="font-bold text-sm text-indigo-500 uppercase mb-3">Packages</h4>
-            <a href="/download/{{ vm.id }}/artifacts.tar.gz" class="block text-indigo-700 font-bold hover:underline text-sm mb-2">Download Tarball</a>
-            <a href="/download/{{ vm.id }}/artifacts.squashfs" class="block text-purple-700 font-bold hover:underline text-sm">Download SquashFS</a>
+
+        <!-- Key Blocks & Packages -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t pt-8">
+            <div class="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-lg border border-indigo-200 shadow-sm">
+                <h4 class="font-bold text-sm text-indigo-600 uppercase mb-4 flex items-center">
+                    <span class="mr-2">🔑</span> Key Blocks
+                </h4>
+                <div class="space-y-3">
+                    <a href="/download/{{ vm.id }}/id-block.bin" class="block text-indigo-700 hover:text-indigo-900 hover:underline font-medium text-sm bg-white px-4 py-2 rounded border border-indigo-200 transition">
+                        Download ID-Block
+                    </a>
+                    <a href="/download/{{ vm.id }}/id-auth.bin" class="block text-indigo-700 hover:text-indigo-900 hover:underline font-medium text-sm bg-white px-4 py-2 rounded border border-indigo-200 transition">
+                        Download Auth-Block
+                    </a>
+                </div>
+            </div>
+            <div class="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-lg border border-purple-200 shadow-sm">
+                <h4 class="font-bold text-sm text-purple-600 uppercase mb-4 flex items-center">
+                    <span class="mr-2">📦</span> Packages
+                </h4>
+                <div class="space-y-3">
+                    <a href="/download/{{ vm.id }}/artifacts.tar.gz" class="block text-purple-700 hover:text-purple-900 hover:underline font-bold text-sm bg-white px-4 py-2 rounded border border-purple-200 transition">
+                        Download Tarball (tar.gz)
+                    </a>
+                    <a href="/download/{{ vm.id }}/artifacts.squashfs" class="block text-purple-700 hover:text-purple-900 hover:underline font-bold text-sm bg-white px-4 py-2 rounded border border-purple-200 transition">
+                        Download SquashFS
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Immutability Notice -->
+        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-r-lg mt-8">
+            <div class="flex items-start">
+                <div class="flex-shrink-0">
+                    <span class="text-yellow-600 text-xl">ℹ️</span>
+                </div>
+                <div class="ml-3">
+                    <p class="text-sm font-semibold text-yellow-800">Record Immutability</p>
+                    <p class="text-sm text-yellow-700 mt-1">
+                        Attestation records are immutable. To make changes, delete this record and create a new one with updated values.
+                    </p>
+                </div>
+            </div>
         </div>
     </div>
 </div>

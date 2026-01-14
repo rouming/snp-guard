@@ -7,7 +7,7 @@ use sea_orm::{
 use crate::config::DataPaths;
 use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
-    ToggleEnabledRequest, UpdateRecordRequest,
+    ToggleEnabledRequest,
 };
 use entity::{token, vm};
 use sev::firmware::guest::AttestationReport;
@@ -337,46 +337,6 @@ pub async fn create_record_core(
     )
     .await?;
     Ok(res)
-}
-
-pub async fn update_record_core(
-    state: &Arc<ServiceState>,
-    req: UpdateRecordRequest,
-) -> Result<(), String> {
-    let update_req = business_logic::UpdateRecordRequest {
-        id: req.id,
-        os_name: req.os_name,
-        id_key_pem: req.id_key,
-        auth_key_pem: req.auth_key,
-        firmware_data: req.firmware,
-        kernel_data: req.kernel,
-        initrd_data: req.initrd,
-        kernel_params: req.kernel_params,
-        vcpus: req.vcpus.map(|v| v as u32),
-        vcpu_type: req.vcpu_type,
-        service_url: req.service_url,
-        secret: req.secret,
-        enabled: req.enabled,
-        allowed_debug: req.allowed_debug,
-        allowed_migrate_ma: req.allowed_migrate_ma,
-        allowed_smt: req.allowed_smt,
-        min_tcb_bootloader: req.min_tcb_bootloader,
-        min_tcb_tee: req.min_tcb_tee,
-        min_tcb_snp: req.min_tcb_snp,
-        min_tcb_microcode: req.min_tcb_microcode,
-    };
-
-    let res = business_logic::update_record_logic(
-        &state.attestation_state.db,
-        &state.data_paths,
-        update_req,
-    )
-    .await?;
-    if res.success {
-        Ok(())
-    } else {
-        Err(res.error_message.unwrap_or_else(|| "update failed".into()))
-    }
 }
 
 pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result<(), String> {

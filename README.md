@@ -315,9 +315,10 @@ These endpoints require authentication (master password or Bearer token) and are
 - `GET /v1/records` - List records
 - `GET /v1/records/{id}` - Get single record
 - `POST /v1/records` - Create record
-- `PATCH /v1/records/{id}` - Update record
 - `POST /v1/records/{id}/enable|disable` - Toggle enabled
 - `DELETE /v1/records/{id}` - Delete record
+
+**Note**: Attestation records are immutable. To make changes, delete the old record and create a new one.
 - `GET /v1/records/{id}/export/tar|squash` - Export latest artifacts
 - `GET /v1/tokens` / `POST /v1/tokens` / `POST /v1/tokens/{id}/revoke` - Manage tokens
 - `GET /v1/health` - Health; accepts Bearer token (200 if valid)
@@ -423,7 +424,6 @@ The application will be available at `https://localhost:3000`.
   - `GET /v1/records` -> `ListRecordsResponse`
   - `GET /v1/records/{id}` -> `GetRecordResponse`
   - `POST /v1/records` -> `CreateRecordRequest` / `CreateRecordResponse`
-  - `PATCH /v1/records/{id}` -> `UpdateRecordRequest` / `UpdateRecordResponse`
   - `POST /v1/records/{id}/enable` -> `ToggleEnabledResponse`
   - `POST /v1/records/{id}/disable` -> `ToggleEnabledResponse`
   - `GET /v1/records/{id}/export/tar|squash` -> latest artifacts (regenerated each time)

@@ -19,7 +19,7 @@ use argon2::{password_hash::PasswordHash, password_hash::PasswordVerifier, Argon
 use common::snpguard::{
     AttestationRequest, CreateRecordRequest, CreateRecordResponse, DeleteRecordResponse,
     GetRecordResponse, ListRecordsResponse, NonceRequest, NonceResponse, ToggleEnabledRequest,
-    ToggleEnabledResponse, UpdateRecordRequest, UpdateRecordResponse,
+    ToggleEnabledResponse,
 };
 
 const PROTO_CT: &str = "application/x-protobuf";
@@ -39,7 +39,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
         .route("/records", get(list_records).post(create_record))
         .route(
             "/records/:id",
-            get(get_record).patch(update_record).delete(delete_record),
+            get(get_record).delete(delete_record),
         )
         .route("/records/:id/enable", post(enable_record))
         .route("/records/:id/disable", post(disable_record))
@@ -227,33 +227,6 @@ async fn create_record(State(state): State<Arc<ServiceState>>, body: Bytes) -> R
         }),
         Err(e) => proto_response(CreateRecordResponse {
             id: String::new(),
-            error_message: Some(e),
-        }),
-    }
-}
-
-async fn update_record(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    body: Bytes,
-) -> Response {
-    let mut req = match UpdateRecordRequest::decode(&body[..]) {
-        Ok(r) => r,
-        Err(_) => {
-            return proto_error(
-                StatusCode::BAD_REQUEST,
-                "Failed to decode UpdateRecordRequest",
-            )
-        }
-    };
-    req.id = id;
-    match crate::service_core::update_record_core(&state, req).await {
-        Ok(_) => proto_response(UpdateRecordResponse {
-            success: true,
-            error_message: None,
-        }),
-        Err(e) => proto_response(UpdateRecordResponse {
-            success: false,
             error_message: Some(e),
         }),
     }

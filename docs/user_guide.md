@@ -156,29 +156,28 @@ Boot the VM. The attestation will happen automatically during the initrd phase, 
 
 The main page shows all attestation records with:
 - **Status**: Active (green) or Disabled (gray)
-- **OS Name**: Click to view/edit
+- **OS Name**: Click to view details
 - **Requests**: Number of successful attestations
-- **Actions**: Edit or Delete
+- **Actions**: View or Delete
 
-### Editing Records
+### Viewing Record Details
 
-Click on an OS name to view/edit the record.
+Click on an OS name to view the record details. The view page displays:
+- **Basic Information**: OS name, disk secret
+- **Boot Configuration**: vCPUs, vCPU type, kernel parameters, service URL
+- **Policy Flags**: Debug mode, migration, SMT settings
+- **Minimum TCB Versions**: Bootloader, TEE, SNP, microcode requirements
+- **Boot Artifacts**: Download links for firmware, kernel, initrd
+- **Key Blocks & Packages**: Download links for ID-Block, Auth-Block, tarball, SquashFS
 
-You can:
-- **Enable/Disable**: Toggle the attestation record
-- **Update Fields**: Change OS name, secret, kernel parameters, etc.
-- **Upload New Files**: Replace firmware, kernel, initrd, or keys
-- **Download Artifacts**: Get ID-Block, Auth-Block, tarball, or SquashFS
+**Note**: Attestation records are **immutable**. To make changes, delete the old record and create a new one with updated values.
 
-**Note**: Uploading new files or changing the service URL will regenerate the ID-Block and Auth-Block.
-
-### Disabling Records
+### Enabling/Disabling Records
 
 You can temporarily disable an attestation record:
 - Click the **"Disable"** button on the record view page
-- Or use the toggle checkbox in the edit form
 
-Disabled records will cause attestation requests to fail, but the record remains in the database.
+Disabled records will cause attestation requests to fail, but the record remains in the database. You can re-enable it later using the **"Enable"** button.
 
 ### Deleting Records
 

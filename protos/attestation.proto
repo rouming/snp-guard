@@ -64,34 +64,6 @@ message CreateRecordResponse {
   optional string error_message = 2;
 }
 
-message UpdateRecordRequest {
-  string id = 1;
-  optional string os_name = 2;
-  optional bytes id_key = 3;          // PEM-encoded private key (optional update)
-  optional bytes auth_key = 4;        // PEM-encoded private key (optional update)
-  optional bytes firmware = 5;        // Firmware binary (optional update)
-  optional bytes kernel = 6;          // Kernel binary (optional update)
-  optional bytes initrd = 7;          // Initrd binary (optional update)
-  optional string kernel_params = 8;  // Kernel parameters (optional update)
-  optional string service_url = 9;    // Attestation service URL (optional update)
-  optional string secret = 10;        // Secret (optional update)
-  optional uint32 vcpus = 11;
-  optional string vcpu_type = 12;
-  optional bool enabled = 13;
-  optional bool allowed_debug = 14;
-  optional bool allowed_migrate_ma = 15;
-  optional bool allowed_smt = 16;
-  optional uint32 min_tcb_bootloader = 17;
-  optional uint32 min_tcb_tee = 18;
-  optional uint32 min_tcb_snp = 19;
-  optional uint32 min_tcb_microcode = 20;
-}
-
-message UpdateRecordResponse {
-  bool success = 1;
-  optional string error_message = 2;
-}
-
 message DeleteRecordRequest {
   string id = 1;
 }

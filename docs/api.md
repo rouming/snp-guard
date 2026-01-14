@@ -115,10 +115,11 @@ Authentication:
 
 Endpoints (protobuf payloads, `application/x-protobuf`):
 - `GET/POST /v1/records` (list/create)
-- `GET/PATCH/DELETE /v1/records/{id}`
+- `GET/DELETE /v1/records/{id}` (view/delete)
 - `POST /v1/records/{id}/enable`, `/disable`
 - `GET/POST /v1/tokens`, `POST /v1/tokens/{id}/revoke`
-- Default: `admin` / `secret`
+
+**Note**: Attestation records are immutable. To make changes, delete the old record and create a new one.
 
 ### Endpoints
 
@@ -155,20 +156,14 @@ Create a new attestation record.
 
 #### GET `/view/:id`
 
-View/edit an attestation record.
+View an attestation record (read-only).
 
 **Parameters**:
 - `id`: UUID of the attestation record
 
-**Response**: HTML form with current values
+**Response**: HTML page displaying record details (read-only)
 
-#### POST `/view/:id`
-
-Update an attestation record.
-
-**Request**: `multipart/form-data` (same fields as create, all optional)
-
-**Response**: Redirect to `/view/:id` on success
+**Note**: Attestation records are immutable. To make changes, delete this record and create a new one.
 
 #### POST `/toggle/:id`
 
