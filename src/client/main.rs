@@ -111,7 +111,7 @@ enum ManageCmd {
         allowed_debug: bool,
         #[arg(long, default_value_t = false)]
         allowed_migrate_ma: bool,
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = false)]
         allowed_smt: bool,
         #[arg(long, default_value = "0")]
         min_tcb_bootloader: u32,
