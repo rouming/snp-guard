@@ -2,6 +2,7 @@ use crate::{config::DataPaths, snpguest_wrapper};
 use entity::vm;
 use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use sev::firmware::guest::GuestPolicy;
 use std::fs;
 use uuid::Uuid;
 
@@ -119,6 +120,11 @@ pub async fn create_record_logic(
         fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
             .map_err(|e| format!("Failed to save kernel params: {}", e))?;
 
+        let mut policy: GuestPolicy = Default::default();
+        policy.set_debug_allowed(req.allowed_debug);
+        policy.set_migrate_ma_allowed(req.allowed_migrate_ma);
+        policy.set_smt_allowed(req.allowed_smt);
+
         // Generate Measurements and Blocks
         let _ = snpguest_wrapper::generate_measurement_and_block(
             &artifact_dir.join("firmware-code.fd"),
@@ -127,6 +133,7 @@ pub async fn create_record_logic(
             &full_params,
             req.vcpus,
             &req.vcpu_type,
+            policy.into(),
             &artifact_dir.join("id-block-key.pem"),
             &artifact_dir.join("id-auth-key.pem"),
             &artifact_dir,
@@ -268,6 +275,11 @@ pub async fn update_record_logic(
             .unwrap_or(&vm_model.vcpu_type)
             .clone();
 
+        let mut policy: GuestPolicy = Default::default();
+        policy.set_debug_allowed(req.allowed_debug.unwrap_or(false));
+        policy.set_migrate_ma_allowed(req.allowed_migrate_ma.unwrap_or(false));
+        policy.set_smt_allowed(req.allowed_smt.unwrap_or(false));
+
         let _ = snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
             &kernel_path,
@@ -275,6 +287,7 @@ pub async fn update_record_logic(
             &full_params,
             vcpus,
             &vcpu_type,
+            policy.into(),
             &id_key_path,
             &auth_key_path,
             &artifact_dir,

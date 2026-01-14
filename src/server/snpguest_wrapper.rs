@@ -12,6 +12,7 @@ pub fn generate_measurement_and_block(
     params: &str,
     vcpus: u32,
     vcpu_type: &str,
+    policy: u64,
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
@@ -70,6 +71,8 @@ pub fn generate_measurement_and_block(
         .arg(&measurement)
         .arg("--image-id")
         .arg(image_id_str)
+        .arg("--policy")
+        .arg(policy.to_string())
         .arg("--id-file")
         .arg(output_dir.join("id-block.bin"))
         .arg("--auth-file")
