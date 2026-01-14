@@ -138,29 +138,6 @@ pub async fn verify_report_core(
     };
 
     if let Some(vm) = record {
-        let policy = parsed.report.policy;
-        if policy.debug_allowed() && !vm.allowed_debug {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Debug mode not allowed by policy".to_string(),
-            };
-        }
-        if policy.migrate_ma_allowed() && !vm.allowed_migrate_ma {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Migration with MA not allowed by policy".to_string(),
-            };
-        }
-        if policy.smt_allowed() && !vm.allowed_smt {
-            return AttestationResponse {
-                success: false,
-                secret: vec![],
-                error_message: "Simultaneous Multithreading not allowed by policy".to_string(),
-            };
-        }
-
         let current_bootloader = parsed.report.current_tcb.bootloader;
         let current_tee = parsed.report.current_tcb.tee;
         let current_snp = parsed.report.current_tcb.snp;
