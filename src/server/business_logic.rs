@@ -120,7 +120,7 @@ pub async fn create_record_logic(
             .map_err(|e| format!("Failed to save kernel params: {}", e))?;
 
         // Generate Measurements and Blocks
-        let measurement = snpguest_wrapper::generate_measurement_and_block(
+        let _ = snpguest_wrapper::generate_measurement_and_block(
             &artifact_dir.join("firmware-code.fd"),
             &artifact_dir.join("vmlinuz"),
             &artifact_dir.join("initrd.img"),
@@ -152,7 +152,6 @@ pub async fn create_record_logic(
             created_at: Set(chrono::Utc::now().naive_utc()),
             enabled: Set(true),
             image_id: Set(image_id.to_vec()),
-            measurement: Set(measurement),
             allowed_debug: Set(req.allowed_debug),
             allowed_migrate_ma: Set(req.allowed_migrate_ma),
             allowed_smt: Set(req.allowed_smt),
@@ -269,7 +268,7 @@ pub async fn update_record_logic(
             .unwrap_or(&vm_model.vcpu_type)
             .clone();
 
-        let measurement = snpguest_wrapper::generate_measurement_and_block(
+        let _ = snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
             &kernel_path,
             &initrd_path,
@@ -291,7 +290,6 @@ pub async fn update_record_logic(
 
         vm_model.id_key_digest = id_digest;
         vm_model.auth_key_digest = auth_digest;
-        vm_model.measurement = measurement;
     }
 
     // Update database record

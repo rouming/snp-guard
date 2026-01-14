@@ -132,5 +132,4 @@ message AttestationRecord {
   uint32 min_tcb_microcode = 19; // Minimum CPU microcode version
   uint32 vcpus = 20;
   string service_url = 21;   // Attestation service URL
-  string measurement = 22;   // SEV-SNP measurement hex
 }
