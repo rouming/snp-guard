@@ -15,7 +15,7 @@ pub fn generate_measurement_and_block(
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
-    image_id_hex: String,
+    image_id: &Vec<u8>,
 ) -> Result<String> {
     validate_ec_key(id_key)?;
     validate_ec_key(auth_key)?;
@@ -53,14 +53,14 @@ pub fn generate_measurement_and_block(
 
     let measurement = String::from_utf8(output.stdout)?.trim().to_string();
 
-    // Validate image_id_hex is exactly 32 characters (representing 16 bytes in hex)
-    if image_id_hex.len() != 32 || !image_id_hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(anyhow!(
-            "image_id must be a 32-character hex string (representing 16 bytes)"
-        ));
+    // Validate that image_id contains valid ASCII characters
+    if !image_id.is_ascii() {
+        return Err(anyhow!("image_id must be an ASCII string"));
     }
 
-    // 2. Generate ID-Block and Auth-Block with image-id
+    let image_id_str = String::from_utf8(image_id.clone())?;
+
+    // 2. Generate ID-Block and Auth-Block
     let status = Command::new(&snpguest_path)
         .arg("--quiet")
         .arg("generate")
@@ -69,7 +69,7 @@ pub fn generate_measurement_and_block(
         .arg(auth_key)
         .arg(&measurement)
         .arg("--image-id")
-        .arg(image_id_hex)
+        .arg(image_id_str)
         .arg("--id-file")
         .arg(output_dir.join("id-block.bin"))
         .arg("--auth-file")

@@ -13,7 +13,7 @@ pub struct Model {
     pub vcpu_type: String,
     pub enabled: bool, // Enable/Disable flag
     #[sea_orm(column_type = "Binary(16)")]
-    pub image_id: Vec<u8>, // Image ID (UUID as 16 bytes) for attestation report matching
+    pub image_id: Vec<u8>, // Image ID (random 16 bytes) for attestation report matching
 
     // Policy flags
     pub allowed_debug: bool,      // Allow debug mode

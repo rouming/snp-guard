@@ -1,5 +1,6 @@
 use crate::{config::DataPaths, snpguest_wrapper};
 use entity::vm;
+use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use std::fs;
 use uuid::Uuid;
@@ -56,6 +57,22 @@ pub struct UpdateRecordResponse {
     pub error_message: Option<String>,
 }
 
+/// Generate a secure random 16-bytes of ASCII characters. Only uses
+/// printable characters (alphanumeric) to ensure 1 char = 1 byte.
+pub fn random_ascii_16() -> [u8; 16] {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+    let mut result = [0u8; 16];
+
+    // Fill each position with a secure random choice from ALPHABET
+    for b in &mut result {
+        let idx = (OsRng.next_u32() % ALPHABET.len() as u32) as usize;
+        *b = ALPHABET[idx];
+    }
+
+    result
+}
+
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     paths: &DataPaths,
@@ -64,8 +81,14 @@ pub async fn create_record_logic(
     let new_id = Uuid::new_v4().to_string();
     let artifact_dir = paths.attestations_dir.join(&new_id);
     let res: Result<String, String> = async {
-        // Generate unique image_id as UUID (16 bytes)
-        let image_id = Uuid::new_v4();
+        // Generate a unique image_id as a random ASCII string of 16
+        // bytes. The issue is that the `snpguest` CLI is broken and
+        // the `--image-id` or `--family-id` parameters can only
+        // accept 16 printable ASCII characters, so it's not possible
+        // to pass a UUID, for instance. Once API fixed (if this PR
+        // merged: https://github.com/virtee/snpguest/pull/145), then
+        // return the UUID generation
+        let image_id = random_ascii_16();
 
         fs::create_dir_all(&artifact_dir)
             .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
@@ -96,9 +119,6 @@ pub async fn create_record_logic(
         fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
             .map_err(|e| format!("Failed to save kernel params: {}", e))?;
 
-        // Convert UUID to hex string (32 characters, 16 bytes when decoded)
-        let image_id_hex = hex::encode(image_id.as_bytes());
-
         // Generate Measurements and Blocks
         let measurement = snpguest_wrapper::generate_measurement_and_block(
             &artifact_dir.join("firmware-code.fd"),
@@ -110,7 +130,7 @@ pub async fn create_record_logic(
             &artifact_dir.join("id-block-key.pem"),
             &artifact_dir.join("id-auth-key.pem"),
             &artifact_dir,
-            image_id_hex,
+            &image_id.to_vec(),
         )
         .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
@@ -131,7 +151,7 @@ pub async fn create_record_logic(
             auth_key_digest: Set(auth_digest),
             created_at: Set(chrono::Utc::now().naive_utc()),
             enabled: Set(true),
-            image_id: Set(image_id.as_bytes().to_vec()),
+            image_id: Set(image_id.to_vec()),
             measurement: Set(measurement),
             allowed_debug: Set(req.allowed_debug),
             allowed_migrate_ma: Set(req.allowed_migrate_ma),
@@ -249,9 +269,6 @@ pub async fn update_record_logic(
             .unwrap_or(&vm_model.vcpu_type)
             .clone();
 
-        // Convert image_id bytes to hex string (32 characters, 16 bytes when decoded)
-        let image_id_hex = hex::encode(&vm_model.image_id);
-
         let measurement = snpguest_wrapper::generate_measurement_and_block(
             &firmware_path,
             &kernel_path,
@@ -262,7 +279,7 @@ pub async fn update_record_logic(
             &id_key_path,
             &auth_key_path,
             &artifact_dir,
-            image_id_hex,
+            &vm_model.image_id,
         )
         .map_err(|e| format!("Failed to regenerate measurement and blocks: {}", e))?;
 
