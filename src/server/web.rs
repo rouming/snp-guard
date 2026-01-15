@@ -229,6 +229,32 @@ pub async fn create_action(
         return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
+    // Parse unsealing private key from PEM to extract 32-byte key
+    let unsealing_key_pem = match pem::parse(&unsealing_private_key) {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Html(format!(
+                "<h1>Error</h1><p>Failed to parse unsealing private key PEM: {}</p>",
+                e
+            ))
+            .into_response()
+        }
+    };
+    if unsealing_key_pem.tag() != "PRIVATE KEY" {
+        return Html(format!(
+            "<h1>Error</h1><p>Invalid unsealing private key PEM tag (expected PRIVATE KEY)</p>"
+        ))
+        .into_response();
+    }
+    let unsealing_key_bytes: [u8; 32] = match unsealing_key_pem.contents().try_into() {
+        Ok(b) => b,
+        Err(_) => return Html(format!(
+            "<h1>Error</h1><p>Invalid unsealing private key length (expected 32 bytes, got {})</p>",
+            unsealing_key_pem.contents().len()
+        ))
+        .into_response(),
+    };
+
     // Encrypt unsealing private key with ingestion public key
     let public_key_pem = match state.ingestion_keys.get_public_key_pem() {
         Ok(pem) => pem,
@@ -241,19 +267,18 @@ pub async fn create_action(
         }
     };
 
-    let unsealing_private_key_encrypted = match ingestion_key::encrypt_with_public_key(
-        &public_key_pem,
-        unsealing_private_key.as_bytes(),
-    ) {
-        Ok(encrypted) => encrypted,
-        Err(e) => {
-            return Html(format!(
-                "<h1>Error</h1><p>Failed to encrypt unsealing private key: {}</p>",
-                e
-            ))
-            .into_response()
-        }
-    };
+    // Encrypt unsealing private key (32 bytes only) using the public key
+    let unsealing_private_key_encrypted =
+        match ingestion_key::encrypt_with_public_key(&public_key_pem, &unsealing_key_bytes) {
+            Ok(encrypted) => encrypted,
+            Err(e) => {
+                return Html(format!(
+                    "<h1>Error</h1><p>Failed to encrypt unsealing private key: {}</p>",
+                    e
+                ))
+                .into_response()
+            }
+        };
 
     let req = common::snpguard::CreateRecordRequest {
         os_name,
