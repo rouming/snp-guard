@@ -1,5 +1,7 @@
 use crate::{config::DataPaths, snpguest_wrapper};
 use entity::vm;
+use openssl::ec::{EcGroup, EcKey};
+use openssl::nid::Nid;
 use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use sev::firmware::guest::GuestPolicy;
@@ -9,8 +11,6 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct CreateRecordRequest {
     pub os_name: String,
-    pub id_key_pem: Option<Vec<u8>>,
-    pub auth_key_pem: Option<Vec<u8>>,
     pub firmware_data: Option<Vec<u8>>,
     pub kernel_data: Option<Vec<u8>>,
     pub initrd_data: Option<Vec<u8>>,
@@ -18,7 +18,7 @@ pub struct CreateRecordRequest {
     pub vcpus: u32,
     pub vcpu_type: String,
     pub service_url: String,
-    pub secret: String,
+    pub unsealing_private_key: String, // PEM-encoded unsealing private key
     pub allowed_debug: bool,
     pub allowed_migrate_ma: bool,
     pub allowed_smt: bool,
@@ -26,6 +26,18 @@ pub struct CreateRecordRequest {
     pub min_tcb_tee: u32,
     pub min_tcb_snp: u32,
     pub min_tcb_microcode: u32,
+}
+
+/// Generate a secp384r1 EC private key in PEM format
+fn generate_ec_key_pem() -> Result<Vec<u8>, String> {
+    use openssl::pkey::PKey;
+
+    let group = EcGroup::from_curve_name(Nid::SECP384R1)
+        .map_err(|e| format!("Failed to create EC group: {}", e))?;
+    let key = EcKey::generate(&group).map_err(|e| format!("Failed to generate EC key: {}", e))?;
+    let pkey = PKey::from_ec_key(key).map_err(|e| format!("Failed to create PKey: {}", e))?;
+    pkey.private_key_to_pem_pkcs8()
+        .map_err(|e| format!("Failed to serialize key to PEM: {}", e))
 }
 
 /// Generate a secure random 16-bytes of ASCII characters. Only uses
@@ -47,6 +59,7 @@ pub fn random_ascii_16() -> [u8; 16] {
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     paths: &DataPaths,
+    master_key: &crate::master_key::MasterKey,
     req: CreateRecordRequest,
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
@@ -64,15 +77,22 @@ pub async fn create_record_logic(
         fs::create_dir_all(&artifact_dir)
             .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 
-        // Save uploaded files
-        if let Some(id_key) = req.id_key_pem {
-            fs::write(artifact_dir.join("id-block-key.pem"), id_key)
-                .map_err(|e| format!("Failed to save ID key: {}", e))?;
-        }
-        if let Some(auth_key) = req.auth_key_pem {
-            fs::write(artifact_dir.join("id-auth-key.pem"), auth_key)
-                .map_err(|e| format!("Failed to save auth key: {}", e))?;
-        }
+        // Generate ID and Auth keys on server
+        let id_key_pem =
+            generate_ec_key_pem().map_err(|e| format!("Failed to generate ID key: {}", e))?;
+        let auth_key_pem =
+            generate_ec_key_pem().map_err(|e| format!("Failed to generate auth key: {}", e))?;
+
+        // Save generated keys
+        fs::write(artifact_dir.join("id-block-key.pem"), &id_key_pem)
+            .map_err(|e| format!("Failed to save ID key: {}", e))?;
+        fs::write(artifact_dir.join("id-auth-key.pem"), &auth_key_pem)
+            .map_err(|e| format!("Failed to save auth key: {}", e))?;
+
+        // Encrypt unsealing private key
+        let (encrypted_key, nonce) = master_key
+            .encrypt(req.unsealing_private_key.as_bytes())
+            .map_err(|e| format!("Failed to encrypt unsealing private key: {}", e))?;
         if let Some(firmware) = req.firmware_data {
             fs::write(artifact_dir.join("firmware-code.fd"), firmware)
                 .map_err(|e| format!("Failed to save firmware: {}", e))?;
@@ -121,7 +141,9 @@ pub async fn create_record_logic(
         let new_vm = vm::ActiveModel {
             id: Set(new_id.clone()),
             os_name: Set(req.os_name),
-            secret: Set(req.secret),
+            secret: Set(String::new()), // Deprecated field, kept for migration
+            unsealing_private_key_encrypted: Set(Some(encrypted_key)),
+            unsealing_private_key_nonce: Set(Some(nonce)),
             vcpus: Set(req.vcpus as i32),
             vcpu_type: Set(req.vcpu_type),
             id_key_digest: Set(id_digest),

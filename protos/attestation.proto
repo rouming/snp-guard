@@ -40,14 +40,12 @@ message GetRecordResponse {
 
 message CreateRecordRequest {
   string os_name = 1;
-  bytes id_key = 2;          // PEM-encoded private key
-  bytes auth_key = 3;        // PEM-encoded private key
   bytes firmware = 4;        // Firmware binary
   bytes kernel = 5;          // Kernel binary
   bytes initrd = 6;          // Initrd binary
   string kernel_params = 7;  // Kernel parameters (without rd.attest.url)
   string service_url = 8;    // Attestation service URL
-  string secret = 9;         // Secret to release
+  string unsealing_private_key = 9;  // Unsealing private key (PEM-encoded, will be encrypted)
   uint32 vcpus = 10;
   string vcpu_type = 11;     // EPYC, EPYC-Milan, EPYC-Rome, EPYC-Genoa
   bool allowed_debug = 12;   // Allow debug mode (default: false)
@@ -86,7 +84,6 @@ message AttestationRecord {
   string id = 1;
   string os_name = 2;
   int32 request_count = 3;
-  string secret = 4;
   string vcpu_type = 5;
   bool enabled = 6;
   string created_at = 7;

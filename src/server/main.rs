@@ -20,6 +20,7 @@ pub const MAX_BODY_BYTES: usize = 300 * 1024 * 1024;
 mod auth;
 mod business_logic;
 mod config;
+mod master_key;
 mod master_password;
 mod nonce;
 mod rest_api;
@@ -63,12 +64,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret,
     });
 
-    // 3. Service core state (shared)
+    // 3. Master app key (for encrypting unsealing private keys)
+    let master_key = Arc::new(master_key::MasterKey::load_or_create(
+        &paths.master_app_key,
+    )?);
+
+    // 4. Service core state (shared)
     let data_paths = Arc::new(paths);
     let service_state = Arc::new(service_core::ServiceState {
         db: conn.clone(),
         attestation_state: attestation_state.clone(),
         data_paths: data_paths.clone(),
+        master_key: master_key.clone(),
     });
 
     // Master password (web management)

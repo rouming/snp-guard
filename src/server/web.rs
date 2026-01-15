@@ -107,10 +107,9 @@ pub async fn login_submit(
 
 fn max_upload_size(name: &str) -> Option<usize> {
     match name {
-        "firmware" => Some(50 * 1024 * 1024),     // 50 MB
-        "kernel" => Some(50 * 1024 * 1024),       // 50 MB
-        "initrd" => Some(150 * 1024 * 1024),      // 150 MB
-        "id_key" | "auth_key" => Some(10 * 1024), // 10 KB for keys
+        "firmware" => Some(50 * 1024 * 1024), // 50 MB
+        "kernel" => Some(50 * 1024 * 1024),   // 50 MB
+        "initrd" => Some(150 * 1024 * 1024),  // 150 MB
         _ => None,
     }
 }
@@ -120,7 +119,7 @@ pub async fn create_action(
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let mut os_name = String::new();
-    let mut secret = String::new();
+    let mut unsealing_private_key = String::new();
     let mut vcpus: u32 = 1;
     let mut vcpu_type = String::new();
     let mut kernel_params = String::new();
@@ -132,8 +131,6 @@ pub async fn create_action(
     let mut min_tcb_tee = 0u32;
     let mut min_tcb_snp = 0u32;
     let mut min_tcb_microcode = 0u32;
-    let mut id_key: Option<Vec<u8>> = None;
-    let mut auth_key: Option<Vec<u8>> = None;
     let mut firmware: Option<Vec<u8>> = None;
     let mut kernel: Option<Vec<u8>> = None;
     let mut initrd: Option<Vec<u8>> = None;
@@ -185,8 +182,6 @@ pub async fn create_action(
             }
 
             match name.as_str() {
-                "id_key" => id_key = Some(data.to_vec()),
-                "auth_key" => auth_key = Some(data.to_vec()),
                 "firmware" => firmware = Some(data.to_vec()),
                 "kernel" => kernel = Some(data.to_vec()),
                 "initrd" => initrd = Some(data.to_vec()),
@@ -205,7 +200,7 @@ pub async fn create_action(
             };
             match name.as_str() {
                 "os_name" => os_name = txt,
-                "secret" => secret = txt,
+                "unsealing_private_key" => unsealing_private_key = txt,
                 "vcpus" => vcpus = txt.parse().unwrap_or(1),
                 "vcpu_type" => vcpu_type = txt,
                 "kernel_params" => kernel_params = txt,
@@ -224,10 +219,8 @@ pub async fn create_action(
 
     // Validate required fields
     if os_name.is_empty()
-        || secret.is_empty()
+        || unsealing_private_key.is_empty()
         || service_url.is_empty()
-        || id_key.is_none()
-        || auth_key.is_none()
         || firmware.is_none()
         || kernel.is_none()
         || initrd.is_none()
@@ -237,8 +230,6 @@ pub async fn create_action(
 
     let req = common::snpguard::CreateRecordRequest {
         os_name,
-        id_key: id_key.unwrap(),
-        auth_key: auth_key.unwrap(),
         firmware: firmware.unwrap(),
         kernel: kernel.unwrap(),
         initrd: initrd.unwrap(),
@@ -246,7 +237,7 @@ pub async fn create_action(
         vcpus,
         vcpu_type,
         service_url,
-        secret,
+        unsealing_private_key,
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,

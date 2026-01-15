@@ -97,16 +97,12 @@ enum ManageCmd {
         os_name: String,
         #[arg(long)]
         service_url: String,
-        #[arg(long)]
-        secret: String,
+        #[arg(long, value_name = "PATH")]
+        unsealing_private_key: PathBuf,
         #[arg(long, default_value = "4")]
         vcpus: u32,
         #[arg(long, default_value = "EPYC")]
         vcpu_type: String,
-        #[arg(long, value_name = "PATH")]
-        id_key: Option<PathBuf>,
-        #[arg(long, value_name = "PATH")]
-        auth_key: Option<PathBuf>,
         #[arg(long, default_value_t = false)]
         allowed_debug: bool,
         #[arg(long, default_value_t = false)]
@@ -366,7 +362,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
         ManageCmd::Create {
             os_name,
             service_url,
-            secret,
+            unsealing_private_key,
             vcpus,
             vcpu_type,
             allowed_debug,
@@ -377,8 +373,6 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             min_tcb_snp,
             min_tcb_microcode,
             artifacts_bundle,
-            id_key,
-            auth_key,
             firmware,
             kernel,
             initrd,
@@ -389,17 +383,13 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             let mut kernel_data = None;
             let mut initrd_data = None;
             let mut params = None;
-            let mut id_key_data = None;
-            let mut auth_key_data = None;
 
             if let Some(bundle_path) = artifacts_bundle {
-                let (fw, k, i, p, idk, authk) = read_bundle(&bundle_path)?;
+                let (fw, k, i, p) = read_bundle(&bundle_path)?;
                 firmware_data = fw;
                 kernel_data = k;
                 initrd_data = i;
                 params = p;
-                id_key_data = idk;
-                auth_key_data = authk;
             }
             if let Some(path) = firmware {
                 firmware_data = Some(fs::read(path)?);
@@ -413,29 +403,28 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             if let Some(p) = kernel_params {
                 params = Some(p);
             }
-            if let Some(path) = id_key {
-                id_key_data = Some(fs::read(path)?);
-            }
-            if let Some(path) = auth_key {
-                auth_key_data = Some(fs::read(path)?);
-            }
 
-            if id_key_data.is_none() || auth_key_data.is_none() {
-                bail!("id-key and auth-key are required (either in artifacts bundle or as --id-key/--auth-key)");
+            if firmware_data.is_none() || kernel_data.is_none() || initrd_data.is_none() {
+                bail!("firmware, kernel, and initrd are required (either in artifacts bundle or as --firmware/--kernel/--initrd)");
             }
 
             let params = params.unwrap_or_else(|| "console=ttyS0".to_string());
+            let unsealing_key_str =
+                fs::read_to_string(&unsealing_private_key).with_context(|| {
+                    format!(
+                        "Failed to read unsealing private key from {:?}",
+                        unsealing_private_key
+                    )
+                })?;
 
             let req = CreateRecordRequest {
                 os_name,
-                id_key: id_key_data.unwrap_or_default(),
-                auth_key: auth_key_data.unwrap_or_default(),
                 firmware: firmware_data.unwrap_or_default(),
                 kernel: kernel_data.unwrap_or_default(),
                 initrd: initrd_data.unwrap_or_default(),
                 kernel_params: params,
                 service_url,
-                secret,
+                unsealing_private_key: unsealing_key_str,
                 vcpus,
                 vcpu_type,
                 allowed_debug,
@@ -482,8 +471,6 @@ fn read_bundle(
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     Option<String>,
-    Option<Vec<u8>>,
-    Option<Vec<u8>>,
 )> {
     let file = File::open(path)?;
     let is_gz = path
@@ -502,8 +489,6 @@ fn read_bundle(
     let mut k = None;
     let mut i = None;
     let mut params = None;
-    let mut idk = None;
-    let mut authk = None;
 
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -524,13 +509,11 @@ fn read_bundle(
                     params = Some(s.trim().to_string());
                 }
             }
-            "id-block-key.pem" => idk = Some(buf),
-            "id-auth-key.pem" => authk = Some(buf),
             _ => {}
         }
     }
 
-    Ok((fw, k, i, params, idk, authk))
+    Ok((fw, k, i, params))
 }
 
 fn run_config(action: ConfigCmd) -> Result<()> {

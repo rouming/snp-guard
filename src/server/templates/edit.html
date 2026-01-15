@@ -25,14 +25,21 @@
                 <span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
                 Basic Information
             </h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">OS Name</label>
-                    <p class="text-base font-medium text-slate-800">{{ vm.os_name }}</p>
-                </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">Disk Secret</label>
-                    <p class="text-base font-mono text-slate-800 bg-white px-3 py-2 rounded border border-slate-200 break-all">{{ vm.secret }}</p>
+            <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase mb-1">OS Name</label>
+                <p class="text-base font-medium text-slate-800">{{ vm.os_name }}</p>
+            </div>
+            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg mt-4">
+                <div class="flex items-start">
+                    <div class="flex-shrink-0">
+                        <span class="text-blue-600 text-xl">🔒</span>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-semibold text-blue-800">Unsealing Private Key</p>
+                        <p class="text-sm text-blue-700 mt-1">
+                            The unsealing private key is encrypted and stored securely. It is only decrypted during successful attestation to reveal the final secret.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

@@ -37,10 +37,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 
     let management = Router::new()
         .route("/records", get(list_records).post(create_record))
-        .route(
-            "/records/:id",
-            get(get_record).delete(delete_record),
-        )
+        .route("/records/:id", get(get_record).delete(delete_record))
         .route("/records/:id/enable", post(enable_record))
         .route("/records/:id/disable", post(disable_record))
         .route("/records/:id/export/tar", get(export_tar))

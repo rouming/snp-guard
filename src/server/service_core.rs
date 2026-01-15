@@ -27,6 +27,7 @@ pub struct ServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
     pub data_paths: Arc<DataPaths>,
+    pub master_key: Arc<crate::master_key::MasterKey>,
 }
 
 #[derive(Clone)]
@@ -205,9 +206,29 @@ pub async fn verify_report_core(
     active.request_count = Set(vm.request_count + 1);
     let _ = active.update(&state.db).await;
 
+    // Decrypt unsealing private key
+    let unsealing_key = if let (Some(encrypted), Some(nonce)) = (
+        &vm.unsealing_private_key_encrypted,
+        &vm.unsealing_private_key_nonce,
+    ) {
+        match state.master_key.decrypt(encrypted, nonce) {
+            Ok(decrypted) => decrypted,
+            Err(e) => {
+                return AttestationResponse {
+                    success: false,
+                    secret: vec![],
+                    error_message: format!("Failed to decrypt unsealing key: {}", e),
+                };
+            }
+        }
+    } else {
+        // Fallback to old secret field for migration compatibility
+        vm.secret.into_bytes()
+    };
+
     AttestationResponse {
         success: true,
-        secret: vm.secret.into_bytes(),
+        secret: unsealing_key, // Currently just returns the decrypted key as dummy text
         error_message: String::new(),
     }
 }
@@ -223,28 +244,30 @@ pub async fn list_records_core(
 
     let proto_records: Vec<AttestationRecord> = records
         .into_iter()
-        .map(|vm| AttestationRecord {
-            id: vm.id,
-            os_name: vm.os_name,
-            request_count: vm.request_count,
-            secret: vm.secret,
-            vcpu_type: vm.vcpu_type,
-            vcpus: vm.vcpus as u32,
-            enabled: vm.enabled,
-            created_at: vm.created_at.to_string(),
-            kernel_params: vm.kernel_params,
-            firmware_path: vm.firmware_path,
-            kernel_path: vm.kernel_path,
-            initrd_path: vm.initrd_path,
-            image_id: vm.image_id,
-            allowed_debug: vm.allowed_debug,
-            allowed_migrate_ma: vm.allowed_migrate_ma,
-            allowed_smt: vm.allowed_smt,
-            min_tcb_bootloader: vm.min_tcb_bootloader as u32,
-            min_tcb_tee: vm.min_tcb_tee as u32,
-            min_tcb_snp: vm.min_tcb_snp as u32,
-            min_tcb_microcode: vm.min_tcb_microcode as u32,
-            service_url: vm.service_url,
+        .map(|vm| {
+            // Never decrypt unsealing key for UI display - it's only decrypted during attestation
+            AttestationRecord {
+                id: vm.id,
+                os_name: vm.os_name,
+                request_count: vm.request_count,
+                vcpu_type: vm.vcpu_type,
+                vcpus: vm.vcpus as u32,
+                enabled: vm.enabled,
+                created_at: vm.created_at.to_string(),
+                kernel_params: vm.kernel_params,
+                firmware_path: vm.firmware_path,
+                kernel_path: vm.kernel_path,
+                initrd_path: vm.initrd_path,
+                image_id: vm.image_id,
+                allowed_debug: vm.allowed_debug,
+                allowed_migrate_ma: vm.allowed_migrate_ma,
+                allowed_smt: vm.allowed_smt,
+                min_tcb_bootloader: vm.min_tcb_bootloader as u32,
+                min_tcb_tee: vm.min_tcb_tee as u32,
+                min_tcb_snp: vm.min_tcb_snp as u32,
+                min_tcb_microcode: vm.min_tcb_microcode as u32,
+                service_url: vm.service_url,
+            }
         })
         .collect();
 
@@ -264,7 +287,6 @@ pub async fn get_record_core(
         id: vm.id,
         os_name: vm.os_name,
         request_count: vm.request_count,
-        secret: vm.secret,
         vcpu_type: vm.vcpu_type,
         vcpus: vm.vcpus as u32,
         enabled: vm.enabled,
@@ -291,16 +313,6 @@ pub async fn create_record_core(
 ) -> Result<String, String> {
     let create_req = business_logic::CreateRecordRequest {
         os_name: req.os_name,
-        id_key_pem: if req.id_key.is_empty() {
-            None
-        } else {
-            Some(req.id_key)
-        },
-        auth_key_pem: if req.auth_key.is_empty() {
-            None
-        } else {
-            Some(req.auth_key)
-        },
         firmware_data: if req.firmware.is_empty() {
             None
         } else {
@@ -320,7 +332,7 @@ pub async fn create_record_core(
         vcpus: req.vcpus as u32,
         vcpu_type: req.vcpu_type,
         service_url: req.service_url,
-        secret: req.secret,
+        unsealing_private_key: req.unsealing_private_key,
         allowed_debug: req.allowed_debug,
         allowed_migrate_ma: req.allowed_migrate_ma,
         allowed_smt: req.allowed_smt,
@@ -333,6 +345,7 @@ pub async fn create_record_core(
     let res = business_logic::create_record_logic(
         &state.attestation_state.db,
         &state.data_paths,
+        &state.master_key,
         create_req,
     )
     .await?;

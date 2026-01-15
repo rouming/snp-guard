@@ -26,6 +26,16 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Alias::new("secret")).string().not_null())
                     .col(
+                        ColumnDef::new(Alias::new("unsealing_private_key_encrypted"))
+                            .binary_len(4096)
+                            .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("unsealing_private_key_nonce"))
+                            .binary_len(12)
+                            .not_null(),
+                    )
+                    .col(
                         ColumnDef::new(Alias::new("vcpus"))
                             .integer()
                             .not_null()

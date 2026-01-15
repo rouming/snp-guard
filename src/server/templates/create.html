@@ -7,7 +7,7 @@
             <h3 class="font-bold text-lg text-slate-700">Configuration</h3>
             <div><label class="block text-sm font-medium mb-1">OS Name</label><input type="text" name="os_name" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
             <div><label class="block text-sm font-medium mb-1">Service URL</label><input type="text" name="service_url" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
-            <div><label class="block text-sm font-medium mb-1">Disk Secret</label><input type="text" name="secret" class="w-full border-slate-300 rounded-lg shadow-sm" required></div>
+            <div><label class="block text-sm font-medium mb-1">Unsealing Private Key</label><textarea name="unsealing_private_key" rows="4" class="w-full border-slate-300 rounded-lg shadow-sm font-mono text-sm" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----" required></textarea><p class="text-xs text-slate-400 mt-1">PEM-encoded private key for unsealing secrets</p></div>
             <div class="grid grid-cols-2 gap-4">
                 <div><label class="block text-sm font-medium mb-1">vCPUs</label><input type="number" name="vcpus" value="4" class="w-full border-slate-300 rounded-lg shadow-sm"></div>
                 <div>
@@ -49,10 +49,8 @@
             </div>
         </div>
         <div class="space-y-5 bg-slate-50 p-6 rounded-lg border border-slate-200">
-            <h3 class="font-bold text-lg text-slate-700">Artifacts</h3>
-            <div><label class="block text-sm font-bold">ID Block Key</label><input type="file" name="id_key" required class="block w-full text-sm"></div>
-            <div><label class="block text-sm font-bold">Auth Block Key</label><input type="file" name="auth_key" required class="block w-full text-sm"></div>
-            <hr>
+            <h3 class="font-bold text-lg text-slate-700">Boot Artifacts</h3>
+            <p class="text-xs text-slate-500 mb-4">ID Block Key and Auth Block Key are now generated automatically by the server.</p>
             <div><label class="block text-sm font-bold">Firmware</label><input type="file" name="firmware" required class="block w-full text-sm"></div>
             <div><label class="block text-sm font-bold">Kernel</label><input type="file" name="kernel" required class="block w-full text-sm"></div>
             <div><label class="block text-sm font-bold">Initrd</label><input type="file" name="initrd" required class="block w-full text-sm"></div>
