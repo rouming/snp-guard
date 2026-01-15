@@ -241,18 +241,21 @@ pub async fn create_action(
         }
     };
     if unsealing_key_pem.tag() != "PRIVATE KEY" {
-        return Html(format!(
+        return Html(
             "<h1>Error</h1><p>Invalid unsealing private key PEM tag (expected PRIVATE KEY)</p>"
-        ))
+                .to_string(),
+        )
         .into_response();
     }
     let unsealing_key_bytes: [u8; 32] = match unsealing_key_pem.contents().try_into() {
         Ok(b) => b,
-        Err(_) => return Html(format!(
+        Err(_) => {
+            return Html(format!(
             "<h1>Error</h1><p>Invalid unsealing private key length (expected 32 bytes, got {})</p>",
             unsealing_key_pem.contents().len()
         ))
-        .into_response(),
+            .into_response()
+        }
     };
 
     // Encrypt unsealing private key with ingestion public key
