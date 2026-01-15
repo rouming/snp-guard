@@ -59,3 +59,4 @@ rcgen = "0.12"
 # HPKE for hybrid public key encryption
 hpke = "0.10"
 pem = "3.0"
+sha2 = "0.10"

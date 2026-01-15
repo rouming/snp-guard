@@ -12,13 +12,17 @@ message NonceResponse {
 }
 
 message AttestationRequest {
-  bytes report_data = 1;
+  bytes report_data = 1;           // SEV-SNP attestation report (binary)
+  bytes server_nonce = 2;           // Server nonce (64 bytes) used for binding
+  bytes client_pub_bytes = 3;       // X25519 Session Public Key (32 bytes)
+  bytes sealed_blob = 4;           // HPKE-encrypted VMK blob [Encapped_Key (32 bytes) || Ciphertext]
 }
 
 message AttestationResponse {
   bool success = 1;
-  bytes secret = 2;
-  string error_message = 3;
+  bytes encapped_key = 2;          // HPKE Encapsulated Key (32 bytes) - Server Ephemeral Pub
+  bytes ciphertext = 3;             // Session-encrypted VMK (HPKE ciphertext)
+  string error_message = 4;         // Error message if success is false
 }
 
 // Management messages

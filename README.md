@@ -248,18 +248,24 @@ rd.attest.url=https://your-attestation-service.com
 
 1. **Guest VM boots** and network is initialized
 2. **Initrd hook runs** (`snpguard_attest` script)
-3. **Client requests nonce** from attestation service via HTTPS
-4. **Client generates report** using `snpguest report` with the nonce
-5. **Client sends report** to attestation service
-6. **Service verifies**:
+3. **Client requests nonce** (64 bytes) from attestation service via HTTPS
+4. **Client generates ephemeral session key** (X25519, 32 bytes public key)
+5. **Client creates binding hash**: SHA512(server_nonce || client_pub_bytes) -> 64 bytes
+6. **Client generates attestation report** with binding hash in report_data field using `snpguest report`
+7. **Client sends attestation request** with report, server_nonce, client_pub_bytes, and sealed_blob (HPKE-encrypted VMK)
+8. **Service verifies**:
+   - Verifies binding hash matches report.report_data
+   - Verifies VMPL is 0 (kernel level)
    - Fetches AMD certificates (CA and VCEK)
    - Verifies certificate chain
    - Verifies attestation report signature
    - Extracts key digests from report
    - Looks up matching attestation record
    - Checks if record is enabled
-7. **Service responds** with success and decrypted unsealing private key (if verification passes)
-8. **Client outputs unsealing key** to stdout (currently returned as dummy text; will be used for challenge decryption in future)
+   - Unseals VMK from sealed_blob using unsealing private key
+   - Reseals VMK for client session using client's ephemeral public key
+9. **Service responds** with success, encapped_key, and ciphertext (session-encrypted VMK)
+10. **Client decrypts session response** to get VMK and outputs to stdout
 
 ## API Reference
 
@@ -332,7 +338,7 @@ snpguard-client config login --url https://attest.example.com --token <TOKEN> --
 snpguard-client config logout
 
 # Attestation (uses pinned CA from config)
-snpguard-client attest --report /path/to/report.bin --url https://attest.example.com --ca-cert ./ca.pem
+snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob /path/to/sealed-vmk.bin | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 
 # Management (defaults to stored config)
 snpguard-client manage list
@@ -437,7 +443,8 @@ The application will be available at `https://localhost:3000`.
 
 ### Attestation Report Parsing
 
-- The server parses SEV-SNP attestation reports using the `sev` crate’s `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (nonce), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
+- The server parses SEV-SNP attestation reports using the `sev` crate's `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (binding hash), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
+- The attestation flow uses a binding hash (SHA512 of server_nonce || client_pub_bytes) embedded in the report's report_data field to ensure the report was generated with the correct session key.
 
 ### TLS and Client Pinning
 

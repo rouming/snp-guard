@@ -79,12 +79,15 @@ echo -n -e '\x0a\x05\x67\x75\x65\x73\x74' | \
 
 #### POST `/v1/attest/report`
 
-Verify an attestation report and return decrypted unsealing private key if successful.
+Verify an attestation report, unseal VMK from sealed blob, and return session-encrypted VMK if successful.
 
 **Request**:
 ```protobuf
 message AttestationRequest {
-  bytes report_data = 1;           // SEV-SNP attestation report (binary)
+  bytes report_data = 1;           // SEV-SNP attestation report (binary, 1184 bytes)
+  bytes server_nonce = 2;           // Server nonce (64 bytes) used for binding
+  bytes client_pub_bytes = 3;       // X25519 Session Public Key (32 bytes)
+  bytes sealed_blob = 4;           // HPKE-encrypted VMK blob [Encapped_Key (32 bytes) || Ciphertext]
 }
 ```
 
@@ -92,25 +95,31 @@ message AttestationRequest {
 ```protobuf
 message AttestationResponse {
   bool success = 1;                // true if attestation passed
-  bytes secret = 2;                 // Decrypted unsealing private key (if success)
-  string error_message = 3;        // Error description (if !success)
+  bytes encapped_key = 2;           // HPKE Encapsulated Key (32 bytes) - Server Ephemeral Pub
+  bytes ciphertext = 3;             // Session-encrypted VMK (HPKE ciphertext)
+  string error_message = 4;         // Error description (if !success)
 }
 ```
 
 **Verification Process**:
 
-1. Extract nonce from report (offset 0x50, 64 bytes)
-2. Detect CPU family from report (cpuid fields parsed from AttestationReport)
-3. Fetch AMD certificates (CA and VCEK) from AMD KDS using integrated `snpguest`
-4. Verify certificate chain using integrated `snpguest`
-5. Verify attestation report signature using integrated `snpguest`
-6. Extract key digests:
+1. Validate request fields (server_nonce: 64 bytes, client_pub_bytes: 32 bytes, sealed_blob: >= 32 bytes)
+2. Parse SEV-SNP attestation report from report_data
+3. Verify binding hash: SHA512(server_nonce || client_pub_bytes) must match report.report_data (64 bytes)
+4. Verify VMPL is 0 (kernel level)
+5. Detect CPU family from report (cpuid fields parsed from AttestationReport)
+6. Fetch AMD certificates (CA and VCEK) from AMD KDS using integrated `snpguest`
+7. Verify certificate chain using integrated `snpguest`
+8. Verify attestation report signature using integrated `snpguest`
+9. Extract key digests:
    - ID_KEY_DIGEST at offset 0xE0 (48 bytes)
    - AUTHOR_KEY_DIGEST at offset 0x110 (48 bytes)
-7. Look up attestation record by image_id + key digests, check policy flags/TCB minimums
-8. Check if record is enabled
-9. Decrypt unsealing private key using ingestion private key (HPKE)
-10. Return success with decrypted unsealing key if all checks pass
+10. Look up attestation record by image_id + key digests, check policy flags/TCB minimums
+11. Check if record is enabled
+12. Decrypt unsealing private key from DB using ingestion private key (HPKE)
+13. Unseal VMK from sealed_blob using unsealing private key (HPKE)
+14. Reseal VMK for client session using client's ephemeral public key (HPKE)
+15. Return success with encapped_key and ciphertext if all checks pass
 
 **Error Responses**:
 - `400 Bad Request`: Invalid protobuf message or report too short

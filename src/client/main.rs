@@ -11,12 +11,13 @@ use hpke::{
     aead::AesGcm256,
     kdf::HkdfSha256,
     kem::{Kem, X25519HkdfSha256},
-    Deserializable, OpModeS, Serializable,
+    Deserializable, OpModeR, OpModeS, Serializable,
 };
 use prost::Message;
 use rand::rngs::OsRng;
 use reqwest::Certificate;
 use sev::firmware::guest::Firmware;
+use sha2::{Digest, Sha512};
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -41,6 +42,8 @@ enum Command {
         url: String,
         #[arg(long, value_name = "PATH", default_value = DEFAULT_CA_CERT)]
         ca_cert: String,
+        #[arg(long, value_name = "PATH")]
+        sealed_blob: Option<PathBuf>,
     },
     /// Management operations (requires stored token)
     Manage {
@@ -146,7 +149,11 @@ enum ManageCmd {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Command::Attest { url, ca_cert } => run_attest(&url, &ca_cert).await,
+        Command::Attest {
+            url,
+            ca_cert,
+            sealed_blob,
+        } => run_attest(&url, &ca_cert, sealed_blob.as_deref()).await,
         Command::Manage {
             url,
             ca_cert,
@@ -235,11 +242,12 @@ fn build_client_from_bytes(ca_pem: &[u8]) -> Result<reqwest::Client> {
     Ok(client)
 }
 
-async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
+async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Result<()> {
     let client = build_client(ca_cert)?;
     let base = normalize_https(url)?;
+    let mut rng = OsRng;
 
-    // 1. Get nonce
+    // 1. Get server nonce
     let mut buf = Vec::new();
     NonceRequest {}.encode(&mut buf)?;
     let resp = client
@@ -255,20 +263,45 @@ async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
     if nonce_resp.nonce.len() != 64 {
         bail!("Invalid nonce length: {}", nonce_resp.nonce.len());
     }
+    let server_nonce = nonce_resp.nonce;
 
-    // 2. Generate report
+    // 2. Generate ephemeral session key (X25519)
+    let (client_secret, client_public) = <X25519HkdfSha256 as Kem>::gen_keypair(&mut rng);
+    let client_pub_bytes = client_public.to_bytes().to_vec();
+
+    // 3. Create binding hash: SHA512(server_nonce || client_pub_bytes)
+    let mut hasher = Sha512::new();
+    hasher.update(&server_nonce);
+    hasher.update(&client_pub_bytes);
+    let binding_digest: [u8; 64] = hasher.finalize().into();
+
+    // 4. Get AMD SNP report with binding digest in report_data
     let mut fw = Firmware::open().context(
         "Failed to open SEV firmware device (/dev/sev-guest). Ensure SEV-SNP is enabled.",
     )?;
-    let mut nonce_arr = [0u8; 64];
-    nonce_arr.copy_from_slice(&nonce_resp.nonce[..64]);
-    let report_data = fw
-        .get_report(None, Some(nonce_arr), Some(1))
+    let report_bytes = fw
+        .get_report(None, Some(binding_digest), Some(0))
         .context("Failed to get attestation report from SEV firmware")?;
 
-    // 3. Verify
+    // report_bytes is [u8; 1184], convert to Vec<u8>
+    let report_data = report_bytes.to_vec();
+
+    // 5. Read sealed blob (required)
+    let sealed_blob_path =
+        sealed_blob.ok_or_else(|| anyhow!("--sealed-blob is required for attestation"))?;
+    let sealed_blob_data = fs::read(sealed_blob_path)
+        .with_context(|| format!("Failed to read sealed blob from {:?}", sealed_blob_path))?;
+
+    // 6. Send attestation request
     let mut req_bytes = Vec::new();
-    AttestationRequest { report_data }.encode(&mut req_bytes)?;
+    AttestationRequest {
+        report_data,
+        server_nonce: server_nonce.clone(),
+        client_pub_bytes: client_pub_bytes.clone(),
+        sealed_blob: sealed_blob_data,
+    }
+    .encode(&mut req_bytes)?;
+
     let resp = client
         .post(format!("{}/v1/attest/report", base))
         .header("Content-Type", "application/x-protobuf")
@@ -280,13 +313,34 @@ async fn run_attest(url: &str, ca_cert: &str) -> Result<()> {
     let bytes = resp.bytes().await?;
     let verify_resp =
         AttestationResponse::decode(&bytes[..]).context("Decode verification response")?;
-    if verify_resp.success {
-        std::io::stdout().write_all(&verify_resp.secret)?;
-        std::io::stdout().flush()?;
-        Ok(())
-    } else {
+
+    if !verify_resp.success {
         bail!("Attestation failed: {}", verify_resp.error_message);
     }
+
+    // 7. Decrypt session response (HPKE)
+    // 7a. Parse server's encapped key
+    let encapped = <X25519HkdfSha256 as Kem>::EncappedKey::from_bytes(&verify_resp.encapped_key)
+        .map_err(|_| anyhow!("Invalid server encapped key"))?;
+
+    // 7b. Setup HPKE receiver
+    let mut receiver_ctx = hpke::setup_receiver::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
+        &OpModeR::Base,
+        &client_secret,
+        &encapped,
+        &[],
+    )
+    .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
+
+    // 7c. Open ciphertext to get VMK
+    let vmk = receiver_ctx
+        .open(&verify_resp.ciphertext, &[])
+        .map_err(|e| anyhow!("Session decryption failed: {}", e))?;
+
+    // 8. Output VMK to stdout
+    std::io::stdout().write_all(&vmk)?;
+    std::io::stdout().flush()?;
+    Ok(())
 }
 
 async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Result<()> {
