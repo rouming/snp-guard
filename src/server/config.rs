@@ -97,7 +97,7 @@ fn touch_if_missing(path: &Path, mode: u32) -> std::io::Result<()> {
             fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
         }
     }
-    fs::write(path, &[])?;
+    fs::write(path, [])?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

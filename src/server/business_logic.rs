@@ -124,7 +124,7 @@ pub async fn create_record_logic(
             &artifact_dir.join("id-block-key.pem"),
             &artifact_dir.join("id-auth-key.pem"),
             &artifact_dir,
-            &image_id.to_vec(),
+            image_id.as_ref(),
         )
         .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 

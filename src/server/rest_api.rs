@@ -122,8 +122,7 @@ fn verify_master(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok());
     if let Some(auth) = auth_header {
-        if auth.starts_with("Basic ") {
-            let encoded = &auth[6..];
+        if let Some(encoded) = auth.strip_prefix("Basic ") {
             if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
                 if let Ok(credentials) = String::from_utf8(decoded) {
                     let parts: Vec<&str> = credentials.splitn(2, ':').collect();
@@ -160,9 +159,8 @@ async fn management_auth(
     // Try bearer token for non-token routes
     if !tokens_route {
         if let Some(token) = auth_header_token(headers) {
-            match crate::service_core::auth_token_valid(&ctx.state, &token).await {
-                Ok(true) => return next.run(req).await,
-                Ok(false) | Err(_) => {}
+            if let Ok(true) = crate::service_core::auth_token_valid(&ctx.state, &token).await {
+                return next.run(req).await;
             }
         }
     }

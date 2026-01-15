@@ -152,7 +152,7 @@ pub async fn create_action(
             Some(n) => n.to_string(),
             None => continue,
         };
-        if let Some(_) = field.file_name() {
+        if field.file_name().is_some() {
             let data = match field.bytes().await {
                 Ok(d) => d,
                 Err(e) => {

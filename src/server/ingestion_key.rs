@@ -120,15 +120,18 @@ impl IngestionKeys {
         Ok(pub_pem_str)
     }
 
+    #[allow(dead_code)]
     pub fn get_public_key_bytes(&self) -> [u8; 32] {
         self.public_key.to_bytes().into()
     }
 
+    #[allow(dead_code)]
     pub fn get_private_key_bytes(&self) -> [u8; 32] {
         self.private_key.to_bytes().into()
     }
 
     /// Encrypt plaintext using HPKE with the ingestion public key
+    #[allow(dead_code)]
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let mut rng = OsRng;
         let (encapped_key, mut sender_ctx) =

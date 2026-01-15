@@ -13,7 +13,6 @@ use hpke::{
     kem::{Kem, X25519HkdfSha256},
     Deserializable, OpModeS, Serializable,
 };
-use pem::Pem;
 use prost::Message;
 use rand::rngs::OsRng;
 use reqwest::Certificate;
@@ -34,6 +33,7 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Perform attestation and output the released secret
     Attest {
@@ -517,14 +517,15 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
     Ok(())
 }
 
-fn read_bundle(
-    path: &Path,
-) -> Result<(
+type BundleContents = (
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     Option<Vec<u8>>,
     Option<String>,
-)> {
+);
+
+#[allow(clippy::type_complexity)]
+fn read_bundle(path: &Path) -> Result<BundleContents> {
     let file = File::open(path)?;
     let is_gz = path
         .extension()

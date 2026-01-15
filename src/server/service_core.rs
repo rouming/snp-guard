@@ -327,7 +327,7 @@ pub async fn create_record_core(
             Some(req.initrd)
         },
         kernel_params: req.kernel_params,
-        vcpus: req.vcpus as u32,
+        vcpus: req.vcpus,
         vcpu_type: req.vcpu_type,
         service_url: req.service_url,
         unsealing_private_key_encrypted: req.unsealing_private_key_encrypted,

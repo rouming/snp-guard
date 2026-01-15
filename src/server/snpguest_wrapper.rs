@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 /// Wraps 'snpguest generate measurement' then 'snpguest generate id-block'
+#[allow(clippy::too_many_arguments)]
 pub fn generate_measurement_and_block(
     ovmf: &Path,
     kernel: &Path,
@@ -16,7 +17,7 @@ pub fn generate_measurement_and_block(
     id_key: &Path,
     auth_key: &Path,
     output_dir: &Path,
-    image_id: &Vec<u8>,
+    image_id: &[u8],
 ) -> Result<String> {
     validate_ec_key(id_key)?;
     validate_ec_key(auth_key)?;
@@ -59,7 +60,7 @@ pub fn generate_measurement_and_block(
         return Err(anyhow!("image_id must be an ASCII string"));
     }
 
-    let image_id_str = String::from_utf8(image_id.clone())?;
+    let image_id_str = String::from_utf8(image_id.to_vec())?;
 
     // 2. Generate ID-Block and Auth-Block
     let status = Command::new(&snpguest_path)
