@@ -68,6 +68,18 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Unseal a file (e.g., VMK) using a Private Key (Offline)
+    Unseal {
+        /// Path to the Unsealing Private Key
+        #[arg(long)]
+        priv_key: PathBuf,
+        /// Path to the sealed blob to unseal
+        #[arg(long)]
+        sealed_data: PathBuf,
+        /// Output path for the unsealed data
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Management operations (requires stored token)
     Manage {
         #[arg(long, value_name = "URL")]

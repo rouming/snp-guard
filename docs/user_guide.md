@@ -27,6 +27,22 @@ This creates:
 - `unsealing.key`: Private key (keep secure, upload to server during record creation)
 - `unsealing.pub`: Public key (use offline to seal VMKs)
 
+You can test the keypair by sealing and unsealing a test file:
+
+```bash
+# Create test data
+echo "test data" > test.txt
+
+# Seal with public key
+snpguard-client seal --pub-key unsealing.pub --data test.txt --out test.sealed
+
+# Unseal with private key
+snpguard-client unseal --priv-key unsealing.key --sealed-data test.sealed --out test.decrypted
+
+# Verify
+cmp test.txt test.decrypted && echo "Keys work correctly!"
+```
+
 ### 2. Initialize Database
 
 ```bash

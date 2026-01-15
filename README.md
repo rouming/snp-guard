@@ -346,6 +346,9 @@ snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
 # Seal a file (e.g., VMK) for a specific public key (offline)
 snpguard-client seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
 
+# Unseal a file using the private key (offline)
+snpguard-client unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
+
 # Attestation (uses pinned CA from config)
 snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob blob.sealed | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 
@@ -353,8 +356,9 @@ snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sea
 # 1. Generate keys: snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
 # 2. Create plaintext blob: pwgen -s 32 1 | tr -d '\n' > blob.txt
 # 3. Seal the blob: snpguard-client seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
-# 4. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed > blob.decrypted
-# 5. Verify: cmp blob.txt blob.decrypted
+# 4. Unseal locally (test): snpguard-client unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
+# 5. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed > blob.decrypted
+# 6. Verify: cmp blob.txt blob.decrypted
 
 # Management (defaults to stored config)
 snpguard-client manage list

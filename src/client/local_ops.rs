@@ -3,7 +3,7 @@ use hpke::{
     aead::AesGcm256,
     kdf::HkdfSha256,
     kem::{Kem, X25519HkdfSha256},
-    Deserializable, OpModeS, Serializable,
+    Deserializable, OpModeR, OpModeS, Serializable,
 };
 use pem::{EncodeConfig, Pem};
 use rand::rngs::OsRng;
@@ -104,5 +104,64 @@ pub fn seal_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Resu
         .with_context(|| format!("Failed to write output to {:?}", out_path))?;
 
     println!("Sealed {} bytes to {:?}", plaintext.len(), out_path);
+    Ok(())
+}
+
+/// Unseals a file using HPKE (X25519 + AES-GCM-256)
+pub fn unseal_file(priv_key_path: &Path, sealed_data_path: &Path, out_path: &Path) -> Result<()> {
+    // 1. Load Sealed Blob
+    let sealed_blob = fs::read(sealed_data_path)
+        .with_context(|| format!("Failed to read sealed data file: {:?}", sealed_data_path))?;
+
+    if sealed_blob.len() < 32 {
+        return Err(anyhow!(
+            "Sealed blob too short (expected at least 32 bytes for encapped key)"
+        ));
+    }
+
+    // 2. Split Blob: [ Encapped_Key (32 bytes) || Ciphertext ]
+    let (encapped_bytes, ciphertext) = sealed_blob.split_at(32);
+
+    // 3. Load and Parse Private Key
+    let priv_pem_str = fs::read_to_string(priv_key_path)
+        .with_context(|| format!("Failed to read private key: {:?}", priv_key_path))?;
+
+    let priv_pem = pem::parse(&priv_pem_str).map_err(|e| anyhow!("Invalid PEM format: {}", e))?;
+
+    if priv_pem.tag() != "PRIVATE KEY" {
+        return Err(anyhow!("Expected PRIVATE KEY, got {}", priv_pem.tag()));
+    }
+
+    let priv_bytes: [u8; 32] = priv_pem
+        .contents()
+        .try_into()
+        .map_err(|_| anyhow!("Invalid private key length (expected 32 bytes)"))?;
+
+    // Convert to HPKE-compatible key type
+    let hpke_priv = <X25519HkdfSha256 as Kem>::PrivateKey::from_bytes(&priv_bytes)
+        .map_err(|e| anyhow!("Key conversion failed: {}", e))?;
+
+    // 4. Parse Encapped Key
+    let encapped_key = <X25519HkdfSha256 as Kem>::EncappedKey::from_bytes(encapped_bytes)
+        .map_err(|e| anyhow!("Invalid encapped key: {}", e))?;
+
+    // 5. Decrypt (HPKE Open)
+    let mut receiver_ctx = hpke::setup_receiver::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
+        &OpModeR::Base,
+        &hpke_priv,
+        &encapped_key,
+        &[],
+    )
+    .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
+
+    let plaintext = receiver_ctx
+        .open(ciphertext, &[])
+        .map_err(|e| anyhow!("Decryption failed: {}", e))?;
+
+    // 6. Write Plaintext
+    fs::write(out_path, &plaintext)
+        .with_context(|| format!("Failed to write output to {:?}", out_path))?;
+
+    println!("Unsealed {} bytes to {:?}", plaintext.len(), out_path);
     Ok(())
 }
