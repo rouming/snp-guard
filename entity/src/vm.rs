@@ -11,8 +11,6 @@ pub struct Model {
     pub secret: String, // Deprecated: kept for migration compatibility
     #[sea_orm(column_type = "Binary(4096)", nullable)]
     pub unsealing_private_key_encrypted: Option<Vec<u8>>,
-    #[sea_orm(column_type = "Binary(12)", nullable)]
-    pub unsealing_private_key_nonce: Option<Vec<u8>>,
     pub vcpus: i32,
     pub vcpu_type: String,
     pub enabled: bool, // Enable/Disable flag

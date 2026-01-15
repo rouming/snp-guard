@@ -5,6 +5,7 @@ use sea_orm::{
 };
 
 use crate::config::DataPaths;
+use crate::ingestion_key::IngestionKeys;
 use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
     ToggleEnabledRequest,
@@ -27,7 +28,7 @@ pub struct ServiceState {
     pub db: DatabaseConnection,
     pub attestation_state: Arc<AttestationState>,
     pub data_paths: Arc<DataPaths>,
-    pub master_key: Arc<crate::master_key::MasterKey>,
+    pub ingestion_keys: Arc<IngestionKeys>,
 }
 
 #[derive(Clone)]
@@ -206,12 +207,9 @@ pub async fn verify_report_core(
     active.request_count = Set(vm.request_count + 1);
     let _ = active.update(&state.db).await;
 
-    // Decrypt unsealing private key
-    let unsealing_key = if let (Some(encrypted), Some(nonce)) = (
-        &vm.unsealing_private_key_encrypted,
-        &vm.unsealing_private_key_nonce,
-    ) {
-        match state.master_key.decrypt(encrypted, nonce) {
+    // Decrypt unsealing private key using HPKE
+    let unsealing_key = if let Some(encrypted) = &vm.unsealing_private_key_encrypted {
+        match state.ingestion_keys.decrypt(encrypted) {
             Ok(decrypted) => decrypted,
             Err(e) => {
                 return AttestationResponse {
@@ -332,7 +330,7 @@ pub async fn create_record_core(
         vcpus: req.vcpus as u32,
         vcpu_type: req.vcpu_type,
         service_url: req.service_url,
-        unsealing_private_key: req.unsealing_private_key,
+        unsealing_private_key_encrypted: req.unsealing_private_key_encrypted,
         allowed_debug: req.allowed_debug,
         allowed_migrate_ma: req.allowed_migrate_ma,
         allowed_smt: req.allowed_smt,
@@ -345,7 +343,6 @@ pub async fn create_record_core(
     let res = business_logic::create_record_logic(
         &state.attestation_state.db,
         &state.data_paths,
-        &state.master_key,
         create_req,
     )
     .await?;

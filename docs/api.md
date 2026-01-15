@@ -26,6 +26,27 @@ Content-Type: application/x-protobuf
 
 ### Endpoints
 
+#### GET `/v1/keys/ingestion/public`
+
+Get the ingestion public key for encrypting unsealing private keys.
+
+**Request**: No body required
+
+**Response** (200 OK):
+- Content-Type: `application/x-pem-file`
+- Body: PEM-encoded X25519 public key
+
+**Error Responses**:
+- `500 Internal Server Error`: Server error retrieving key
+
+**Example** (using curl):
+```bash
+curl -X GET https://attest.example.com/v1/keys/ingestion/public \
+  --output ingestion.pub
+```
+
+**Note**: This endpoint is public (no authentication required) as the public key is meant to be shared for encryption purposes.
+
 #### POST `/v1/attest/nonce`
 
 Request a random 64-byte nonce for attestation report generation.
@@ -88,7 +109,7 @@ message AttestationResponse {
    - AUTHOR_KEY_DIGEST at offset 0x110 (48 bytes)
 7. Look up attestation record by image_id + key digests, check policy flags/TCB minimums
 8. Check if record is enabled
-9. Decrypt unsealing private key using master app key
+9. Decrypt unsealing private key using ingestion private key (HPKE)
 10. Return success with decrypted unsealing key if all checks pass
 
 **Error Responses**:
@@ -225,4 +246,4 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 
 3. **Input Validation**: All file uploads are validated for size limits. File paths are sanitized to prevent directory traversal.
 
-4. **Key Encryption**: Unsealing private keys are encrypted with AES-256-GCM using the master app key before storage. The master app key must be backed up securely.
+4. **Key Encryption**: Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key must be backed up securely.

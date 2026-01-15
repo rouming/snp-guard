@@ -20,7 +20,7 @@ pub const MAX_BODY_BYTES: usize = 300 * 1024 * 1024;
 mod auth;
 mod business_logic;
 mod config;
-mod master_key;
+mod ingestion_key;
 mod master_password;
 mod nonce;
 mod rest_api;
@@ -64,9 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret,
     });
 
-    // 3. Master app key (for encrypting unsealing private keys)
-    let master_key = Arc::new(master_key::MasterKey::load_or_create(
-        &paths.master_app_key,
+    // 3. Ingestion keys (for encrypting unsealing private keys)
+    let ingestion_keys = Arc::new(ingestion_key::IngestionKeys::load_or_create(
+        &paths.ingestion_key,
+        &paths.ingestion_pub,
     )?);
 
     // 4. Service core state (shared)
@@ -75,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: conn.clone(),
         attestation_state: attestation_state.clone(),
         data_paths: data_paths.clone(),
-        master_key: master_key.clone(),
+        ingestion_keys: ingestion_keys.clone(),
     });
 
     // Master password (web management)

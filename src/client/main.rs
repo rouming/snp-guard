@@ -7,7 +7,15 @@ use common::snpguard::{
 };
 use dirs::config_dir;
 use flate2::read::GzDecoder;
+use hpke::{
+    aead::AesGcm256,
+    kdf::HkdfSha256,
+    kem::{Kem, X25519HkdfSha256},
+    Deserializable, OpModeS, Serializable,
+};
+use pem::Pem;
 use prost::Message;
+use rand::rngs::OsRng;
 use reqwest::Certificate;
 use sev::firmware::guest::Firmware;
 use std::fs;
@@ -417,6 +425,51 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                     )
                 })?;
 
+            // Fetch ingestion public key and encrypt unsealing key
+            let ingestion_pub_pem = client
+                .get(format!("{}/v1/keys/ingestion/public", base))
+                .send()
+                .await
+                .context("Failed to fetch ingestion public key")?;
+            let ingestion_pub_pem = ensure_success(ingestion_pub_pem, "get ingestion key").await?;
+            let ingestion_pub_pem = ingestion_pub_pem
+                .text()
+                .await
+                .context("Failed to read ingestion public key")?;
+
+            let pub_pem_parsed = pem::parse(&ingestion_pub_pem)
+                .context("Failed to parse ingestion public key PEM")?;
+            if pub_pem_parsed.tag() != "PUBLIC KEY" {
+                bail!("Invalid ingestion public key PEM tag");
+            }
+            let public_bytes: [u8; 32] = pub_pem_parsed
+                .contents()
+                .try_into()
+                .map_err(|_| anyhow!("Invalid public key length"))?;
+
+            let server_pub = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&public_bytes)
+                .map_err(|e| anyhow!("Failed to create public key: {}", e))?;
+
+            let mut rng = OsRng;
+            let (encapped_key, mut sender_ctx) =
+                hpke::setup_sender::<AesGcm256, HkdfSha256, X25519HkdfSha256, _>(
+                    &OpModeS::Base,
+                    &server_pub,
+                    &[],
+                    &mut rng,
+                )
+                .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
+
+            let ciphertext = sender_ctx
+                .seal(unsealing_key_str.as_bytes(), &[])
+                .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
+
+            let encapped_bytes = encapped_key.to_bytes();
+            let mut unsealing_key_encrypted =
+                Vec::with_capacity(encapped_bytes.len() + ciphertext.len());
+            unsealing_key_encrypted.extend_from_slice(&encapped_bytes);
+            unsealing_key_encrypted.extend_from_slice(&ciphertext);
+
             let req = CreateRecordRequest {
                 os_name,
                 firmware: firmware_data.unwrap_or_default(),
@@ -424,7 +477,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 initrd: initrd_data.unwrap_or_default(),
                 kernel_params: params,
                 service_url,
-                unsealing_private_key: unsealing_key_str,
+                unsealing_private_key_encrypted: unsealing_key_encrypted,
                 vcpus,
                 vcpu_type,
                 allowed_debug,

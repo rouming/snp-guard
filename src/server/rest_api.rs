@@ -31,6 +31,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     };
     let public = Router::new()
         .route("/health", get(health))
+        .route("/keys/ingestion/public", get(get_ingestion_public_key))
         .route("/attest/nonce", post(attest_nonce))
         .route("/attest/report", post(attest_report))
         .with_state(state.clone());
@@ -53,6 +54,20 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     public
         .merge(management)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+}
+
+async fn get_ingestion_public_key(State(state): State<Arc<ServiceState>>) -> Response {
+    match state.ingestion_keys.get_public_key_pem() {
+        Ok(pem) => Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "application/x-pem-file")
+            .body(Body::from(pem))
+            .unwrap(),
+        Err(e) => proto_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to get ingestion public key: {}", e),
+        ),
+    }
 }
 
 async fn health(State(state): State<Arc<ServiceState>>, headers: HeaderMap) -> Response {

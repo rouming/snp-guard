@@ -18,7 +18,7 @@ pub struct CreateRecordRequest {
     pub vcpus: u32,
     pub vcpu_type: String,
     pub service_url: String,
-    pub unsealing_private_key: String, // PEM-encoded unsealing private key
+    pub unsealing_private_key_encrypted: Vec<u8>, // HPKE-encrypted unsealing private key
     pub allowed_debug: bool,
     pub allowed_migrate_ma: bool,
     pub allowed_smt: bool,
@@ -59,7 +59,6 @@ pub fn random_ascii_16() -> [u8; 16] {
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     paths: &DataPaths,
-    master_key: &crate::master_key::MasterKey,
     req: CreateRecordRequest,
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
@@ -89,10 +88,8 @@ pub async fn create_record_logic(
         fs::write(artifact_dir.join("id-auth-key.pem"), &auth_key_pem)
             .map_err(|e| format!("Failed to save auth key: {}", e))?;
 
-        // Encrypt unsealing private key
-        let (encrypted_key, nonce) = master_key
-            .encrypt(req.unsealing_private_key.as_bytes())
-            .map_err(|e| format!("Failed to encrypt unsealing private key: {}", e))?;
+        // Unsealing private key is already encrypted by client with ingestion public key
+        // Just store it directly
         if let Some(firmware) = req.firmware_data {
             fs::write(artifact_dir.join("firmware-code.fd"), firmware)
                 .map_err(|e| format!("Failed to save firmware: {}", e))?;
@@ -142,8 +139,7 @@ pub async fn create_record_logic(
             id: Set(new_id.clone()),
             os_name: Set(req.os_name),
             secret: Set(String::new()), // Deprecated field, kept for migration
-            unsealing_private_key_encrypted: Set(Some(encrypted_key)),
-            unsealing_private_key_nonce: Set(Some(nonce)),
+            unsealing_private_key_encrypted: Set(Some(req.unsealing_private_key_encrypted)),
             vcpus: Set(req.vcpus as i32),
             vcpu_type: Set(req.vcpu_type),
             id_key_digest: Set(id_digest),

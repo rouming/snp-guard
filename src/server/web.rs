@@ -1,4 +1,5 @@
 use crate::auth;
+use crate::ingestion_key;
 use crate::service_core::{self, ServiceState, TokenInfo};
 use askama::Template;
 use axum::{
@@ -228,6 +229,32 @@ pub async fn create_action(
         return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
+    // Encrypt unsealing private key with ingestion public key
+    let public_key_pem = match state.ingestion_keys.get_public_key_pem() {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Html(format!(
+                "<h1>Error</h1><p>Failed to get ingestion public key: {}</p>",
+                e
+            ))
+            .into_response()
+        }
+    };
+
+    let unsealing_private_key_encrypted = match ingestion_key::encrypt_with_public_key(
+        &public_key_pem,
+        unsealing_private_key.as_bytes(),
+    ) {
+        Ok(encrypted) => encrypted,
+        Err(e) => {
+            return Html(format!(
+                "<h1>Error</h1><p>Failed to encrypt unsealing private key: {}</p>",
+                e
+            ))
+            .into_response()
+        }
+    };
+
     let req = common::snpguard::CreateRecordRequest {
         os_name,
         firmware: firmware.unwrap(),
@@ -237,7 +264,7 @@ pub async fn create_action(
         vcpus,
         vcpu_type,
         service_url,
-        unsealing_private_key,
+        unsealing_private_key_encrypted,
         allowed_debug,
         allowed_migrate_ma,
         allowed_smt,

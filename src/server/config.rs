@@ -15,7 +15,8 @@ pub struct DataPaths {
     pub tls_key: PathBuf,
     pub ca_cert: PathBuf,
     pub master_password_hash: PathBuf,
-    pub master_app_key: PathBuf,
+    pub ingestion_key: PathBuf,
+    pub ingestion_pub: PathBuf,
     pub db_file: PathBuf,
 }
 
@@ -36,7 +37,8 @@ impl DataPaths {
             tls_key: tls_dir.join("server.key"),
             ca_cert: tls_dir.join("ca.pem"),
             master_password_hash: auth_dir.join("master.pw.hash"),
-            master_app_key: auth_dir.join("master.app.key"),
+            ingestion_key: auth_dir.join("ingestion.key"),
+            ingestion_pub: auth_dir.join("ingestion.pub"),
             db_file: db_dir.join("snpguard.sqlite"),
             tls_dir,
             auth_dir,

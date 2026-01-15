@@ -45,7 +45,7 @@ message CreateRecordRequest {
   bytes initrd = 6;          // Initrd binary
   string kernel_params = 7;  // Kernel parameters (without rd.attest.url)
   string service_url = 8;    // Attestation service URL
-  string unsealing_private_key = 9;  // Unsealing private key (PEM-encoded, will be encrypted)
+  bytes unsealing_private_key_encrypted = 9;  // Unsealing private key encrypted with ingestion public key (HPKE)
   uint32 vcpus = 10;
   string vcpu_type = 11;     // EPYC, EPYC-Milan, EPYC-Rome, EPYC-Genoa
   bool allowed_debug = 12;   // Allow debug mode (default: false)

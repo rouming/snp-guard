@@ -134,7 +134,7 @@ Expected layout (created automatically on startup):
 ```
 /data/
  ├── tls/            (server.crt, server.key, ca.pem)
- ├── auth/           (master.pw.hash, master.app.key)
+ ├── auth/           (master.pw.hash, ingestion.key, ingestion.pub)
  ├── db/             (snpguard.sqlite)
  ├── artifacts/
  │    ├── attestations/<attestation-id>/
@@ -200,7 +200,7 @@ The service will:
 - Generate ID Block Key and Auth Block Key automatically
 - Generate measurements using `snpguest`
 - Create ID-Block and Auth-Block
-- Encrypt the unsealing private key with the master app key
+- Encrypt the unsealing private key with the ingestion public key (HPKE)
 - Compute key digests for lookup
 - Store the attestation record
 
@@ -352,10 +352,11 @@ snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz   # 
 
 2. **Key Management**: 
    - ID-Block and Auth-Block keys are now generated automatically by the server and stored temporarily during record creation.
-   - Unsealing private keys are encrypted with AES-256-GCM using the master app key before storage.
-   - The master app key (`/data/auth/master.app.key`) must be backed up securely - if lost, encrypted keys cannot be recovered.
+   - Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage.
+   - The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys cannot be recovered.
+   - The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
 
-3. **Encryption**: Unsealing private keys are encrypted at rest using AES-256-GCM with a unique nonce per key. The master app key is stored separately with restricted permissions.
+3. **Encryption**: Unsealing private keys are encrypted at rest using HPKE (Hybrid Public Key Encryption) with X25519HkdfSha256, HkdfSha256, and AesGcm256. The ingestion key pair is generated on server deployment and stored with restricted permissions (0400 for private key).
 
 4. **Network Security**: Ensure the attestation service is only accessible from trusted networks or use firewall rules.
 
