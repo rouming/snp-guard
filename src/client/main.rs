@@ -1,3 +1,5 @@
+mod local_ops;
+
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use common::snpguard::{
@@ -44,6 +46,27 @@ enum Command {
         ca_cert: String,
         #[arg(long, value_name = "PATH")]
         sealed_blob: Option<PathBuf>,
+    },
+    /// Generate a new Unsealing Keypair (Offline)
+    Keygen {
+        /// Output path for private key (e.g., unsealing.key)
+        #[arg(long, default_value = "unsealing.key")]
+        priv_out: PathBuf,
+        /// Output path for public key (e.g., unsealing.pub)
+        #[arg(long, default_value = "unsealing.pub")]
+        pub_out: PathBuf,
+    },
+    /// Seal a file (e.g., VMK) for a specific Public Key (Offline)
+    Seal {
+        /// Path to the Unsealing Public Key
+        #[arg(long)]
+        pub_key: PathBuf,
+        /// Path to the plaintext file to seal
+        #[arg(long)]
+        data: PathBuf,
+        /// Output path for the sealed blob
+        #[arg(long)]
+        out: PathBuf,
     },
     /// Management operations (requires stored token)
     Manage {
@@ -160,6 +183,14 @@ async fn main() -> Result<()> {
             action,
         } => run_manage(url.as_deref(), &ca_cert, action).await,
         Command::Config { action } => run_config(action),
+        Command::Keygen { priv_out, pub_out } => {
+            local_ops::generate_keys(&priv_out, &pub_out)?;
+            Ok(())
+        }
+        Command::Seal { pub_key, data, out } => {
+            local_ops::seal_file(&pub_key, &data, &out)?;
+            Ok(())
+        }
     }
 }
 

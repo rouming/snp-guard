@@ -338,8 +338,21 @@ These endpoints require authentication (master password or Bearer token) and are
 snpguard-client config login --url https://attest.example.com --token <TOKEN> --ca-cert ./ca.pem
 snpguard-client config logout
 
+# Generate unsealing keypair (offline)
+snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
+
+# Seal a file (e.g., VMK) for a specific public key (offline)
+snpguard-client seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
+
 # Attestation (uses pinned CA from config)
-snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob /path/to/sealed-vmk.bin | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
+snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob blob.sealed | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
+
+# Example workflow:
+# 1. Generate keys: snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
+# 2. Create plaintext blob: pwgen -s 32 1 | tr -d '\n' > blob.txt
+# 3. Seal the blob: snpguard-client seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
+# 4. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed > blob.decrypted
+# 5. Verify: cmp blob.txt blob.decrypted
 
 # Management (defaults to stored config)
 snpguard-client manage list
