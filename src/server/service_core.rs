@@ -29,6 +29,7 @@ use argon2::{
     Argon2,
 };
 use base64::Engine;
+use pem::Pem;
 use rand::RngCore;
 use uuid::Uuid;
 
@@ -105,14 +106,42 @@ fn reencrypt_sealed_blob(
     // Split sealed blob into encapped key and ciphertext
     let (vmk_encapped_bytes, vmk_ciphertext) = sealed_blob.split_at(32);
 
-    // Parse unsealing private key
-    let unsealing_priv =
-        match <X25519HkdfSha256 as Kem>::PrivateKey::from_bytes(unsealing_priv_bytes) {
-            Ok(k) => k,
-            Err(e) => {
-                return Err(format!("Invalid unsealing private key format: {}", e));
+    // Parse unsealing private key from PEM format
+    // The decrypted key is PEM-encoded, so we need to parse it first
+    let unsealing_priv = match String::from_utf8(unsealing_priv_bytes.to_vec()) {
+        Ok(pem_str) => {
+            // Parse PEM
+            let pem = match pem::parse(&pem_str) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(format!("Failed to parse PEM: {}", e));
+                }
+            };
+            if pem.tag() != "PRIVATE KEY" {
+                return Err(format!("Expected PRIVATE KEY, got {}", pem.tag()));
             }
-        };
+            // Extract 32-byte key from PEM
+            let priv_bytes: [u8; 32] = match pem.contents().try_into() {
+                Ok(b) => b,
+                Err(_) => {
+                    return Err(format!(
+                        "Invalid private key length: expected 32 bytes, got {}",
+                        pem.contents().len()
+                    ));
+                }
+            };
+            // Convert to HPKE key type
+            match <X25519HkdfSha256 as Kem>::PrivateKey::from_bytes(&priv_bytes) {
+                Ok(k) => k,
+                Err(e) => {
+                    return Err(format!("Invalid unsealing private key format: {}", e));
+                }
+            }
+        }
+        Err(e) => {
+            return Err(format!("Failed to decode PEM string: {}", e));
+        }
+    };
 
     // Parse VMK encapped key
     let vmk_encapped_key =
