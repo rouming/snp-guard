@@ -203,10 +203,6 @@ pub async fn verify_report_core(
         };
     }
 
-    let mut active: vm::ActiveModel = vm.clone().into();
-    active.request_count = Set(vm.request_count + 1);
-    let _ = active.update(&state.db).await;
-
     // Decrypt unsealing private key using HPKE
     let unsealing_key = if let Some(encrypted) = &vm.unsealing_private_key_encrypted {
         match state.ingestion_keys.decrypt(encrypted) {
@@ -223,6 +219,10 @@ pub async fn verify_report_core(
         // Fallback to old secret field for migration compatibility
         vm.secret.into_bytes()
     };
+
+    let mut active: vm::ActiveModel = vm.clone().into();
+    active.request_count = Set(vm.request_count + 1);
+    let _ = active.update(&state.db).await;
 
     AttestationResponse {
         success: true,
