@@ -522,7 +522,9 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             }
 
             let params = params.unwrap_or_else(|| "console=ttyS0".to_string());
-            let unsealing_key_str =
+
+            // Read and parse unsealing private key from PEM to extract 32-byte key
+            let unsealing_key_pem_str =
                 fs::read_to_string(&unsealing_private_key).with_context(|| {
                     format!(
                         "Failed to read unsealing private key from {:?}",
@@ -530,7 +532,17 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                     )
                 })?;
 
-            // Fetch ingestion public key and encrypt unsealing key
+            let unsealing_key_pem = pem::parse(&unsealing_key_pem_str)
+                .context("Failed to parse unsealing private key PEM")?;
+            if unsealing_key_pem.tag() != "PRIVATE KEY" {
+                bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
+            }
+            let unsealing_key_bytes: [u8; 32] = unsealing_key_pem
+                .contents()
+                .try_into()
+                .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
+
+            // Fetch ingestion public key and encrypt unsealing key (32 bytes only)
             let ingestion_pub_pem = client
                 .get(format!("{}/v1/keys/ingestion/public", base))
                 .send()
@@ -566,7 +578,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
 
             let ciphertext = sender_ctx
-                .seal(unsealing_key_str.as_bytes(), &[])
+                .seal(&unsealing_key_bytes, &[])
                 .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
 
             let encapped_bytes = encapped_key.to_bytes();
