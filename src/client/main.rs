@@ -203,6 +203,14 @@ async fn main() -> Result<()> {
             local_ops::seal_file(&pub_key, &data, &out)?;
             Ok(())
         }
+        Command::Unseal {
+            priv_key,
+            sealed_data,
+            out,
+        } => {
+            local_ops::unseal_file(&priv_key, &sealed_data, &out)?;
+            Ok(())
+        }
     }
 }
 
