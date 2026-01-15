@@ -80,7 +80,7 @@ You'll need:
 1. Click **"Create New Record"** in the management UI
 2. Fill in the form:
    - **OS Name**: A descriptive name (e.g., "Ubuntu 22.04 Production")
-   - **Unsealing Private Key**: Paste the PEM-encoded private key (from `unsealing-private-key.pem`)
+   - **Unsealing Private Key**: Paste the PEM-encoded private key (from `unsealing.key`, generated with `snpguard-client keygen`)
    - **Firmware**: Upload the firmware `.fd` file
    - **Kernel**: Upload the kernel binary
    - **Initrd**: Upload the initrd image
@@ -296,7 +296,7 @@ snpguard-client manage export --id <record-id> --format tar --out artifacts.tar.
 
 ### Key Management
 
-1. **Backup Master App Key**: Keep secure backups of `/data/auth/master.app.key` - if lost, encrypted unsealing keys cannot be recovered
+1. **Backup Ingestion Private Key**: Keep secure backups of `/data/auth/ingestion.key` - if lost, encrypted unsealing keys cannot be recovered
 2. **Key Rotation**: Consider rotating unsealing private keys periodically by creating new records
 3. **Separate Keys**: Use different keys for different environments (dev, staging, prod)
 

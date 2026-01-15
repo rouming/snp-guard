@@ -254,4 +254,4 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 
 3. **Input Validation**: All file uploads are validated for size limits. File paths are sanitized to prevent directory traversal.
 
-4. **Key Encryption**: Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key must be backed up securely.
+4. **Key Encryption**: Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely. The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
