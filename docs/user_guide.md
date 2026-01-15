@@ -14,6 +14,19 @@ make build-client
 make build-snpguest
 ```
 
+### 2. Generate Unsealing Keypair (Offline)
+
+Before creating an attestation record, generate the unsealing keypair:
+
+```bash
+# Generate X25519 keypair
+snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
+```
+
+This creates:
+- `unsealing.key`: Private key (keep secure, upload to server during record creation)
+- `unsealing.pub`: Public key (use offline to seal VMKs)
+
 ### 2. Initialize Database
 
 ```bash
@@ -29,7 +42,7 @@ export DATA_DIR="$(pwd)/data"
 make run-server
 ```
 
-### 4. Access Management UI
+### 5. Access Management UI
 
 Open your browser and navigate to:
 ```
@@ -40,13 +53,16 @@ Log in with the master password that was printed once on first start (no usernam
 
 ## Creating an Attestation Record
 
-### Step 1: Generate Unsealing Private Key
+### Step 1: Generate Unsealing Keypair
 
-Generate the unsealing private key that will be used to decrypt secrets:
+Generate the X25519 unsealing keypair that will be used to encrypt/decrypt secrets:
 
 ```bash
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out unsealing-private-key.pem
+# Using snpguard-client (recommended)
+snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
 ```
+
+**Note**: The unsealing keypair uses X25519 (not EC secp384r1) and is compatible with HPKE encryption used by the attestation service. The private key will be encrypted with the server's ingestion public key before storage.
 
 **Important**: Keep this key secure! It will be encrypted with the ingestion public key (HPKE) and stored by the service.
 

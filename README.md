@@ -180,9 +180,11 @@ The server listens on HTTPS:
 2. **Click "Create New Record"**
 3. **Fill in the form**:
    - **OS Name**: Descriptive name for this VM configuration
-   - **Unsealing Private Key**: PEM-encoded private key for unsealing secrets (will be encrypted and stored)
+   - **Unsealing Private Key**: X25519 private key (PEM format) for unsealing secrets (will be encrypted with server's ingestion public key and stored)
      ```bash
-     openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:secp384r1 -out unsealing-private-key.pem
+     # Generate using snpguard-client (recommended)
+     snpguard-client keygen --priv-out unsealing.key --pub-out unsealing.pub
+     # Then upload unsealing.key as the Unsealing Private Key
      ```
    - **Firmware Image**: OVMF firmware binary (<10 MB)
    - **Kernel Binary**: Linux kernel image (<50 MB)
