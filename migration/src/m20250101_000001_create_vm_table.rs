@@ -24,7 +24,6 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(ColumnDef::new(Alias::new("secret")).string().not_null())
                     .col(
                         ColumnDef::new(Alias::new("unsealing_private_key_encrypted"))
                             .binary_len(4096)

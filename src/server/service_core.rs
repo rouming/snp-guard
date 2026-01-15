@@ -204,20 +204,18 @@ pub async fn verify_report_core(
     }
 
     // Decrypt unsealing private key using HPKE
-    let unsealing_key = if let Some(encrypted) = &vm.unsealing_private_key_encrypted {
-        match state.ingestion_keys.decrypt(encrypted) {
-            Ok(decrypted) => decrypted,
-            Err(e) => {
-                return AttestationResponse {
-                    success: false,
-                    secret: vec![],
-                    error_message: format!("Failed to decrypt unsealing key: {}", e),
-                };
-            }
+    let unsealing_key = match state
+        .ingestion_keys
+        .decrypt(&vm.unsealing_private_key_encrypted)
+    {
+        Ok(decrypted) => decrypted,
+        Err(e) => {
+            return AttestationResponse {
+                success: false,
+                secret: vec![],
+                error_message: format!("Failed to decrypt unsealing key: {}", e),
+            };
         }
-    } else {
-        // Fallback to old secret field for migration compatibility
-        vm.secret.into_bytes()
     };
 
     let mut active: vm::ActiveModel = vm.clone().into();

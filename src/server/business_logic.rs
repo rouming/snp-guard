@@ -138,8 +138,7 @@ pub async fn create_record_logic(
         let new_vm = vm::ActiveModel {
             id: Set(new_id.clone()),
             os_name: Set(req.os_name),
-            secret: Set(String::new()), // Deprecated field, kept for migration
-            unsealing_private_key_encrypted: Set(Some(req.unsealing_private_key_encrypted)),
+            unsealing_private_key_encrypted: Set(req.unsealing_private_key_encrypted),
             vcpus: Set(req.vcpus as i32),
             vcpu_type: Set(req.vcpu_type),
             id_key_digest: Set(id_digest),
