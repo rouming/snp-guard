@@ -6,8 +6,41 @@ use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use sev::firmware::guest::GuestPolicy;
 use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Guard to ensure artifact directory is cleaned up on error
+struct ArtifactDirGuard {
+    path: PathBuf,
+    should_cleanup: bool,
+}
+
+impl ArtifactDirGuard {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            should_cleanup: true,
+        }
+    }
+
+    fn keep(&mut self) {
+        self.should_cleanup = false;
+    }
+}
+
+impl Drop for ArtifactDirGuard {
+    fn drop(&mut self) {
+        if self.should_cleanup && self.path.exists() {
+            if let Err(e) = fs::remove_dir_all(&self.path) {
+                eprintln!(
+                    "Warning: Failed to cleanup artifact directory {:?}: {}",
+                    self.path, e
+                );
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct CreateRecordRequest {
@@ -64,16 +97,21 @@ pub async fn create_record_logic(
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
     let artifact_dir = paths.attestations_dir.join(&new_id);
-    let res: Result<String, String> = async {
-        // Generate a unique image_id as a random ASCII string of 16
-        // bytes. The issue is that the `snpguest` CLI is broken and
-        // the `--image-id` or `--family-id` parameters can only
-        // accept 16 printable ASCII characters, so it's not possible
-        // to pass a UUID, for instance. Once API fixed (if this PR
-        // merged: https://github.com/virtee/snpguest/pull/145), then
-        // return the UUID generation
-        let image_id = random_ascii_16();
 
+    // Create cleanup guard to ensure directory is removed on any error
+    // The guard will be dropped when this function returns, cleaning up on error
+    let mut cleanup_guard = ArtifactDirGuard::new(artifact_dir.clone());
+
+    // Generate a unique image_id as a random ASCII string of 16
+    // bytes. The issue is that the `snpguest` CLI is broken and
+    // the `--image-id` or `--family-id` parameters can only
+    // accept 16 printable ASCII characters, so it's not possible
+    // to pass a UUID, for instance. Once API fixed (if this PR
+    // merged: https://github.com/virtee/snpguest/pull/145), then
+    // return the UUID generation
+    let image_id = random_ascii_16();
+
+    let result = async {
         fs::create_dir_all(&artifact_dir)
             .map_err(|e| format!("Failed to create artifact directory: {}", e))?;
 
@@ -185,9 +223,14 @@ pub async fn create_record_logic(
     }
     .await;
 
-    if res.is_err() {
-        let _ = fs::remove_dir_all(&artifact_dir);
+    // If successful, mark guard to keep the directory; otherwise it will be cleaned up on drop
+    match &result {
+        Ok(_) => cleanup_guard.keep(),
+        Err(_) => {
+            // Explicitly try cleanup (guard's Drop will also try, but this ensures it happens)
+            let _ = fs::remove_dir_all(&artifact_dir);
+        }
     }
 
-    res
+    result
 }
