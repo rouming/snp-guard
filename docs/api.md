@@ -34,7 +34,9 @@ Get the ingestion public key for encrypting unsealing private keys.
 
 **Response** (200 OK):
 - Content-Type: `application/x-pem-file`
-- Body: PEM-encoded X25519 public key
+- Body: PEM-encoded X25519 public key (non-standard PEM format - raw 32-byte key wrapped in PEM, NOT PKCS#8)
+
+**Note**: The ingestion public key uses a non-standard PEM format (raw 32-byte key wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
 
 **Error Responses**:
 - `500 Internal Server Error`: Server error retrieving key
@@ -171,7 +173,7 @@ Create a new attestation record.
 
 **Request**: `multipart/form-data` with:
 - `os_name` (text): Name of the OS/VM
-- `unsealing_private_key` (text): Unsealing private key (PEM-encoded, will be encrypted)
+- `unsealing_private_key` (text): Unsealing private key (non-standard PEM format - raw 32-byte key wrapped in PEM, NOT PKCS#8, will be encrypted)
 - `firmware` (file): Firmware image (<10 MB)
 - `kernel` (file): Kernel binary (<50 MB)
 - `initrd` (file): Initrd image (<50 MB)
@@ -255,3 +257,5 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 3. **Input Validation**: All file uploads are validated for size limits. File paths are sanitized to prevent directory traversal.
 
 4. **Key Encryption**: Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely. The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
+
+5. **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
