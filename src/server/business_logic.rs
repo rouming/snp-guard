@@ -17,7 +17,6 @@ pub struct CreateRecordRequest {
     pub kernel_params: String,
     pub vcpus: u32,
     pub vcpu_type: String,
-    pub service_url: String,
     pub unsealing_private_key_encrypted: Vec<u8>, // HPKE-encrypted unsealing private key
     pub allowed_debug: bool,
     pub allowed_migrate_ma: bool,
@@ -103,8 +102,7 @@ pub async fn create_record_logic(
                 .map_err(|e| format!("Failed to save initrd: {}", e))?;
         }
 
-        let full_params = format!("{} rd.attest.url={}", req.kernel_params, req.service_url);
-        fs::write(artifact_dir.join("kernel-params.txt"), &full_params)
+        fs::write(artifact_dir.join("kernel-params.txt"), &req.kernel_params)
             .map_err(|e| format!("Failed to save kernel params: {}", e))?;
 
         let mut policy: GuestPolicy = Default::default();
@@ -117,7 +115,7 @@ pub async fn create_record_logic(
             &artifact_dir.join("firmware-code.fd"),
             &artifact_dir.join("vmlinuz"),
             &artifact_dir.join("initrd.img"),
-            &full_params,
+            &req.kernel_params,
             req.vcpus,
             &req.vcpu_type,
             policy.into(),
@@ -154,7 +152,6 @@ pub async fn create_record_logic(
             min_tcb_snp: Set(req.min_tcb_snp as i32),
             min_tcb_microcode: Set(req.min_tcb_microcode as i32),
             kernel_params: Set(req.kernel_params),
-            service_url: Set(req.service_url),
             request_count: Set(0),
             firmware_path: Set("firmware-code.fd".into()),
             kernel_path: Set("vmlinuz".into()),

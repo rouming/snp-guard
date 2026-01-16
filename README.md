@@ -67,7 +67,6 @@ SnpGuard addresses these needs by providing:
 
 - SEV-SNP enabled hardware and guest firmware
 - Network connectivity during boot
-- Kernel parameter: `rd.attest.url=https://your-attestation-service.com`
 
 ## Building
 
@@ -239,13 +238,7 @@ Both hooks run after network initialization but before root filesystem mounting,
 
 2. **Ensure `snpguest` is in initrd**: The script expects `snpguest` to be available in the initrd's PATH
 
-3. **Configure Kernel Parameters**: Add to your kernel command line:
-
-```
-rd.attest.url=https://your-attestation-service.com
-```
-
-4. **Boot the VM**: The attestation will happen automatically during boot (client pins `/etc/snpguard/ca.pem`; no insecure TLS fallback)
+3. **Boot the VM**: The attestation will happen automatically during boot (client pins `/etc/snpguard/ca.pem`; no insecure TLS fallback)
 
 ### Attestation Flow
 
@@ -365,7 +358,7 @@ snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sea
 # Management (defaults to stored config)
 snpguard-client manage list
 snpguard-client manage show <id>
-snpguard-client manage create --os-name ubuntu --service-url https://attest.example.com \
+snpguard-client manage create --os-name ubuntu \
   --unsealing-private-key unsealing-private-key.pem \
   --vcpus 4 --vcpu-type EPYC --kernel-params "console=ttyS0" \
   --firmware firmware-code.fd --kernel vmlinuz --initrd initrd.img
@@ -397,7 +390,6 @@ snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz   # 
 
 - Verify TLS certificate is valid
 - Check network connectivity from guest VM
-- Ensure `rd.attest.url` kernel parameter is set correctly
 
 ### Attestation fails
 

@@ -183,7 +183,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
        │   --ovmf firmware-code.fd
        │   --kernel vmlinuz
        │   --initrd initrd.img
-       │   --append "kernel-params rd.attest.url=..."
+       │   --append "kernel-params"
        │   --vcpus N
        │   --vcpu-type EPYC-*
        │

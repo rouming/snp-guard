@@ -107,7 +107,6 @@ You'll need:
    - **Kernel Parameters**: Base kernel parameters (e.g., `console=ttyS0 root=UUID=...`)
    - **vCPUs**: Number of virtual CPUs (e.g., `4`)
    - **vCPU Type**: Select your EPYC variant (EPYC, EPYC-Milan, EPYC-Rome, EPYC-Genoa)
-   - **Service URL**: The HTTPS URL of your attestation service (e.g., `https://attest.example.com`)
 
 3. Click **"Generate & Save"**
 
@@ -165,22 +164,7 @@ The script will detect which format is being used and install the appropriate ho
 - SEV-SNP must be enabled in the guest firmware and hardware
 - The original initrd image must be in cpio+gzip format (standard for both systems)
 
-### Step 2: Configure Kernel Parameters
-
-Add the attestation URL to your kernel command line:
-
-```
-rd.attest.url=https://your-attestation-service.com
-```
-
-For example, in GRUB:
-
-```grub
-linux /vmlinuz root=UUID=... rd.attest.url=https://attest.example.com
-initrd /new-initrd.img
-```
-
-### Step 3: Boot the VM
+### Step 2: Boot the VM
 
 Boot the VM. The attestation will happen automatically during the initrd phase, after network initialization but before root filesystem mounting.
 

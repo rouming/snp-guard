@@ -28,7 +28,6 @@ struct CreateTemplate {}
 #[template(path = "edit.html")]
 struct EditTemplate {
     vm: AttestationRecord,
-    service_url: String,
 }
 
 #[derive(Template)]
@@ -124,7 +123,6 @@ pub async fn create_action(
     let mut vcpus: u32 = 1;
     let mut vcpu_type = String::new();
     let mut kernel_params = String::new();
-    let mut service_url = String::new();
     let mut allowed_debug = false;
     let mut allowed_migrate_ma = false;
     let mut allowed_smt = true; // Default to true
@@ -205,7 +203,6 @@ pub async fn create_action(
                 "vcpus" => vcpus = txt.parse().unwrap_or(1),
                 "vcpu_type" => vcpu_type = txt,
                 "kernel_params" => kernel_params = txt,
-                "service_url" => service_url = txt,
                 "allowed_debug" => allowed_debug = txt == "true",
                 "allowed_migrate_ma" => allowed_migrate_ma = txt == "true",
                 "allowed_smt" => allowed_smt = txt == "true",
@@ -221,7 +218,6 @@ pub async fn create_action(
     // Validate required fields
     if os_name.is_empty()
         || unsealing_private_key.is_empty()
-        || service_url.is_empty()
         || firmware.is_none()
         || kernel.is_none()
         || initrd.is_none()
@@ -291,7 +287,6 @@ pub async fn create_action(
         kernel_params,
         vcpus,
         vcpu_type,
-        service_url,
         unsealing_private_key_encrypted,
         allowed_debug,
         allowed_migrate_ma,
@@ -313,8 +308,7 @@ pub async fn view_record(
 ) -> impl IntoResponse {
     match service_core::get_record_core(&state, id).await {
         Ok(Some(vm)) => {
-            let service_url = vm.service_url.clone();
-            let template = EditTemplate { vm, service_url };
+            let template = EditTemplate { vm };
             match template.render() {
                 Ok(html) => Html(html).into_response(),
                 Err(e) => Html(format!("Template error: {}", e)).into_response(),

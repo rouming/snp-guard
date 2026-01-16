@@ -475,7 +475,6 @@ pub async fn list_records_core(
                 min_tcb_tee: vm.min_tcb_tee as u32,
                 min_tcb_snp: vm.min_tcb_snp as u32,
                 min_tcb_microcode: vm.min_tcb_microcode as u32,
-                service_url: vm.service_url,
             }
         })
         .collect();
@@ -512,7 +511,6 @@ pub async fn get_record_core(
         min_tcb_tee: vm.min_tcb_tee as u32,
         min_tcb_snp: vm.min_tcb_snp as u32,
         min_tcb_microcode: vm.min_tcb_microcode as u32,
-        service_url: vm.service_url,
     }))
 }
 
@@ -540,7 +538,6 @@ pub async fn create_record_core(
         kernel_params: req.kernel_params,
         vcpus: req.vcpus,
         vcpu_type: req.vcpu_type,
-        service_url: req.service_url,
         unsealing_private_key_encrypted: req.unsealing_private_key_encrypted,
         allowed_debug: req.allowed_debug,
         allowed_migrate_ma: req.allowed_migrate_ma,

@@ -141,8 +141,6 @@ enum ManageCmd {
     Create {
         #[arg(long)]
         os_name: String,
-        #[arg(long)]
-        service_url: String,
         #[arg(long, value_name = "PATH")]
         unsealing_private_key: PathBuf,
         #[arg(long, default_value = "4")]
@@ -474,7 +472,6 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
         }
         ManageCmd::Create {
             os_name,
-            service_url,
             unsealing_private_key,
             vcpus,
             vcpu_type,
@@ -593,7 +590,6 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 kernel: kernel_data.unwrap_or_default(),
                 initrd: initrd_data.unwrap_or_default(),
                 kernel_params: params,
-                service_url,
                 unsealing_private_key_encrypted: unsealing_key_encrypted,
                 vcpus,
                 vcpu_type,
@@ -758,7 +754,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             os_name: &'a str,
             request_count: i32,
             enabled: bool,
-            service_url: &'a str,
             kernel_params: &'a str,
             firmware_path: &'a str,
             kernel_path: &'a str,
@@ -780,7 +775,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             os_name: &r.os_name,
             request_count: r.request_count,
             enabled: r.enabled,
-            service_url: &r.service_url,
             kernel_params: &r.kernel_params,
             firmware_path: &r.firmware_path,
             kernel_path: &r.kernel_path,
@@ -804,7 +798,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
         print_kv("OS Name", &r.os_name);
         print_kv("Requests", &r.request_count.to_string());
         print_kv("Status", if r.enabled { "enabled" } else { "disabled" });
-        print_kv("Service URL", &r.service_url);
         print_kv("Kernel Params", &r.kernel_params);
         print_kv("Firmware Path", &r.firmware_path);
         print_kv("Kernel Path", &r.kernel_path);

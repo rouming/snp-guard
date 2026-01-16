@@ -124,12 +124,6 @@ impl MigrationTrait for Migration {
                             .string()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("service_url"))
-                            .string()
-                            .not_null()
-                            .default(""),
-                    )
                     .to_owned(),
             )
             .await

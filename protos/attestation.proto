@@ -47,8 +47,7 @@ message CreateRecordRequest {
   bytes firmware = 4;        // Firmware binary
   bytes kernel = 5;          // Kernel binary
   bytes initrd = 6;          // Initrd binary
-  string kernel_params = 7;  // Kernel parameters (without rd.attest.url)
-  string service_url = 8;    // Attestation service URL
+  string kernel_params = 7;  // Kernel parameters
   bytes unsealing_private_key_encrypted = 9;  // Unsealing private key encrypted with ingestion public key (HPKE)
   uint32 vcpus = 10;
   string vcpu_type = 11;     // EPYC, EPYC-Milan, EPYC-Rome, EPYC-Genoa
@@ -91,7 +90,7 @@ message AttestationRecord {
   string vcpu_type = 5;
   bool enabled = 6;
   string created_at = 7;
-  string kernel_params = 8;  // Base kernel params (without rd.attest.url)
+  string kernel_params = 8;  // Kernel parameters
   string firmware_path = 9;
   string kernel_path = 10;
   string initrd_path = 11;
@@ -104,5 +103,4 @@ message AttestationRecord {
   uint32 min_tcb_snp = 18;   // Minimum SNP implementation version
   uint32 min_tcb_microcode = 19; // Minimum CPU microcode version
   uint32 vcpus = 20;
-  string service_url = 21;   // Attestation service URL
 }
