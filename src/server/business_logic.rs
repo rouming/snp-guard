@@ -6,7 +6,8 @@ use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use sev::firmware::guest::GuestPolicy;
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -87,6 +88,56 @@ pub fn random_ascii_16() -> [u8; 16] {
     }
 
     result
+}
+
+/// Securely delete a file by overwriting its contents before removal.
+/// This helps prevent recovery of sensitive data from disk.
+fn secure_delete_file(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(()); // File doesn't exist, nothing to delete
+    }
+
+    // Get file size
+    let metadata = fs::metadata(path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let file_size = metadata.len() as usize;
+
+    if file_size == 0 {
+        // Empty file, just delete it
+        fs::remove_file(path).map_err(|e| format!("Failed to delete empty file: {}", e))?;
+        return Ok(());
+    }
+
+    // Open file for writing (truncate to overwrite)
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open file for secure deletion: {}", e))?;
+
+    // Overwrite with random data (single pass is sufficient for modern systems)
+    let mut rng = OsRng;
+    let mut buffer = vec![0u8; file_size.min(64 * 1024)]; // 64KB buffer
+    let mut remaining = file_size;
+
+    while remaining > 0 {
+        let to_write = remaining.min(buffer.len());
+        rng.fill_bytes(&mut buffer[..to_write]);
+        file.write_all(&buffer[..to_write])
+            .map_err(|e| format!("Failed to overwrite file content: {}", e))?;
+        remaining -= to_write;
+    }
+
+    // Sync to ensure data is written to disk
+    file.sync_all()
+        .map_err(|e| format!("Failed to sync file: {}", e))?;
+
+    // Close file before deletion
+    drop(file);
+
+    // Delete the file
+    fs::remove_file(path).map_err(|e| format!("Failed to delete file after overwrite: {}", e))?;
+
+    Ok(())
 }
 
 pub async fn create_record_logic(
@@ -180,11 +231,11 @@ pub async fn create_record_logic(
             .encrypt(&auth_key_pem)
             .map_err(|e| format!("Failed to encrypt Auth key: {}", e))?;
 
-        // Delete key files after encryption (they're no longer needed)
-        fs::remove_file(artifact_dir.join("id-block-key.pem"))
-            .map_err(|e| format!("Failed to delete ID key file: {}", e))?;
-        fs::remove_file(artifact_dir.join("id-auth-key.pem"))
-            .map_err(|e| format!("Failed to delete Auth key file: {}", e))?;
+        // Securely delete key files after encryption (they're no longer needed)
+        secure_delete_file(&artifact_dir.join("id-block-key.pem"))
+            .map_err(|e| format!("Failed to securely delete ID key file: {}", e))?;
+        secure_delete_file(&artifact_dir.join("id-auth-key.pem"))
+            .map_err(|e| format!("Failed to securely delete Auth key file: {}", e))?;
 
         // Save to DB
         let new_vm = vm::ActiveModel {
