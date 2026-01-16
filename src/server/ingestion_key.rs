@@ -137,7 +137,6 @@ impl IngestionKeys {
     }
 
     /// Encrypt plaintext using HPKE with the ingestion public key
-    #[allow(dead_code)]
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let mut rng = OsRng;
         let (encapped_key, mut sender_ctx) =

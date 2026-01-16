@@ -33,6 +33,12 @@ pub struct Model {
     #[sea_orm(column_type = "Binary(48)")]
     pub auth_key_digest: Vec<u8>,
 
+    #[sea_orm(column_type = "Binary(4096)", nullable)]
+    pub id_key_encrypted: Option<Vec<u8>>, // HPKE-encrypted ID key
+
+    #[sea_orm(column_type = "Binary(4096)", nullable)]
+    pub auth_key_encrypted: Option<Vec<u8>>, // HPKE-encrypted Auth key
+
     pub created_at: DateTime,
     pub kernel_params: String,
 

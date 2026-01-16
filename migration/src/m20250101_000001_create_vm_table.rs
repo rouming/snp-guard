@@ -58,6 +58,16 @@ impl MigrationTrait for Migration {
                             .not_null(),
                     )
                     .col(
+                        ColumnDef::new(Alias::new("id_key_encrypted"))
+                            .binary_len(4096)
+                            .null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("auth_key_encrypted"))
+                            .binary_len(4096)
+                            .null(),
+                    )
+                    .col(
                         ColumnDef::new(Alias::new("allowed_debug"))
                             .boolean()
                             .not_null()

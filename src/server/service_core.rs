@@ -551,6 +551,7 @@ pub async fn create_record_core(
     let res = business_logic::create_record_logic(
         &state.attestation_state.db,
         &state.data_paths,
+        state.ingestion_keys.clone(),
         create_req,
     )
     .await?;

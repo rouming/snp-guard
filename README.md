@@ -202,8 +202,10 @@ The service will:
 - Generate ID Block Key and Auth Block Key automatically
 - Generate measurements using `snpguest`
 - Create ID-Block and Auth-Block
+- Encrypt ID and Auth keys with the ingestion public key (HPKE) and store in database
 - Encrypt the unsealing private key with the ingestion public key (HPKE)
 - Compute key digests for lookup
+- Delete ID and Auth key files from artifacts (keys are stored encrypted in database)
 - Store the attestation record
 
 ### Downloading Artifacts
@@ -372,13 +374,13 @@ snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz   # 
 1. **TLS Certificates**: Always use valid TLS certificates in production. The client verifies certificates to prevent man-in-the-middle attacks.
 
 2. **Key Management**: 
-   - ID-Block and Auth-Block keys are now generated automatically by the server and stored temporarily during record creation.
+   - ID-Block and Auth-Block keys are generated automatically by the server, encrypted with the ingestion key (HPKE), and stored in the database. Key files are deleted from the artifacts folder after block generation.
    - Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage.
-   - The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys cannot be recovered.
+   - The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys (ID, Auth, and unsealing) cannot be recovered.
    - The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
    - **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
 
-3. **Encryption**: Unsealing private keys are encrypted at rest using HPKE (Hybrid Public Key Encryption) with X25519HkdfSha256, HkdfSha256, and AesGcm256. The ingestion key pair is generated on server deployment and stored with restricted permissions (0400 for private key).
+3. **Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted at rest using HPKE (Hybrid Public Key Encryption) with X25519HkdfSha256, HkdfSha256, and AesGcm256. The ingestion key pair is generated on server deployment and stored with restricted permissions (0400 for private key). Key files are deleted from the filesystem after encryption and storage in the database.
 
 4. **Network Security**: Ensure the attestation service is only accessible from trusted networks or use firewall rules.
 

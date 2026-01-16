@@ -255,6 +255,6 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 
 3. **Input Validation**: All file uploads are validated for size limits. File paths are sanitized to prevent directory traversal.
 
-4. **Key Encryption**: Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely. The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
+4. **Key Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys cannot be recovered. The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption. ID and Auth key files are deleted from the artifacts folder after encryption and storage in the database.
 
 5. **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.

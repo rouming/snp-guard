@@ -1,4 +1,4 @@
-use crate::{config::DataPaths, snpguest_wrapper};
+use crate::{config::DataPaths, ingestion_key, snpguest_wrapper};
 use entity::vm;
 use openssl::ec::{EcGroup, EcKey};
 use openssl::nid::Nid;
@@ -6,6 +6,7 @@ use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
 use sev::firmware::guest::GuestPolicy;
 use std::fs;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -58,6 +59,7 @@ pub fn random_ascii_16() -> [u8; 16] {
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     paths: &DataPaths,
+    ingestion_keys: Arc<ingestion_key::IngestionKeys>,
     req: CreateRecordRequest,
 ) -> Result<String, String> {
     let new_id = Uuid::new_v4().to_string();
@@ -132,6 +134,20 @@ pub async fn create_record_logic(
         let auth_digest = snpguest_wrapper::get_key_digest(&artifact_dir.join("id-auth-key.pem"))
             .map_err(|e| format!("Failed to get auth key digest: {}", e))?;
 
+        // Encrypt ID and Auth keys with ingestion key
+        let id_key_encrypted = ingestion_keys
+            .encrypt(&id_key_pem)
+            .map_err(|e| format!("Failed to encrypt ID key: {}", e))?;
+        let auth_key_encrypted = ingestion_keys
+            .encrypt(&auth_key_pem)
+            .map_err(|e| format!("Failed to encrypt Auth key: {}", e))?;
+
+        // Delete key files after encryption (they're no longer needed)
+        fs::remove_file(artifact_dir.join("id-block-key.pem"))
+            .map_err(|e| format!("Failed to delete ID key file: {}", e))?;
+        fs::remove_file(artifact_dir.join("id-auth-key.pem"))
+            .map_err(|e| format!("Failed to delete Auth key file: {}", e))?;
+
         // Save to DB
         let new_vm = vm::ActiveModel {
             id: Set(new_id.clone()),
@@ -141,6 +157,8 @@ pub async fn create_record_logic(
             vcpu_type: Set(req.vcpu_type),
             id_key_digest: Set(id_digest),
             auth_key_digest: Set(auth_digest),
+            id_key_encrypted: Set(Some(id_key_encrypted)),
+            auth_key_encrypted: Set(Some(auth_key_encrypted)),
             created_at: Set(chrono::Utc::now().naive_utc()),
             enabled: Set(true),
             image_id: Set(image_id.to_vec()),

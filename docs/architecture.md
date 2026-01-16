@@ -195,9 +195,14 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
        │   snpguest generate key-digest id-block-key.pem
        │   snpguest generate key-digest id-auth-key.pem
        │
+       ├─> Encrypts ID and Auth keys with ingestion key (HPKE)
+       │
+       ├─> Deletes key files from artifacts folder
+       │
        └─> Saves record to database
            - id, os_name, secret, vcpu_type
            - id_key_digest, auth_key_digest
+           - id_key_encrypted, auth_key_encrypted
            - kernel_params, enabled, request_count
 ```
 
@@ -251,6 +256,8 @@ CREATE TABLE attestation_records (
     enabled BOOLEAN NOT NULL DEFAULT TRUE,   -- Enable/disable flag
     id_key_digest BLOB NOT NULL,             -- ID-Block key digest (48 bytes)
     auth_key_digest BLOB NOT NULL,           -- Auth-Block key digest (48 bytes)
+    id_key_encrypted BLOB,                   -- HPKE-encrypted ID-Block key
+    auth_key_encrypted BLOB,                 -- HPKE-encrypted Auth-Block key
     created_at DATETIME NOT NULL,            -- Creation timestamp
     kernel_params TEXT NOT NULL,             -- Full kernel command line
     firmware_path TEXT NOT NULL,             -- Relative path to firmware
@@ -268,10 +275,11 @@ artifacts/
     ├── vmlinuz               # Kernel binary
     ├── initrd.img            # Initrd image
     ├── kernel-params.txt     # Kernel parameters
-    ├── id-block-key.pem     # ID-Block private key
-    ├── id-auth-key.pem      # Auth-Block private key
     ├── id-block.bin         # Generated ID-Block
     └── id-auth.bin           # Generated Auth-Block
+
+Note: ID-Block and Auth-Block key files are deleted after encryption and storage in the database.
+Keys are stored encrypted in the database (id_key_encrypted, auth_key_encrypted fields).
 ```
 
 ## Dependencies
