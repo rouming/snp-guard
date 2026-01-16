@@ -229,7 +229,7 @@ pub async fn create_action(
         return Html("<h1>Error</h1><p>All fields are required</p>").into_response();
     }
 
-    // Parse unsealing private key from PEM to extract 32-byte key
+    // Parse unsealing private key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let unsealing_key_pem = match pem::parse(&unsealing_private_key) {
         Ok(pem) => pem,
         Err(e) => {

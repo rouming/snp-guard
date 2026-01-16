@@ -19,7 +19,7 @@ pub struct IngestionKeys {
 impl IngestionKeys {
     pub fn load_or_create(priv_path: &Path, pub_path: &Path) -> Result<Self> {
         if priv_path.exists() && pub_path.exists() {
-            // Load existing keys
+            // Load existing keys (non-standard PEM format - raw 32-byte keys wrapped in PEM)
             let priv_pem = fs::read_to_string(priv_path)?;
             let pub_pem = fs::read_to_string(pub_path)?;
 
@@ -68,7 +68,9 @@ impl IngestionKeys {
                 }
             }
 
-            // Save private key
+            // Save private key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+            // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
+            // Standard tools like openssl may not recognize this format.
             let priv_pem = Pem::new("PRIVATE KEY", private_bytes.to_vec());
             let priv_pem_str = pem::encode_config(
                 &priv_pem,
@@ -86,7 +88,9 @@ impl IngestionKeys {
 
             println!("Ingestion private key saved: {:?}", priv_path);
 
-            // Save public key
+            // Save public key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+            // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
+            // Standard tools like openssl may not recognize this format.
             let pub_pem = Pem::new("PUBLIC KEY", public_bytes.to_vec());
             let pub_pem_str = pem::encode_config(
                 &pub_pem,
@@ -112,6 +116,8 @@ impl IngestionKeys {
 
     pub fn get_public_key_pem(&self) -> Result<String> {
         let public_bytes = self.public_key.to_bytes();
+        // Non-standard PEM format - raw 32-byte key wrapped in PEM
+        // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
         let pub_pem = Pem::new("PUBLIC KEY", public_bytes.to_vec());
         let pub_pem_str = pem::encode_config(
             &pub_pem,
@@ -184,6 +190,7 @@ impl IngestionKeys {
 
 /// Encrypt plaintext using a public key (for client-side encryption)
 pub fn encrypt_with_public_key(public_key_pem: &str, plaintext: &[u8]) -> Result<Vec<u8>> {
+    // Parse non-standard PEM format - raw 32-byte key wrapped in PEM
     let pub_pem_parsed = pem::parse(public_key_pem)?;
     if pub_pem_parsed.tag() != "PUBLIC KEY" {
         return Err(anyhow!("Invalid public key PEM tag"));

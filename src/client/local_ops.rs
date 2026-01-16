@@ -17,9 +17,12 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
 
     // 1. Generate Keypair using HPKE's KEM
     let (priv_key, pub_key) = <X25519HkdfSha256 as Kem>::gen_keypair(&mut rng);
-
-    // 2. Write Private Key (PEM format)
     let priv_bytes = priv_key.to_bytes();
+    let pub_bytes = pub_key.to_bytes();
+
+    // 2. Write Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
+    // Standard tools like openssl may not recognize this format.
     let priv_pem = Pem::new("PRIVATE KEY", priv_bytes.to_vec());
     let priv_pem_str = pem::encode_config(
         &priv_pem,
@@ -38,8 +41,9 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
         fs::set_permissions(priv_path, perms)?;
     }
 
-    // 3. Write Public Key (PEM format)
-    let pub_bytes = pub_key.to_bytes();
+    // 3. Write Public Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
+    // Standard tools like openssl may not recognize this format.
     let pub_pem = Pem::new("PUBLIC KEY", pub_bytes.to_vec());
     let pub_pem_str = pem::encode_config(
         &pub_pem,
@@ -67,7 +71,7 @@ pub fn seal_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Resu
     let pub_pem_str = fs::read_to_string(pub_key_path)
         .with_context(|| format!("Failed to read public key: {:?}", pub_key_path))?;
 
-    // 2. Parse Public Key (Standard PEM)
+    // 2. Parse Public Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let pub_pem = pem::parse(&pub_pem_str).map_err(|e| anyhow!("Invalid PEM format: {}", e))?;
 
     if pub_pem.tag() != "PUBLIC KEY" {
@@ -122,7 +126,7 @@ pub fn unseal_file(priv_key_path: &Path, sealed_data_path: &Path, out_path: &Pat
     // 2. Split Blob: [ Encapped_Key (32 bytes) || Ciphertext ]
     let (encapped_bytes, ciphertext) = sealed_blob.split_at(32);
 
-    // 3. Load and Parse Private Key
+    // 3. Load and Parse Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let priv_pem_str = fs::read_to_string(priv_key_path)
         .with_context(|| format!("Failed to read private key: {:?}", priv_key_path))?;
 

@@ -523,7 +523,7 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
 
             let params = params.unwrap_or_else(|| "console=ttyS0".to_string());
 
-            // Read and parse unsealing private key from PEM to extract 32-byte key
+            // Read and parse unsealing private key (non-standard PEM format - raw 32-byte key wrapped in PEM)
             let unsealing_key_pem_str =
                 fs::read_to_string(&unsealing_private_key).with_context(|| {
                     format!(
