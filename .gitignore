@@ -25,9 +25,10 @@ Thumbs.db
 *.db
 *.db-*
 
-# Temporary files
+# Temporary files and directories
 *.tmp
 *.temp
+tmp/
 
 # Artifacts directory (generated VM artifacts)
 artifacts/
