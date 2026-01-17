@@ -207,7 +207,7 @@ Click **"Delete"** on the main page or record view page. This permanently remove
 
 Subcommands:
 
-- `config login --url <URL> --token <TOKEN> --ca-cert <PATH>`: validates the token via `/v1/health`, then stores URL/token and copies CA to `~/.config/snpguard/`. `config logout` removes them.
+- `config login --url <URL> --token <TOKEN>`: implements TOFU (Trust On First Use) - fetches server's public identity (CA cert and ingestion public key) from `/v1/public/info`, displays CA cert hash for user verification, validates token via `/v1/health` with the received CA cert, then stores URL/token, CA cert, and ingestion public key to `~/.config/snpguard/`. `config logout` removes all stored files.
 - `attest --report <REPORT_PATH> --url <URL> --ca-cert <PATH>`: submit a pre-generated report over HTTPS+protobuf with pinned CA (no system trust).
 - `manage list|show|create|enable|disable|delete|export`: management calls using stored config by default. `manage show` prints kernel params and artifact filenames; `--json` is available for list/show.
 - `manage create`: accepts `--artifacts-bundle` or individual `--firmware/--kernel/--initrd/--kernel-params` plus `--unsealing-private-key` (required). ID and auth keys are generated automatically by the server.

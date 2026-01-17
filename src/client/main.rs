@@ -19,7 +19,7 @@ use prost::Message;
 use rand::rngs::OsRng;
 use reqwest::Certificate;
 use sev::firmware::guest::Firmware;
-use sha2::{Digest, Sha512};
+use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -98,14 +98,12 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum ConfigCmd {
-    /// Store a management token
+    /// Store a management token (TOFU - Trust On First Use)
     Login {
         #[arg(long)]
         token: String,
         #[arg(long, value_name = "URL")]
         url: String,
-        #[arg(long, value_name = "PATH")]
-        ca_cert: String,
     },
     /// Remove stored token
     Logout,
@@ -222,6 +220,11 @@ fn ca_dest_path() -> Result<PathBuf> {
     Ok(base.join("snpguard").join("ca.pem"))
 }
 
+fn ingestion_key_dest_path() -> Result<PathBuf> {
+    let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
+    Ok(base.join("snpguard").join("ingestion.pub"))
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct StoredConfig {
     token: Option<String>,
@@ -269,6 +272,10 @@ fn delete_config() -> Result<()> {
     let ca_path = ca_dest_path()?;
     if ca_path.exists() {
         fs::remove_file(ca_path)?;
+    }
+    let ingestion_key_path = ingestion_key_dest_path()?;
+    if ingestion_key_path.exists() {
+        fs::remove_file(ingestion_key_path)?;
     }
     Ok(())
 }
@@ -539,17 +546,15 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 .try_into()
                 .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
 
-            // Fetch ingestion public key and encrypt unsealing key (32 bytes only)
-            let ingestion_pub_pem = client
-                .get(format!("{}/v1/keys/ingestion/public", base))
-                .send()
-                .await
-                .context("Failed to fetch ingestion public key")?;
-            let ingestion_pub_pem = ensure_success(ingestion_pub_pem, "get ingestion key").await?;
-            let ingestion_pub_pem = ingestion_pub_pem
-                .text()
-                .await
-                .context("Failed to read ingestion public key")?;
+            // Read ingestion public key from saved config (stored during login)
+            let ingestion_key_path = ingestion_key_dest_path()?;
+            let ingestion_pub_pem = fs::read_to_string(&ingestion_key_path)
+                .with_context(|| {
+                    format!(
+                        "Failed to read ingestion public key from {:?}. Please run 'config login' first.",
+                        ingestion_key_path
+                    )
+                })?;
 
             let pub_pem_parsed = pem::parse(&ingestion_pub_pem)
                 .context("Failed to parse ingestion public key PEM")?;
@@ -683,23 +688,77 @@ fn read_bundle(path: &Path) -> Result<BundleContents> {
     Ok((fw, k, i, params))
 }
 
+fn get_user_confirmation(prompt: &str) -> Result<bool> {
+    use std::io::{self, BufRead};
+    let stdin = io::stdin();
+    let mut line = String::new();
+    print!("{} (yes/no): ", prompt);
+    io::stdout().flush()?;
+    stdin.lock().read_line(&mut line)?;
+    let answer = line.trim().to_lowercase();
+    Ok(answer == "yes" || answer == "y")
+}
+
 fn run_config(action: ConfigCmd) -> Result<()> {
     match action {
-        ConfigCmd::Login {
-            token,
-            url,
-            ca_cert,
-        } => {
+        ConfigCmd::Login { token, url } => {
             let mut cfg = load_config()?;
             let base = normalize_https(&url)?;
             let ca_dest = ca_dest_path()?;
+            let ingestion_key_dest = ingestion_key_dest_path()?;
 
-            // Read CA from provided path
-            let ca_bytes = fs::read(&ca_cert)
-                .with_context(|| format!("Failed to read CA certificate from {}", ca_cert))?;
+            // Step 1: Request public info (without TLS verification - TOFU)
+            println!("Requesting server public information...");
+            let insecure_client = reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .context("Failed to create insecure HTTP client")?;
 
-            // Validate token via health (management auth) using in-memory CA
-            let client = build_client_from_bytes(&ca_bytes)?;
+            let public_info_resp = futures::executor::block_on(
+                insecure_client
+                    .get(format!("{}/v1/public/info", base))
+                    .send(),
+            )
+            .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
+
+            let public_info_resp = public_info_resp
+                .error_for_status()
+                .map_err(|e| anyhow!("Server returned error: {}", e))?;
+
+            let public_info_text = futures::executor::block_on(public_info_resp.text())
+                .map_err(|e| anyhow!("Failed to read server response: {}", e))?;
+            let public_info: serde_json::Value = serde_json::from_str(&public_info_text)
+                .map_err(|e| anyhow!("Failed to parse server response as JSON: {}", e))?;
+
+            let ca_cert = public_info
+                .get("ca_cert")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Server response missing 'ca_cert' field"))?;
+            let ingestion_pub_key = public_info
+                .get("ingestion_pub_key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Server response missing 'ingestion_pub_key' field"))?;
+
+            // Step 2: Hash the CA cert and show to user
+            let mut hasher = Sha256::new();
+            hasher.update(ca_cert.as_bytes());
+            let ca_hash = hex::encode(hasher.finalize());
+
+            println!("\n=== Server Identity Verification (TOFU) ===");
+            println!("CA Certificate SHA256: {}", ca_hash);
+            println!("\nPlease verify this hash matches the server's CA certificate hash.");
+            println!("You can obtain the hash from the server administrator or");
+            println!("by inspecting the server's CA certificate file.\n");
+
+            // Step 3: Get user confirmation
+            if !get_user_confirmation("Does this hash match the server's CA certificate?")? {
+                println!("Aborted. Hash verification failed.");
+                std::process::exit(1);
+            }
+
+            // Step 4: Validate token via health endpoint using received CA cert
+            println!("\nValidating token with server...");
+            let client = build_client_from_bytes(ca_cert.as_bytes())?;
             let resp = futures::executor::block_on(
                 client
                     .get(format!("{}/v1/health", base))
@@ -707,32 +766,45 @@ fn run_config(action: ConfigCmd) -> Result<()> {
                     .send(),
             )
             .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
-            if resp.status().is_success() {
-                // Only now persist CA to config dir with 0600 perms
-                if let Some(parent) = ca_dest.parent() {
-                    fs::create_dir_all(parent)?;
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-                    }
-                }
-                fs::write(&ca_dest, &ca_bytes)?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
-                }
 
-                cfg.token = Some(token);
-                cfg.url = Some(base);
-                cfg.ca_cert = Some("ca.pem".to_string());
-                save_config(&cfg)?;
-                println!("Successfully logged in, config stored");
-            } else {
+            if !resp.status().is_success() {
                 println!("Failed to validate token: status {}", resp.status());
                 std::process::exit(1);
             }
+
+            // Step 5: Save CA cert and ingestion key to config dir
+            let config_parent = ca_dest
+                .parent()
+                .ok_or_else(|| anyhow!("Cannot determine config directory"))?;
+            fs::create_dir_all(config_parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(config_parent, fs::Permissions::from_mode(0o700))?;
+            }
+
+            // Save CA cert
+            fs::write(&ca_dest, ca_cert.as_bytes())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
+            }
+
+            // Save ingestion public key
+            fs::write(&ingestion_key_dest, ingestion_pub_key.as_bytes())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&ingestion_key_dest, fs::Permissions::from_mode(0o600))?;
+            }
+
+            // Save config
+            cfg.token = Some(token);
+            cfg.url = Some(base);
+            cfg.ca_cert = Some("ca.pem".to_string());
+            save_config(&cfg)?;
+            println!("Successfully logged in, config stored");
         }
         ConfigCmd::Logout => {
             delete_config()?;

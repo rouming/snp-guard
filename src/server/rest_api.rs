@@ -21,6 +21,7 @@ use common::snpguard::{
     GetRecordResponse, ListRecordsResponse, NonceRequest, NonceResponse, ToggleEnabledRequest,
     ToggleEnabledResponse,
 };
+use serde::{Deserialize, Serialize};
 
 const PROTO_CT: &str = "application/x-protobuf";
 
@@ -31,7 +32,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     };
     let public = Router::new()
         .route("/health", get(health))
-        .route("/keys/ingestion/public", get(get_ingestion_public_key))
+        .route("/public/info", get(get_public_info))
         .route("/attest/nonce", post(attest_nonce))
         .route("/attest/report", post(attest_report))
         .with_state(state.clone());
@@ -56,17 +57,62 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
-async fn get_ingestion_public_key(State(state): State<Arc<ServiceState>>) -> Response {
-    match state.ingestion_keys.get_public_key_pem() {
-        Ok(pem) => Response::builder()
+#[derive(Serialize, Deserialize)]
+struct PublicInfo {
+    ca_cert: String,
+    ingestion_pub_key: String,
+}
+
+async fn get_public_info(State(state): State<Arc<ServiceState>>) -> Response {
+    // Read CA certificate
+    let ca_cert = match std::fs::read_to_string(&state.data_paths.ca_cert) {
+        Ok(cert) => cert,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"error":"Failed to read CA certificate: {}"}}"#,
+                    e
+                )))
+                .unwrap();
+        }
+    };
+
+    // Get ingestion public key
+    let ingestion_pub_key = match state.ingestion_keys.get_public_key_pem() {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"error":"Failed to get ingestion public key: {}"}}"#,
+                    e
+                )))
+                .unwrap();
+        }
+    };
+
+    let info = PublicInfo {
+        ca_cert,
+        ingestion_pub_key,
+    };
+
+    match serde_json::to_string(&info) {
+        Ok(json) => Response::builder()
             .status(StatusCode::OK)
-            .header("Content-Type", "application/x-pem-file")
-            .body(Body::from(pem))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json))
             .unwrap(),
-        Err(e) => proto_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("Failed to get ingestion public key: {}", e),
-        ),
+        Err(e) => Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("Content-Type", "application/json")
+            .body(Body::from(format!(
+                r#"{{"error":"Failed to serialize response: {}"}}"#,
+                e
+            )))
+            .unwrap(),
     }
 }
 

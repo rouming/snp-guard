@@ -333,7 +333,9 @@ These endpoints require authentication (master password or Bearer token) and are
 
 ```bash
 # Store URL/token/CA after validating token via /v1/health
-snpguard-client config login --url https://attest.example.com --token <TOKEN> --ca-cert ./ca.pem
+snpguard-client config login --url https://attest.example.com --token <TOKEN>
+# TOFU (Trust On First Use): Client fetches server's CA cert and ingestion public key,
+# displays CA cert hash for verification, then saves both to config directory
 snpguard-client config logout
 
 # Generate unsealing keypair (offline)
@@ -377,7 +379,7 @@ snpguard-client manage export --id <id> --format tar --out artifacts.tar.gz   # 
    - ID-Block and Auth-Block keys are generated automatically by the server, encrypted with the ingestion key (HPKE), and stored in the database. Key files are deleted from the artifacts folder after block generation.
    - Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage.
    - The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys (ID, Auth, and unsealing) cannot be recovered.
-   - The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption.
+   - The ingestion public key is available via `GET /v1/public/info` for TOFU and client-side encryption.
    - **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
 
 3. **Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted at rest using HPKE (Hybrid Public Key Encryption) with X25519HkdfSha256, HkdfSha256, and AesGcm256. The ingestion key pair is generated on server deployment and stored with restricted permissions (0400 for private key). Key files are deleted from the filesystem after encryption and storage in the database.

@@ -26,28 +26,38 @@ Content-Type: application/x-protobuf
 
 ### Endpoints
 
-#### GET `/v1/keys/ingestion/public`
+#### GET `/v1/public/info`
 
-Get the ingestion public key for encrypting unsealing private keys.
+Get the server's public identity (CA certificate and ingestion public key) for TOFU (Trust On First Use) authentication.
 
 **Request**: No body required
 
 **Response** (200 OK):
-- Content-Type: `application/x-pem-file`
-- Body: PEM-encoded X25519 public key (non-standard PEM format - raw 32-byte key wrapped in PEM, NOT PKCS#8)
+- Content-Type: `application/json`
+- Body: JSON object with:
+  ```json
+  {
+    "ca_cert": "-----BEGIN CERTIFICATE-----\n...",
+    "ingestion_pub_key": "-----BEGIN PUBLIC KEY-----\n..."
+  }
+  ```
 
-**Note**: The ingestion public key uses a non-standard PEM format (raw 32-byte key wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
+**Note**: This endpoint is public (no authentication required) and is used for TOFU during client configuration. The CA certificate hash should be verified by the user before proceeding with authentication.
 
 **Error Responses**:
-- `500 Internal Server Error`: Server error retrieving key
+- `500 Internal Server Error`: Server error retrieving public information
 
 **Example** (using curl):
 ```bash
-curl -X GET https://attest.example.com/v1/keys/ingestion/public \
-  --output ingestion.pub
-```
+# For self-signed certificates (development), use -k flag:
+curl -k -X GET https://localhost:3000/v1/public/info --output public_info.json
 
-**Note**: This endpoint is public (no authentication required) as the public key is meant to be shared for encryption purposes.
+# For production with valid certificates:
+curl -X GET https://attest.example.com/v1/public/info --output public_info.json
+
+# Or with a specific CA certificate:
+curl --cacert ca.pem -X GET https://attest.example.com/v1/public/info --output public_info.json
+```
 
 #### POST `/v1/attest/nonce`
 
@@ -255,6 +265,8 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 
 3. **Input Validation**: All file uploads are validated for size limits. File paths are sanitized to prevent directory traversal.
 
-4. **Key Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys cannot be recovered. The ingestion public key is available via `GET /v1/keys/ingestion/public` for client-side encryption. ID and Auth key files are deleted from the artifacts folder after encryption and storage in the database.
+4. **Key Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage. The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys cannot be recovered. The ingestion public key is available via `GET /v1/public/info` for TOFU and client-side encryption. ID and Auth key files are deleted from the artifacts folder after encryption and storage in the database.
+
+5. **TOFU (Trust On First Use)**: Client configuration uses TOFU for secure server identity verification. During `config login`, the client fetches the server's public identity (CA cert and ingestion public key) from `/v1/public/info`, displays the CA certificate hash for user verification, and only proceeds after user confirmation. This eliminates the need to manually provide CA certificates.
 
 5. **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
