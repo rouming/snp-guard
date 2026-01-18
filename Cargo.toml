@@ -3,6 +3,7 @@ members = [
     "src/common",
     "src/client",
     "src/server",
+    "src/image",
     "entity",
     "migration"
 ]

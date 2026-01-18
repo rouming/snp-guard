@@ -8,14 +8,14 @@ DATA_DIR ?= ./data
 DB_URL := sqlite://$(DATA_DIR)/db/snpguard.sqlite?mode=rwc
 CLIENT_TARGET := x86_64-unknown-linux-musl
 
-.PHONY: all build build-server build-client build-snpguest db-setup clean repack help
+.PHONY: all build build-server build-client build-image build-snpguest db-setup clean repack help
 
 all: build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-build: build-migration build-server build-client build-snpguest
+build: build-migration build-server build-client build-image build-snpguest
 
 build-migration: ## Build Migration
 	$(CARGO) build $(PROFILE_FLAG) --bin migration
@@ -27,6 +27,9 @@ build-client: ## Build Guest Client (Static)
 	@echo "Ensuring MUSL target..."
 	rustup target add $(CLIENT_TARGET) || true
 	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-client --target $(CLIENT_TARGET)
+
+build-image: ## Build Image Tool
+	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-image
 
 build-snpguest: ## Build snpguest tool (Static)
 	@echo "Ensuring MUSL target..."
