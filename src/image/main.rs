@@ -769,8 +769,9 @@ fn run_convert(
     // Load config if available
     let config = load_config().ok();
 
-    // Resolve attest_url
+    // Resolve attest_url (we'll use it later for repack_initrd)
     let _url = attest_url
+        .clone()
         .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
         .ok_or_else(|| {
             anyhow!(
@@ -835,9 +836,15 @@ fn run_convert(
         )
     })?;
 
-    // Step 3: Encrypt rootfs with LUKS2
-    println!("Encrypting root filesystem with LUKS2...");
+    // Step 3: Extract boot information and repack initrd
+    println!("Extracting boot information and repacking initrd...");
     let (g, source_rootfs, target_rootfs) = create_guestfs_context(in_image, out_image)?;
+
+    // Extract boot info (kernel, initrd, params)
+    let (kernel_data, initrd_data, kernel_params) = extract_boot_data(&g, &source_rootfs)?;
+
+    // Step 4: Encrypt rootfs with LUKS2
+    println!("Encrypting root filesystem with LUKS2...");
     encrypt_and_copy_rootfs(&g, &source_rootfs, &target_rootfs, &vmk)?;
 
     // Step 4: Generate unsealing keys
@@ -928,6 +935,62 @@ fn run_convert(
     // Securely delete unencrypted VMK
     println!("Securely deleting unencrypted VMK...");
     secure_delete_file(&vmk_path)?;
+
+    // Step 7: Repack initrd and write artifacts to staging directory
+    println!("Repacking initrd and writing artifacts to staging directory...");
+
+    // Prepare data for repack_initrd
+    let attest_url_str = attest_url
+        .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
+        .ok_or_else(|| {
+            anyhow!(
+                "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
+            )
+        })?;
+    let attest_url_bytes: Vec<u8> = attest_url_str.into_bytes();
+
+    let ca_cert_data = fs::read(&ca_cert_file)
+        .with_context(|| format!("Failed to read CA cert from {:?}", ca_cert_file))?;
+
+    // Read sealed VMK for repack_initrd
+    let sealed_vmk_data = fs::read(&sealed_vmk_path_clone)
+        .context("Failed to read sealed VMK for initrd repacking")?;
+
+    // Repack initrd
+    let repacked_initrd = repack_initrd(
+        &initrd_data,
+        &attest_url_bytes,
+        &ca_cert_data,
+        &sealed_vmk_data,
+    )?;
+
+    // Write artifacts to staging directory
+    // 1. Copy firmware if provided
+    if let Some(ref firmware_path) = firmware {
+        let firmware_dest = out_staging.join("firmware-code.fd");
+        fs::copy(firmware_path, &firmware_dest).with_context(|| {
+            format!(
+                "Failed to copy firmware from {:?} to {:?}",
+                firmware_path, firmware_dest
+            )
+        })?;
+        println!("  Copied firmware to firmware-code.fd");
+    }
+
+    // 2. Write repacked initrd
+    let initrd_dest = out_staging.join("initrd.img");
+    fs::write(&initrd_dest, &repacked_initrd).context("Failed to write repacked initrd")?;
+    println!("Wrote repacked initrd to initrd.img");
+
+    // 3. Write extracted kernel
+    let kernel_dest = out_staging.join("vmlinuz");
+    fs::write(&kernel_dest, &kernel_data).context("Failed to write kernel")?;
+    println!("Wrote kernel to vmlinuz");
+
+    // 4. Write kernel params
+    let params_dest = out_staging.join("kernel-params.txt");
+    fs::write(&params_dest, &kernel_params).context("Failed to write kernel params")?;
+    println!("Wrote kernel params to kernel-params.txt");
 
     // Mark staging as kept (don't cleanup on success)
     staging_guard.keep();
