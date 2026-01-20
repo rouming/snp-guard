@@ -562,12 +562,20 @@ fn repack_initrd(
 
     println!("  Extracting initrd to temporary directory...");
 
-    // Decompress gzip
-    let mut decoder = GzDecoder::new(initrd_data);
-    let mut cpio_data = Vec::new();
-    decoder
-        .read_to_end(&mut cpio_data)
-        .context("Failed to decompress initrd gzip")?;
+    // Detect compression format and decompress if needed
+    // Gzip magic bytes: 0x1f 0x8b
+    let cpio_data = if initrd_data.len() >= 2 && initrd_data[0] == 0x1f && initrd_data[1] == 0x8b {
+        println!("  Detected gzip-compressed initrd, decompressing...");
+        let mut decoder = GzDecoder::new(initrd_data);
+        let mut decompressed = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed)
+            .context("Failed to decompress initrd gzip")?;
+        decompressed
+    } else {
+        println!("  Detected uncompressed initrd, using directly...");
+        initrd_data.to_vec()
+    };
 
     // Extract cpio archive
     // Use external cpio command for extraction (more reliable than parsing cpio manually)
