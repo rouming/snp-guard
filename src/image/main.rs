@@ -1,3 +1,4 @@
+mod grub_parser;
 mod local_ops;
 
 use anyhow::{anyhow, bail, Context, Result};
