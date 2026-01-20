@@ -13,6 +13,8 @@ anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 dirs = "5"
 hpke = "0.10"
+scopeguard = "1.2"
+
 pem = "3.0"
 rand = { version = "0.8", features = ["std_rng"] }
 guestfs = "0.1"

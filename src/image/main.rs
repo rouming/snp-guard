@@ -11,6 +11,7 @@ use hpke::{
 };
 use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
+use scopeguard::defer;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -205,13 +206,18 @@ impl Drop for StagingGuard {
     }
 }
 
-fn encrypt_and_copy_rootfs(source_path: &Path, target_path: &Path, vmk: &[u8]) -> Result<()> {
+/// Creates a guestfs context with scratch, source, and target drives attached and launched.
+/// Returns the handle and the source/target rootfs device paths.
+fn create_guestfs_context(
+    source_path: &Path,
+    target_path: &Path,
+) -> Result<(guestfs::Handle, String, String)> {
     use guestfs::{AddDriveOptArgs, AddDriveScratchOptArgs, Handle};
 
     let g = Handle::create().map_err(|e| anyhow!("Failed to create guestfs handle: {:?}", e))?;
 
     // Add scratch drive for rootfs, this provides the physical space
-    // to create /source and /target folders.
+    // and writable rootfs
     g.add_drive_scratch(
         10 * 1024 * 1024,
         AddDriveScratchOptArgs {
@@ -260,18 +266,10 @@ fn encrypt_and_copy_rootfs(source_path: &Path, target_path: &Path, vmk: &[u8]) -
     // Prepare the scratch disk to be our writable rootfs
     let scratch_dev = "/dev/disk/guestfs/rootfs";
     use guestfs::MkfsOptArgs;
-    g.mkfs("ext4", &scratch_dev, MkfsOptArgs::default())
+    g.mkfs("ext4", scratch_dev, MkfsOptArgs::default())
         .map_err(|e| anyhow!("Failed to mkfs ext4 on /: {:?}", e))?;
-    g.mount(&scratch_dev, "/")
+    g.mount(scratch_dev, "/")
         .map_err(|e| anyhow!("Failed to mount /: {:?}", e))?;
-
-    // Create target and source mountpoints
-    let source_dir = "/source";
-    let target_dir = "/target";
-    g.mkdir(&source_dir)
-        .map_err(|e| anyhow!("Failed to create {}: {:?}", source_dir, e))?;
-    g.mkdir(&target_dir)
-        .map_err(|e| anyhow!("Failed to create {}: {:?}", target_dir, e))?;
 
     // Find source and target rootfs
     let mut source_rootfs: Option<String> = None;
@@ -293,19 +291,34 @@ fn encrypt_and_copy_rootfs(source_path: &Path, target_path: &Path, vmk: &[u8]) -
     let source_rootfs = source_rootfs.ok_or_else(|| anyhow!("Source rootfs not found"))?;
     let target_rootfs = target_rootfs.ok_or_else(|| anyhow!("Target rootfs not found"))?;
 
+    Ok((g, source_rootfs, target_rootfs))
+}
+
+fn encrypt_and_copy_rootfs(
+    g: &guestfs::Handle,
+    source_rootfs: &str,
+    target_rootfs: &str,
+    vmk: &[u8],
+) -> Result<()> {
     // SURGERY on target
-    g.wipefs(&target_rootfs)
+    g.wipefs(target_rootfs)
         .map_err(|e| anyhow!("Failed to wipefs on target: {:?}", e))?;
 
     // Convert VMK to string for LUKS
     let luks_key = hex::encode(vmk);
 
-    g.luks_format(&target_rootfs, &luks_key, 0)
+    g.luks_format(target_rootfs, &luks_key, 0)
         .map_err(|e| anyhow!("Failed to format LUKS: {:?}", e))?;
-    g.luks_open(&target_rootfs, &luks_key, "crypt_target_root")
+    g.luks_open(target_rootfs, &luks_key, "crypt_target_root")
         .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.luks_close("/dev/mapper/crypt_target_root") {
+            println!("WARN: Failed to close LUKS: {:?}", e);
+        }
+    }
 
     // Format the inner filesystem
+    use guestfs::MkfsOptArgs;
     g.mkfs(
         "ext4",
         "/dev/mapper/crypt_target_root",
@@ -313,22 +326,45 @@ fn encrypt_and_copy_rootfs(source_path: &Path, target_path: &Path, vmk: &[u8]) -
     )
     .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
 
+    // Create target and source mountpoints
+    let source_dir = "/source";
+    let target_dir = "/target";
+    g.mkdir(source_dir)
+        .map_err(|e| anyhow!("Failed to create {}: {:?}", source_dir, e))?;
+    defer! {
+        if let Err(e) = g.rmdir(source_dir) {
+            println!("WARN: Failed to rmdir {}: {:?}", source_dir, e);
+        }
+    }
+    g.mkdir(target_dir)
+        .map_err(|e| anyhow!("Failed to create {}: {:?}", target_dir, e))?;
+    defer! {
+        if let Err(e) = g.rmdir(target_dir) {
+            println!("WARN: Failed to rmdir {}: {:?}", target_dir, e);
+        }
+    }
+
     // Mount source and target
-    g.mount_ro(&source_rootfs, &source_dir)
-        .map_err(|e| anyhow!("Failed to mount {}: {:?}", &source_rootfs, e))?;
-    g.mount("/dev/mapper/crypt_target_root", &target_dir)
+    g.mount_ro(source_rootfs, source_dir)
+        .map_err(|e| anyhow!("Failed to mount {}: {:?}", source_rootfs, e))?;
+    use guestfs::UmountOptArgs;
+    defer! {
+        if let Err(e) = g.umount(source_dir, UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", source_dir, e);
+        }
+    }
+    g.mount("/dev/mapper/crypt_target_root", target_dir)
         .map_err(|e| anyhow!("Failed to mount /dev/mapper/crypt_target_root: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.umount(target_dir, UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", target_dir, e);
+        }
+    }
 
     // Copy files
     println!("Copying files from source to encrypted target...");
-    g.cp_a(&source_dir, &target_dir)
+    g.cp_a(source_dir, target_dir)
         .map_err(|e| anyhow!("Failed to copy files: {:?}", e))?;
-
-    // Finalize
-    g.umount_all()
-        .map_err(|e| anyhow!("Failed to umount all: {:?}", e))?;
-    g.luks_close("/dev/mapper/crypt_target_root")
-        .map_err(|e| anyhow!("Failed to close LUKS: {:?}", e))?;
 
     Ok(())
 }
@@ -412,7 +448,8 @@ fn run_convert(
 
     // Step 3: Encrypt rootfs with LUKS2
     println!("Encrypting root filesystem with LUKS2...");
-    encrypt_and_copy_rootfs(in_image, out_image, &vmk)?;
+    let (g, source_rootfs, target_rootfs) = create_guestfs_context(in_image, out_image)?;
+    encrypt_and_copy_rootfs(&g, &source_rootfs, &target_rootfs, &vmk)?;
 
     // Step 4: Generate unsealing keys
     println!("Generating unsealing keypair...");
