@@ -1,7 +1,5 @@
 use regex::Regex;
-use std::fs::File;
 use std::io::{self, BufRead};
-use std::path::Path;
 
 /// Represents a GRUB menu entry
 #[derive(Debug)]
@@ -12,11 +10,15 @@ pub struct GrubEntry {
     pub is_default: bool,
 }
 
-/// Parse a grub.cfg file into a vector of GrubEntry
-pub fn parse_grub_cfg<P: AsRef<Path>>(path: P) -> io::Result<Vec<GrubEntry>> {
-    let file = File::open(path)?;
-    let reader = io::BufReader::new(file);
+/// Parse GRUB configuration from a string
+pub fn parse_grub_cfg_from_str(content: &str) -> io::Result<Vec<GrubEntry>> {
+    use std::io::Cursor;
+    let reader = io::BufReader::new(Cursor::new(content));
+    parse_grub_cfg_from_reader(reader)
+}
 
+/// Parse GRUB configuration from a BufRead reader
+fn parse_grub_cfg_from_reader<R: BufRead>(reader: R) -> io::Result<Vec<GrubEntry>> {
     let mut entries = Vec::new();
     let mut in_menuentry = false;
     let mut kernel = String::new();

@@ -14,7 +14,7 @@ use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
 use scopeguard::defer;
 use std::fs;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
@@ -293,6 +293,249 @@ fn create_guestfs_context(
     let target_rootfs = target_rootfs.ok_or_else(|| anyhow!("Target rootfs not found"))?;
 
     Ok((g, source_rootfs, target_rootfs))
+}
+
+/// Extracts kernel, initrd, and kernel parameters from source image using GRUB parser.
+/// Returns (kernel_data, initrd_data, kernel_params)
+fn extract_boot_data(
+    g: &guestfs::Handle,
+    source_rootfs: &str,
+) -> Result<(Vec<u8>, Vec<u8>, String)> {
+    use grub_parser::{parse_grub_cfg_from_str, GrubEntry};
+    use guestfs::UmountOptArgs;
+    use std::cell::RefCell;
+
+    println!("Extracting boot information from source image...");
+    println!("  Source rootfs: {}", source_rootfs);
+
+    // Create /source mountpoint
+    let source_mount = "/source";
+    g.mkdir(source_mount)
+        .map_err(|e| anyhow!("Failed to create {}: {:?}", source_mount, e))?;
+    defer! {
+        if let Err(e) = g.rmdir(source_mount) {
+            println!("WARN: Failed to rmdir {}: {:?}", source_mount, e);
+        }
+    }
+
+    // Mount source rootfs to /source
+    g.mount_ro(source_rootfs, source_mount)
+        .map_err(|e| anyhow!("Failed to mount source rootfs {}: {:?}", source_rootfs, e))?;
+    defer! {
+        if let Err(e) = g.umount(source_mount, UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", source_mount, e);
+        }
+    }
+
+    println!("  Mounted source rootfs to {}", source_mount);
+
+    // Check for /boot partition or use root filesystem
+    let mut grub_cfg_path = format!("{}/boot/grub/grub.cfg", source_mount);
+    let mut boot_mount: Option<String> = None;
+    let _guards = RefCell::new(Vec::<Box<dyn FnOnce() + '_>>::new());
+    defer! {
+        let mut guards = _guards.borrow_mut();
+        while let Some(cleanup) = guards.pop() {
+            cleanup();
+        }
+    };
+
+    // First, check if grub.cfg exists in root filesystem's /boot
+    use guestfs::IsFileOptArgs;
+    let root_grub_exists = g
+        .is_file(&grub_cfg_path, IsFileOptArgs::default())
+        .map_err(|e| anyhow!("Failed to check if grub.cfg exists: {:?}", e))?;
+
+    if !root_grub_exists {
+        println!("  /boot/grub/grub.cfg not found in root filesystem");
+        println!("  Checking for separate /boot partition...");
+
+        // Try to find separate /boot partition
+        let partitions = g
+            .list_partitions()
+            .map_err(|e| anyhow!("Failed to list partitions: {:?}", e))?;
+
+        // Create /boot_check mountpoint
+        let bootcheck_dir = "/boot_check";
+        g.mkdir(bootcheck_dir)
+            .map_err(|e| anyhow!("Failed to create {}: {:?}", bootcheck_dir, e))?;
+        _guards.borrow_mut().push(Box::new(move || {
+            if let Err(e) = g.rmdir(bootcheck_dir) {
+                println!("WARN: Failed to rmdir {}: {:?}", bootcheck_dir, e);
+            }
+        }));
+
+        for part in partitions {
+            // Skip the source rootfs partition
+            if part == source_rootfs {
+                continue;
+            }
+
+            // Try to mount this partition and check if it contains grub.cfg
+            if let Ok(()) = g.mount_ro(&part, bootcheck_dir) {
+                _guards.borrow_mut().push(Box::new(move || {
+                    if let Err(e) = g.umount(bootcheck_dir, UmountOptArgs::default()) {
+                        println!("WARN: Failed to umount {}: {:?}", bootcheck_dir, e);
+                    }
+                }));
+                let boot_check_grub = format!("{bootcheck_dir}/grub/grub.cfg");
+                if g.is_file(boot_check_grub.as_str(), IsFileOptArgs::default())
+                    .map_err(|e| anyhow!("Failed to check if file exists: {:?}", e))?
+                {
+                    println!("  Found /boot partition at: {}", part);
+                    grub_cfg_path = boot_check_grub.to_string();
+                    boot_mount = Some(bootcheck_dir.to_string());
+                    break;
+                }
+            }
+        }
+        if boot_mount.is_none() {
+            println!("  No separate /boot partition found with grub.cfg");
+        }
+    } else {
+        println!("  Found /boot/grub/grub.cfg in root filesystem");
+    }
+
+    // Final check if grub.cfg exists (should have been found above, but double-check)
+    if !g
+        .is_file(&grub_cfg_path, IsFileOptArgs::default())
+        .map_err(|e| anyhow!("Failed to check if grub.cfg exists: {:?}", e))?
+    {
+        bail!(
+            "GRUB configuration file not found at: {}. Please ensure the source image has a valid GRUB installation.",
+            grub_cfg_path
+        );
+    }
+
+    println!("  Reading GRUB configuration from: {}", grub_cfg_path);
+
+    // Read grub.cfg file
+    let grub_content = g
+        .read_file(&grub_cfg_path)
+        .map_err(|e| anyhow!("Failed to read grub.cfg: {:?}", e))?;
+    let grub_str = String::from_utf8(grub_content)
+        .map_err(|e| anyhow!("Failed to convert grub.cfg to UTF-8: {}", e))?;
+
+    // Parse GRUB configuration
+    let entries = parse_grub_cfg_from_str(&grub_str)
+        .map_err(|e| anyhow!("Failed to parse grub.cfg: {}", e))?;
+
+    if entries.is_empty() {
+        bail!("No GRUB menu entries found in grub.cfg. The file may be empty or malformed.");
+    }
+
+    println!(
+        "  Found {} GRUB menu entr{}",
+        entries.len(),
+        if entries.len() == 1 { "y" } else { "ies" }
+    );
+
+    let selected_entry: &GrubEntry = if entries.len() == 1 {
+        // Single entry - use it automatically
+        let entry = &entries[0];
+        println!("  Using single menu entry:");
+        println!("    Kernel: {}", entry.kernel);
+        if let Some(ref initrd) = entry.initrd {
+            println!("    Initrd: {}", initrd);
+        } else {
+            println!("    Initrd: (none)");
+        }
+        println!("    Parameters: {}", entry.params);
+        entry
+    } else {
+        // Multiple entries - ask user to select
+        println!("\n  Multiple GRUB menu entries found. Please select one:");
+        for (idx, entry) in entries.iter().enumerate() {
+            let default_marker = if entry.is_default { " (default)" } else { "" };
+            println!("  [{}] Kernel: {}{}", idx, entry.kernel, default_marker);
+            if let Some(ref initrd) = entry.initrd {
+                println!("       Initrd: {}", initrd);
+            }
+            println!("       Parameters: {}", entry.params);
+        }
+
+        print!("\n  Enter entry number (0-{}): ", entries.len() - 1);
+        io::stdout()
+            .flush()
+            .map_err(|e| anyhow!("Failed to flush stdout: {}", e))?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| anyhow!("Failed to read user input: {}", e))?;
+
+        let selected_idx: usize = input
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("Invalid entry number: {}", input.trim()))?;
+
+        if selected_idx >= entries.len() {
+            bail!(
+                "Entry number {} is out of range (0-{})",
+                selected_idx,
+                entries.len() - 1
+            );
+        }
+
+        let entry = &entries[selected_idx];
+        println!("\n  Selected entry {}:", selected_idx);
+        println!("    Kernel: {}", entry.kernel);
+        if let Some(ref initrd) = entry.initrd {
+            println!("    Initrd: {}", initrd);
+        } else {
+            println!("    Initrd: (none)");
+        }
+        println!("    Parameters: {}", entry.params);
+        entry
+    };
+
+    // Convert paths relative to source mount or boot partition
+    // GRUB paths in grub.cfg are typically relative to the partition where grub.cfg is located
+    let kernel_path = if selected_entry.kernel.starts_with('/') {
+        // Absolute path - resolve based on where grub.cfg was found
+        if let Some(ref boot_mnt) = boot_mount {
+            // If boot is separate, absolute paths are relative to boot partition
+            format!("{}{}", boot_mnt, selected_entry.kernel)
+        } else {
+            // Absolute paths are relative to root
+            format!("{}{}", source_mount, selected_entry.kernel)
+        }
+    } else {
+        // Relative path - assume it's relative to the partition containing grub.cfg
+        if let Some(ref boot_mnt) = boot_mount {
+            format!("{}/{}", boot_mnt, selected_entry.kernel)
+        } else {
+            format!("{}/boot/{}", source_mount, selected_entry.kernel)
+        }
+    };
+
+    let initrd_path = selected_entry.initrd.as_ref().map(|initrd| {
+        if initrd.starts_with('/') {
+            if let Some(ref boot_mnt) = boot_mount {
+                format!("{}{}", boot_mnt, initrd)
+            } else {
+                format!("{}{}", source_mount, initrd)
+            }
+        } else if let Some(ref boot_mnt) = boot_mount {
+            format!("{}/{}", boot_mnt, initrd)
+        } else {
+            format!("{}/boot/{}", source_mount, initrd)
+        }
+    });
+
+    // Read initrd from source image
+    let initrd_path =
+        initrd_path.ok_or_else(|| anyhow!("No initrd found in boot configuration"))?;
+    let initrd_data = g
+        .read_file(&initrd_path)
+        .map_err(|e| anyhow!("Failed to read initrd from {}: {:?}", initrd_path, e))?;
+
+    // Read kernel from source image
+    let kernel_data = g
+        .read_file(&kernel_path)
+        .map_err(|e| anyhow!("Failed to read kernel from {}: {:?}", kernel_path, e))?;
+
+    Ok((kernel_data, initrd_data, selected_entry.params.clone()))
 }
 
 fn encrypt_and_copy_rootfs(
