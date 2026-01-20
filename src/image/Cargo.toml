@@ -21,4 +21,7 @@ guestfs = "0.1"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-regex = "1.12.2"
+regex = "1"
+flate2 = "1.0"
+cpio = "0.2"
+tempfile = "3"
