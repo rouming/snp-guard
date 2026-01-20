@@ -1,12 +1,10 @@
 mod grub_parser;
+mod initrd;
 mod local_ops;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use dirs::config_dir;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use hpke::{
     aead::AesGcm256,
     kdf::HkdfSha256,
@@ -17,10 +15,8 @@ use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
 use scopeguard::defer;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
-use tempfile::TempDir;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "SnpGuard image tool")]
@@ -546,150 +542,6 @@ fn extract_boot_data(
     Ok((kernel_data, initrd_data, selected_entry.params.clone()))
 }
 
-/// Repacks initrd with snpguard-client and configuration files.
-/// Returns the repacked initrd as Vec<u8>.
-fn repack_initrd(
-    initrd_data: &[u8],
-    attest_url: &[u8],
-    attest_ca_cert: &[u8],
-    vmk_sealed: &[u8],
-) -> Result<Vec<u8>> {
-    println!("Repacking initrd with SnpGuard components...");
-
-    // Create temporary directory for initrd extraction
-    let temp_dir = TempDir::new().context("Failed to create temporary directory")?;
-    let initrd_dir = temp_dir.path();
-
-    println!("  Extracting initrd to temporary directory...");
-
-    // Detect compression format and decompress if needed
-    // Gzip magic bytes: 0x1f 0x8b
-    let cpio_data = if initrd_data.len() >= 2 && initrd_data[0] == 0x1f && initrd_data[1] == 0x8b {
-        println!("  Detected gzip-compressed initrd, decompressing...");
-        let mut decoder = GzDecoder::new(initrd_data);
-        let mut decompressed = Vec::new();
-        decoder
-            .read_to_end(&mut decompressed)
-            .context("Failed to decompress initrd gzip")?;
-        decompressed
-    } else {
-        println!("  Detected uncompressed initrd, using directly...");
-        initrd_data.to_vec()
-    };
-
-    // Extract cpio archive
-    // Use external cpio command for extraction (more reliable than parsing cpio manually)
-    let cpio_input =
-        tempfile::NamedTempFile::new().context("Failed to create temporary cpio file")?;
-    fs::write(cpio_input.path(), &cpio_data).context("Failed to write cpio data to temp file")?;
-
-    let extract_status = ProcessCommand::new("cpio")
-        .args(["-idm"])
-        .current_dir(initrd_dir)
-        .stdin(Stdio::from(fs::File::open(cpio_input.path())?))
-        .status()
-        .context("Failed to execute cpio extract command. Is cpio installed?")?;
-
-    if !extract_status.success() {
-        bail!("Failed to extract cpio archive from initrd");
-    }
-
-    println!("  Adding SnpGuard components...");
-
-    // 1. Add snpguard-client binary
-    // Find the client binary (built for musl target)
-    let client_bin_path = PathBuf::from("target/x86_64-unknown-linux-musl/release/snpguard-client");
-    if !client_bin_path.exists() {
-        bail!(
-            "snpguard-client binary not found at {:?}. Please build it first with: make build-client",
-            client_bin_path
-        );
-    }
-
-    let usr_bin_dir = initrd_dir.join("usr/bin");
-    fs::create_dir_all(&usr_bin_dir).context("Failed to create /usr/bin directory in initrd")?;
-    fs::copy(&client_bin_path, usr_bin_dir.join("snpguard-client"))
-        .context("Failed to copy snpguard-client to initrd")?;
-    println!("    Added /usr/bin/snpguard-client");
-
-    // 2. Add /etc/snpguard directory and files
-    let etc_snpguard_dir = initrd_dir.join("etc/snpguard");
-    fs::create_dir_all(&etc_snpguard_dir)
-        .context("Failed to create /etc/snpguard directory in initrd")?;
-
-    // 2a. vmk.sealed
-    fs::write(etc_snpguard_dir.join("vmk.sealed"), vmk_sealed)
-        .context("Failed to write vmk.sealed to initrd")?;
-    println!("    Added /etc/snpguard/vmk.sealed");
-
-    // 2b. ca.pem
-    fs::write(etc_snpguard_dir.join("ca.pem"), attest_ca_cert)
-        .context("Failed to write ca.pem to initrd")?;
-    println!("    Added /etc/snpguard/ca.pem");
-
-    // 2c. attest.url (convert bytes to string)
-    let url_str = String::from_utf8(attest_url.to_vec())
-        .context("Failed to convert attest_url to UTF-8 string")?;
-    fs::write(etc_snpguard_dir.join("attest.url"), url_str.as_bytes())
-        .context("Failed to write attest.url to initrd")?;
-    println!("    Added /etc/snpguard/attest.url");
-
-    println!("  Repacking initrd...");
-
-    // Repack: find . | cpio -o -H newc | gzip
-    let find_output = ProcessCommand::new("find")
-        .args([".", "-print0"])
-        .current_dir(initrd_dir)
-        .output()
-        .context("Failed to execute find command")?;
-
-    if !find_output.status.success() {
-        bail!("Failed to list files in initrd directory");
-    }
-
-    let mut cpio_process = ProcessCommand::new("cpio")
-        .args(["--null", "-o", "-H", "newc"])
-        .current_dir(initrd_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .context("Failed to spawn cpio command")?;
-
-    {
-        let mut cpio_stdin = cpio_process
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to get cpio stdin"))?;
-        cpio_stdin
-            .write_all(&find_output.stdout)
-            .context("Failed to write to cpio stdin")?;
-    }
-
-    let cpio_result = cpio_process
-        .wait_with_output()
-        .context("Failed to wait for cpio command")?;
-
-    if !cpio_result.status.success() {
-        bail!("Failed to create cpio archive");
-    }
-
-    // Compress with gzip
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(&cpio_result.stdout)
-        .context("Failed to write cpio data to gzip encoder")?;
-    let repacked_initrd = encoder
-        .finish()
-        .context("Failed to finish gzip compression")?;
-
-    println!(
-        "  Initrd repacked successfully ({} bytes)",
-        repacked_initrd.len()
-    );
-
-    Ok(repacked_initrd)
-}
-
 fn encrypt_and_copy_rootfs(
     g: &guestfs::Handle,
     source_rootfs: &str,
@@ -965,7 +817,7 @@ fn run_convert(
         .context("Failed to read sealed VMK for initrd repacking")?;
 
     // Repack initrd
-    let repacked_initrd = repack_initrd(
+    let repacked_initrd = initrd::repack_initrd(
         &initrd_data,
         &attest_url_bytes,
         &ca_cert_data,
