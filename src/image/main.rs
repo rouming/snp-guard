@@ -84,6 +84,9 @@ enum Command {
         /// Optional: Override CA certificate path (uses config if not provided)
         #[arg(long)]
         ca_cert: Option<PathBuf>,
+        /// Optional: Firmware path
+        #[arg(long)]
+        firmware: Option<PathBuf>,
     },
 }
 
@@ -761,6 +764,7 @@ fn run_convert(
     attest_url: Option<String>,
     ingestion_public_key: Option<PathBuf>,
     ca_cert: Option<PathBuf>,
+    firmware: Option<PathBuf>,
 ) -> Result<()> {
     // Load config if available
     let config = load_config().ok();
@@ -966,6 +970,7 @@ fn main() -> Result<()> {
             attest_url,
             ingestion_public_key,
             ca_cert,
+            firmware,
         } => run_convert(
             &in_image,
             &out_image,
@@ -973,6 +978,7 @@ fn main() -> Result<()> {
             attest_url,
             ingestion_public_key,
             ca_cert,
+            firmware,
         ),
     }
 }
