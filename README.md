@@ -379,7 +379,8 @@ Convert a QCOW2 image by encrypting the root filesystem with LUKS2:
 snpguard-image convert \
   --in-image source.qcow2 \
   --out-image target.qcow2 \
-  --out-staging ./staging
+  --out-staging ./staging \
+  --firmware firmware-code.fd
 ```
 
 **Note**: This subcommand is currently **incomplete** and in active development. The implementation includes:
@@ -394,6 +395,7 @@ snpguard-image convert \
 
 **Requirements**:
 - `libguestfs` library must be installed on the system (e.g., `apt-get install libguestfs-dev` on Debian/Ubuntu, or `dnf install libguestfs-devel` on Fedora/RHEL)
+- Firmware path (required): `--firmware <PATH>` - Path to the OVMF firmware binary (e.g., `OVMF_CODE.fd` or `AmdSev-OVMF.fd`)
 - Configuration from `snpguard-client config login` or provide `--attest-url`, `--ingestion-public-key`, and `--ca-cert` options
 
 **Current Limitations**:

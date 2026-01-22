@@ -80,9 +80,9 @@ enum Command {
         /// Optional: Override CA certificate path (uses config if not provided)
         #[arg(long)]
         ca_cert: Option<PathBuf>,
-        /// Optional: Firmware path
+        /// Firmware path (required)
         #[arg(long)]
-        firmware: Option<PathBuf>,
+        firmware: PathBuf,
     },
 }
 
@@ -815,7 +815,7 @@ fn run_convert(
     attest_url: Option<String>,
     ingestion_public_key: Option<PathBuf>,
     ca_cert: Option<PathBuf>,
-    firmware: Option<PathBuf>,
+    firmware: PathBuf,
 ) -> Result<()> {
     // Load config if available
     let config = load_config().ok();
@@ -1011,17 +1011,15 @@ fn run_convert(
         extract_boot_data(&g, &scratch_rootfs, &target_rootfs, &vmk)?;
 
     // Write artifacts to staging directory
-    // Copy firmware if provided
-    if let Some(ref firmware_path) = firmware {
-        let firmware_dest = out_staging.join("firmware-code.fd");
-        fs::copy(firmware_path, &firmware_dest).with_context(|| {
-            format!(
-                "Failed to copy firmware from {:?} to {:?}",
-                firmware_path, firmware_dest
-            )
-        })?;
-        println!("  Copied firmware to firmware-code.fd");
-    }
+    // Copy firmware (required)
+    let firmware_dest = out_staging.join("firmware-code.fd");
+    fs::copy(&firmware, &firmware_dest).with_context(|| {
+        format!(
+            "Failed to copy firmware from {:?} to {:?}",
+            firmware, firmware_dest
+        )
+    })?;
+    println!("  Copied firmware to firmware-code.fd");
 
     // Write extracted repacked initrd
     let initrd_dest = out_staging.join("initrd.img");
