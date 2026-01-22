@@ -272,7 +272,7 @@ Both hooks run after network initialization but before root filesystem mounting,
    - Verifies report certs (fetches AMD certificates from KDS, verifies certificate chain and report signature)
    - Reencrypts sealed blob (unseals VMK using unsealing private key, reseals for client session)
 9. **Service responds** with success, encapped_key, and ciphertext (session-encrypted VMK)
-10. **Client decrypts session response** to get VMK and outputs to stdout
+10. **Client decrypts session response** to get VMK and outputs to stdout in hex format
 
 **Security**: Nonce verification ensures the nonce was legitimately issued by the server before validating the binding hash, preventing replay attacks and ensuring the attestation report is bound to the specific session.
 
@@ -422,14 +422,15 @@ snpguard-image seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
 snpguard-image unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
 
 # Attestation (uses pinned CA from config)
-snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob blob.sealed | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
+# Output is hex-encoded VMK, convert to binary for cryptsetup
+snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob blob.sealed | xxd -r -p | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
 
 # Example workflow:
 # 1. Generate keys: snpguard-image keygen --priv-out unsealing.key --pub-out unsealing.pub
 # 2. Create plaintext blob: pwgen -s 32 1 | tr -d '\n' > blob.txt
 # 3. Seal the blob: snpguard-image seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
 # 4. Unseal locally (test): snpguard-image unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
-# 5. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed > blob.decrypted
+# 5. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed | xxd -r -p > blob.decrypted
 # 6. Verify: cmp blob.txt blob.decrypted
 
 # Management (defaults to stored config)

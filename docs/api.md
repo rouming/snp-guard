@@ -93,6 +93,8 @@ echo -n -e '\x0a\x05\x67\x75\x65\x73\x74' | \
 
 Verify an attestation report, unseal VMK from sealed blob, and return session-encrypted VMK if successful.
 
+**Note**: The client outputs the decrypted VMK in hex format (not raw bytes) to stdout.
+
 **Request**:
 ```protobuf
 message AttestationRequest {

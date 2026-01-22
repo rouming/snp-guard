@@ -342,9 +342,9 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
         .open(&verify_resp.ciphertext, &[])
         .map_err(|e| anyhow!("Session decryption failed: {}", e))?;
 
-    // 8. Output VMK to stdout
-    std::io::stdout().write_all(&vmk)?;
-    std::io::stdout().flush()?;
+    // 8. Output VMK to stdout in hex format
+    let vmk_hex = hex::encode(&vmk);
+    println!("{}", vmk_hex);
     Ok(())
 }
 
