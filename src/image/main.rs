@@ -14,6 +14,7 @@ use hpke::{
 use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
 use scopeguard::defer;
+use std::cell::RefCell;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -212,11 +213,11 @@ impl Drop for StagingGuard {
 }
 
 /// Creates a guestfs context with scratch, source, and target drives attached and launched.
-/// Returns the handle and the source/target rootfs device paths.
+/// Returns the handle and the scratch/source/target rootfs device paths.
 fn create_guestfs_context(
     source_path: &Path,
     target_path: &Path,
-) -> Result<(guestfs::Handle, String, String)> {
+) -> Result<(guestfs::Handle, String, String, String)> {
     use guestfs::{AddDriveOptArgs, AddDriveScratchOptArgs, Handle};
 
     let g = Handle::create().map_err(|e| anyhow!("Failed to create guestfs handle: {:?}", e))?;
@@ -256,6 +257,10 @@ fn create_guestfs_context(
     )
     .map_err(|e| anyhow!("Failed to add target drive: {:?}", e))?;
 
+    // Enable network
+    g.set_network(true)
+        .map_err(|e| anyhow!("Failed to setup network: {:?}", e))?;
+
     // Launch the VM
     g.launch()
         .map_err(|e| anyhow!("Failed to launch guestfs: {:?}", e))?;
@@ -269,12 +274,10 @@ fn create_guestfs_context(
     }
 
     // Prepare the scratch disk to be our writable rootfs
-    let scratch_dev = "/dev/disk/guestfs/rootfs";
+    let scratch_rootfs = "/dev/disk/guestfs/rootfs";
     use guestfs::MkfsOptArgs;
-    g.mkfs("ext4", scratch_dev, MkfsOptArgs::default())
+    g.mkfs("ext4", scratch_rootfs, MkfsOptArgs::default())
         .map_err(|e| anyhow!("Failed to mkfs ext4 on /: {:?}", e))?;
-    g.mount(scratch_dev, "/")
-        .map_err(|e| anyhow!("Failed to mount /: {:?}", e))?;
 
     // Find source and target rootfs
     let mut source_rootfs: Option<String> = None;
@@ -296,45 +299,66 @@ fn create_guestfs_context(
     let source_rootfs = source_rootfs.ok_or_else(|| anyhow!("Source rootfs not found"))?;
     let target_rootfs = target_rootfs.ok_or_else(|| anyhow!("Target rootfs not found"))?;
 
-    Ok((g, source_rootfs, target_rootfs))
+    Ok((g, scratch_rootfs.to_string(), source_rootfs, target_rootfs))
 }
 
-/// Extracts kernel, initrd, and kernel parameters from source image using GRUB parser.
+/// Extracts kernel, initrd, and kernel parameters from target image using GRUB parser.
 /// Returns (kernel_data, initrd_data, kernel_params)
 fn extract_boot_data(
     g: &guestfs::Handle,
-    source_rootfs: &str,
+    scratch_rootfs: &str,
+    target_rootfs: &str,
+    vmk: &[u8],
 ) -> Result<(Vec<u8>, Vec<u8>, String)> {
     use grub_parser::{parse_grub_cfg_from_str, GrubEntry};
     use guestfs::UmountOptArgs;
-    use std::cell::RefCell;
 
-    println!("Extracting boot information from source image...");
-    println!("  Source rootfs: {}", source_rootfs);
+    println!("  Scratch rootfs: {}", scratch_rootfs);
+    println!("  Target rootfs: {}", target_rootfs);
 
-    // Create /source mountpoint
-    let source_mount = "/source";
-    g.mkdir(source_mount)
-        .map_err(|e| anyhow!("Failed to create {}: {:?}", source_mount, e))?;
+    // Convert VMK to string for LUKS
+    let luks_key = hex::encode(vmk);
+
+    g.luks_open(target_rootfs, &luks_key, "root_crypt")
+        .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
     defer! {
-        if let Err(e) = g.rmdir(source_mount) {
-            println!("WARN: Failed to rmdir {}: {:?}", source_mount, e);
+        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+            println!("WARN: Failed to close LUKS: {:?}", e);
         }
     }
 
-    // Mount source rootfs to /source
-    g.mount_ro(source_rootfs, source_mount)
-        .map_err(|e| anyhow!("Failed to mount source rootfs {}: {:?}", source_rootfs, e))?;
+    // Mount scratch rootfs
+    g.mount(scratch_rootfs, "/")
+        .map_err(|e| anyhow!("Failed to mount {}: {:?}", scratch_rootfs, e))?;
     defer! {
-        if let Err(e) = g.umount(source_mount, UmountOptArgs::default()) {
-            println!("WARN: Failed to umount {}: {:?}", source_mount, e);
+        if let Err(e) = g.umount("/", UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", "/", e);
         }
     }
 
-    println!("  Mounted source rootfs to {}", source_mount);
+    // Create /target mountpoint
+    let target_mount = "/target";
+    g.mkdir(target_mount)
+        .map_err(|e| anyhow!("Failed to create {}: {:?}", target_mount, e))?;
+    defer! {
+        if let Err(e) = g.rmdir(target_mount) {
+            println!("WARN: Failed to rmdir {}: {:?}", target_mount, e);
+        }
+    }
+
+    // Mount target as /target
+    g.mount_ro("/dev/mapper/root_crypt", target_mount)
+        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.umount(target_mount, UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", target_mount, e);
+        }
+    }
+
+    println!("  Mounted target rootfs to {}", target_mount);
 
     // Check for /boot partition or use root filesystem
-    let mut grub_cfg_path = format!("{}/boot/grub/grub.cfg", source_mount);
+    let mut grub_cfg_path = format!("{}/boot/grub/grub.cfg", target_mount);
     let mut boot_mount: Option<String> = None;
     let _guards = RefCell::new(Vec::<Box<dyn FnOnce() + '_>>::new());
     defer! {
@@ -370,8 +394,8 @@ fn extract_boot_data(
         }));
 
         for part in partitions {
-            // Skip the source rootfs partition
-            if part == source_rootfs {
+            // Skip the target rootfs partition
+            if part == target_rootfs {
                 continue;
             }
 
@@ -406,7 +430,7 @@ fn extract_boot_data(
         .map_err(|e| anyhow!("Failed to check if grub.cfg exists: {:?}", e))?
     {
         bail!(
-            "GRUB configuration file not found at: {}. Please ensure the source image has a valid GRUB installation.",
+            "GRUB configuration file not found at: {}. Please ensure the target image has a valid GRUB installation.",
             grub_cfg_path
         );
     }
@@ -493,7 +517,7 @@ fn extract_boot_data(
         entry
     };
 
-    // Convert paths relative to source mount or boot partition
+    // Convert paths relative to target mount or boot partition
     // GRUB paths in grub.cfg are typically relative to the partition where grub.cfg is located
     let kernel_path = if selected_entry.kernel.starts_with('/') {
         // Absolute path - resolve based on where grub.cfg was found
@@ -502,14 +526,14 @@ fn extract_boot_data(
             format!("{}{}", boot_mnt, selected_entry.kernel)
         } else {
             // Absolute paths are relative to root
-            format!("{}{}", source_mount, selected_entry.kernel)
+            format!("{}{}", target_mount, selected_entry.kernel)
         }
     } else {
         // Relative path - assume it's relative to the partition containing grub.cfg
         if let Some(ref boot_mnt) = boot_mount {
             format!("{}/{}", boot_mnt, selected_entry.kernel)
         } else {
-            format!("{}/boot/{}", source_mount, selected_entry.kernel)
+            format!("{}/boot/{}", target_mount, selected_entry.kernel)
         }
     };
 
@@ -518,23 +542,23 @@ fn extract_boot_data(
             if let Some(ref boot_mnt) = boot_mount {
                 format!("{}{}", boot_mnt, initrd)
             } else {
-                format!("{}{}", source_mount, initrd)
+                format!("{}{}", target_mount, initrd)
             }
         } else if let Some(ref boot_mnt) = boot_mount {
             format!("{}/{}", boot_mnt, initrd)
         } else {
-            format!("{}/boot/{}", source_mount, initrd)
+            format!("{}/boot/{}", target_mount, initrd)
         }
     });
 
-    // Read initrd from source image
+    // Read initrd from target image
     let initrd_path =
         initrd_path.ok_or_else(|| anyhow!("No initrd found in boot configuration"))?;
     let initrd_data = g
         .read_file(&initrd_path)
         .map_err(|e| anyhow!("Failed to read initrd from {}: {:?}", initrd_path, e))?;
 
-    // Read kernel from source image
+    // Read kernel from target image
     let kernel_data = g
         .read_file(&kernel_path)
         .map_err(|e| anyhow!("Failed to read kernel from {}: {:?}", kernel_path, e))?;
@@ -544,10 +568,12 @@ fn extract_boot_data(
 
 fn encrypt_and_copy_rootfs(
     g: &guestfs::Handle,
+    scratch_rootfs: &str,
     source_rootfs: &str,
     target_rootfs: &str,
     vmk: &[u8],
 ) -> Result<()> {
+    use guestfs::{MkfsOptArgs, UmountOptArgs};
     // SURGERY on target
     g.wipefs(target_rootfs)
         .map_err(|e| anyhow!("Failed to wipefs on target: {:?}", e))?;
@@ -557,22 +583,26 @@ fn encrypt_and_copy_rootfs(
 
     g.luks_format(target_rootfs, &luks_key, 0)
         .map_err(|e| anyhow!("Failed to format LUKS: {:?}", e))?;
-    g.luks_open(target_rootfs, &luks_key, "crypt_target_root")
+    g.luks_open(target_rootfs, &luks_key, "root_crypt")
         .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
     defer! {
-        if let Err(e) = g.luks_close("/dev/mapper/crypt_target_root") {
+        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
             println!("WARN: Failed to close LUKS: {:?}", e);
         }
     }
 
     // Format the inner filesystem
-    use guestfs::MkfsOptArgs;
-    g.mkfs(
-        "ext4",
-        "/dev/mapper/crypt_target_root",
-        MkfsOptArgs::default(),
-    )
-    .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
+    g.mkfs("ext4", "/dev/mapper/root_crypt", MkfsOptArgs::default())
+        .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
+
+    // Mount scratch rootfs
+    g.mount(scratch_rootfs, "/")
+        .map_err(|e| anyhow!("Failed to mount {}: {:?}", "/", e))?;
+    defer! {
+        if let Err(e) = g.umount("/", UmountOptArgs::default()) {
+            println!("WARN: Failed to umount {}: {:?}", "/", e);
+        }
+    }
 
     // Create target and source mountpoints
     let source_dir = "/source";
@@ -595,14 +625,13 @@ fn encrypt_and_copy_rootfs(
     // Mount source and target
     g.mount_ro(source_rootfs, source_dir)
         .map_err(|e| anyhow!("Failed to mount {}: {:?}", source_rootfs, e))?;
-    use guestfs::UmountOptArgs;
     defer! {
         if let Err(e) = g.umount(source_dir, UmountOptArgs::default()) {
             println!("WARN: Failed to umount {}: {:?}", source_dir, e);
         }
     }
-    g.mount("/dev/mapper/crypt_target_root", target_dir)
-        .map_err(|e| anyhow!("Failed to mount /dev/mapper/crypt_target_root: {:?}", e))?;
+    g.mount("/dev/mapper/root_crypt", target_dir)
+        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
     defer! {
         if let Err(e) = g.umount(target_dir, UmountOptArgs::default()) {
             println!("WARN: Failed to umount {}: {:?}", target_dir, e);
@@ -611,8 +640,78 @@ fn encrypt_and_copy_rootfs(
 
     // Copy files
     println!("Copying files from source to encrypted target...");
-    g.cp_a(source_dir, target_dir)
-        .map_err(|e| anyhow!("Failed to copy files: {:?}", e))?;
+    for entry in g
+        .ls(source_dir)
+        .map_err(|e| anyhow!("Failed to `ls {}`: {:?}", source_dir, e))?
+    {
+        let src = format!("{}/{}", source_dir, entry);
+        g.cp_a(&src, target_dir)
+            .map_err(|e| anyhow!("Failed to copy {}: {:?}", src, e))?;
+    }
+
+    Ok(())
+}
+
+fn install_cryptsetup_on_target(
+    g: &guestfs::Handle,
+    target_rootfs: &str,
+    vmk: &[u8],
+) -> Result<()> {
+    enum DistroFamily {
+        Debian,
+        RedHat,
+    }
+
+    // Convert VMK to string for LUKS
+    let luks_key = hex::encode(vmk);
+
+    g.luks_open(target_rootfs, &luks_key, "root_crypt")
+        .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+            println!("WARN: Failed to close LUKS: {:?}", e);
+        }
+    }
+
+    // Get distribution
+    let dist = g
+        .inspect_get_distro(target_rootfs)
+        .map_err(|e| anyhow!("Failed to inspect distro on {}: {:?}", target_rootfs, e))?;
+
+    let dist_family = match dist.as_str() {
+        "debian" | "ubuntu" => DistroFamily::Debian,
+        "fedora" | "centos" | "rhel" => DistroFamily::RedHat,
+        _ => bail!("Unsupported distribution {}", dist),
+    };
+
+    // Mount target as /
+    g.mount("/dev/mapper/root_crypt", "/")
+        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.umount_all() {
+            println!("WARN: Failed to umount all: {:?}", e);
+        }
+    }
+
+    // Map the package name and command
+    let cmds = match dist_family {
+        DistroFamily::Debian => vec![
+            "dhclient eth0",                       // bring the whole network up
+            "apt update -y",                       // update packages
+            "apt install -y cryptsetup-initramfs", // install cryptsetup
+            "pkill -KILL dhclient",                // kill running dhclient, otherwise it holds /dev
+            "update-initramfs -u -k all",          // update initramfs
+        ],
+        DistroFamily::RedHat => vec![
+            "dnf install -y cryptsetup",  // install cryptsetup
+            "update-initramfs -u -k all", // update initramfs
+        ],
+    };
+
+    // Run command
+    let cmd = cmds.join(";");
+    g.sh(&format!("{}", cmd))
+        .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
 
     Ok(())
 }
@@ -678,7 +777,7 @@ fn run_convert(
     fs::create_dir_all(out_staging)?;
     let mut staging_guard = StagingGuard::new(out_staging.to_path_buf());
 
-    // Step 1: Generate random 64-byte VMK
+    // Generate random 64-byte VMK
     println!("Generating Volume Master Key (VMK)...");
     let mut vmk = vec![0u8; 64];
     let mut rng = OsRng;
@@ -686,8 +785,7 @@ fn run_convert(
     let vmk_path = out_staging.join("vmk.bin");
     fs::write(&vmk_path, &vmk)?;
 
-    // Step 2: Copy source to target
-    println!("Copying source image to target...");
+    println!("Copying the whole source image to target image...");
     fs::copy(in_image, out_image).with_context(|| {
         format!(
             "Failed to copy {} to {}",
@@ -696,24 +794,25 @@ fn run_convert(
         )
     })?;
 
-    // Step 3: Extract boot information and repack initrd
-    println!("Extracting boot information and repacking initrd...");
-    let (g, source_rootfs, target_rootfs) = create_guestfs_context(in_image, out_image)?;
+    println!("Preparing Guestfs context, launch appliance VM...");
+    let (g, scratch_rootfs, source_rootfs, target_rootfs) =
+        create_guestfs_context(in_image, out_image)?;
 
-    // Extract boot info (kernel, initrd, params)
-    let (kernel_data, initrd_data, kernel_params) = extract_boot_data(&g, &source_rootfs)?;
-
-    // Step 4: Encrypt rootfs with LUKS2
     println!("Encrypting root filesystem with LUKS2...");
-    encrypt_and_copy_rootfs(&g, &source_rootfs, &target_rootfs, &vmk)?;
+    encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
 
-    // Step 4: Generate unsealing keys
+    println!("Install cryptsetup on target...");
+    install_cryptsetup_on_target(&g, &target_rootfs, &vmk)?;
+
+    println!("Extract boot artifacts (kernel, initrd, params) from target image");
+    let (kernel_data, initrd_data, kernel_params) =
+        extract_boot_data(&g, &scratch_rootfs, &target_rootfs, &vmk)?;
+
     println!("Generating unsealing keypair...");
     let unsealing_priv_path = out_staging.join("unsealing.key");
     let unsealing_pub_path = out_staging.join("unsealing.pub");
     local_ops::generate_keys(&unsealing_priv_path, &unsealing_pub_path)?;
 
-    // Step 5: Seal VMK with unsealing public key
     println!("Sealing VMK with unsealing public key...");
     let sealed_vmk_path = out_staging.join("vmk.sealed");
     let sealed_vmk_path_clone = sealed_vmk_path.clone();
@@ -722,7 +821,6 @@ fn run_convert(
     // Remove unsealing public key (not needed after sealing)
     fs::remove_file(&unsealing_pub_path).context("Failed to remove unsealing public key")?;
 
-    // Step 6: Seal unsealing private key with ingestion public key
     println!("Sealing unsealing private key with ingestion public key...");
 
     // Load ingestion public key
@@ -796,7 +894,7 @@ fn run_convert(
     println!("Securely deleting unencrypted VMK...");
     secure_delete_file(&vmk_path)?;
 
-    // Step 7: Repack initrd and write artifacts to staging directory
+    // Repack initrd and write artifacts to staging directory
     println!("Repacking initrd and writing artifacts to staging directory...");
 
     // Prepare data for repack_initrd
