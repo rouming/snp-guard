@@ -1,5 +1,4 @@
 mod grub_parser;
-mod initrd;
 mod local_ops;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -652,10 +651,86 @@ fn encrypt_and_copy_rootfs(
     Ok(())
 }
 
+/// Upload snpguard files and scripts into a guest image rootfs
+pub fn upload_snpguard_files(
+    g: &guestfs::Handle,
+    snpguard_client_path: &str,
+    ca_pem_path: &str,
+    vmk_sealed_path: &str,
+    attest_url: &str,
+    hook_path: &str,
+    local_top_path: &str,
+) -> Result<()> {
+    // Create directories
+    g.mkdir_p("/etc/snpguard")
+        .map_err(|e| anyhow!("Failed to mkdir /etc/snpguard: {:?}", e))?;
+
+    // Upload snpguard binary
+    g.upload(snpguard_client_path, "/usr/bin/snpguard-client")
+        .map_err(|e| anyhow!("Failed to upload /usr/bin/snpguard-client: {:?}", e))?;
+    g.chmod(0o755, "/usr/bin/snpguard-client")
+        .map_err(|e| anyhow!("Failed to chmod /usr/bin/snpguard-client: {:?}", e))?;
+
+    // Upload config files
+    g.upload(ca_pem_path, "/etc/snpguard/ca.pem")
+        .map_err(|e| anyhow!("Failed to upload /etc/snpguard/ca.pem: {:?}", e))?;
+    g.upload(vmk_sealed_path, "/etc/snpguard/vmk.sealed")
+        .map_err(|e| anyhow!("Failed to upload /etc/snpguard/vmk.sealed: {:?}", e))?;
+    g.write("/etc/snpguard/attest.url", attest_url.as_bytes())
+        .map_err(|e| anyhow!("Failed to write /etc/snpguard/attest.url: {:?}", e))?;
+
+    // Upload initramfs hook script
+    g.upload(hook_path, "/etc/initramfs-tools/hooks/snpguard")
+        .map_err(|e| {
+            anyhow!(
+                "Failed to upload /etc/initramfs-tools/hooks/snpguard: {:?}",
+                e
+            )
+        })?;
+    g.chmod(0o755, "/etc/initramfs-tools/hooks/snpguard")
+        .map_err(|e| {
+            anyhow!(
+                "Failed to chmod /etc/initramfs-tools/hooks/snpguard: {:?}",
+                e
+            )
+        })?;
+
+    // Upload local-top attestation script
+    g.upload(
+        local_top_path,
+        "/etc/initramfs-tools/scripts/local-top/snpguard-attest",
+    )
+    .map_err(|e| {
+        anyhow!(
+            "Failed to upload /etc/initramfs-tools/scripts/local-top/snpguard-attest: {:?}",
+            e
+        )
+    })?;
+
+    g.chmod(
+        0o755,
+        "/etc/initramfs-tools/scripts/local-top/snpguard-attest",
+    )
+    .map_err(|e| {
+        anyhow!(
+            "Failed to chmod /etc/initramfs-tools/scripts/local-top/snpguard-attest: {:?}",
+            e
+        )
+    })?;
+
+    Ok(())
+}
+
 fn install_cryptsetup_on_target(
     g: &guestfs::Handle,
     target_rootfs: &str,
     vmk: &[u8],
+    snpguard_client_path: &str,
+    ca_pem_path: &str,
+    vmk_sealed_path: &str,
+    attest_url: &str,
+    hook_path: &str,
+    local_top_path: &str,
 ) -> Result<()> {
     enum DistroFamily {
         Debian,
@@ -694,22 +769,39 @@ fn install_cryptsetup_on_target(
     }
 
     // Map the package name and command
-    let cmds = match dist_family {
-        DistroFamily::Debian => vec![
-            "dhclient eth0",                       // bring the whole network up
-            "apt update -y",                       // update packages
-            "apt install -y cryptsetup-initramfs", // install cryptsetup
-            "pkill -KILL dhclient",                // kill running dhclient, otherwise it holds /dev
-            "update-initramfs -u -k all",          // update initramfs
-        ],
-        DistroFamily::RedHat => vec![
-            "dnf install -y cryptsetup",  // install cryptsetup
-            "update-initramfs -u -k all", // update initramfs
-        ],
+    let (install_cmds, update_initramfs_cmd) = match dist_family {
+        DistroFamily::Debian => (
+            vec![
+                "dhclient eth0",                       // bring the whole network up
+                "apt update -y",                       // update packages
+                "apt install -y cryptsetup-initramfs", // install cryptsetup
+                "pkill -KILL dhclient", // kill running dhclient, otherwise it holds /dev
+            ],
+            vec![
+                "update-initramfs -u -k all", // update initramfs
+            ],
+        ),
+        DistroFamily::RedHat => bail!("RedHat distributions are not supported at the moment"),
     };
 
-    // Run command
-    let cmd = cmds.join(";");
+    // Run install commands
+    let cmd = install_cmds.join(";");
+    g.sh(&format!("{}", cmd))
+        .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+
+    // Upload required files
+    upload_snpguard_files(
+        g,
+        snpguard_client_path,
+        ca_pem_path,
+        vmk_sealed_path,
+        attest_url,
+        hook_path,
+        local_top_path,
+    )?;
+
+    // Run update initramfs commands
+    let cmd = update_initramfs_cmd.join(";");
     g.sh(&format!("{}", cmd))
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
 
@@ -728,7 +820,7 @@ fn run_convert(
     // Load config if available
     let config = load_config().ok();
 
-    // Resolve attest_url (we'll use it later for repack_initrd)
+    // Resolve attest_url
     let _url = attest_url
         .clone()
         .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
@@ -785,38 +877,14 @@ fn run_convert(
     let vmk_path = out_staging.join("vmk.bin");
     fs::write(&vmk_path, &vmk)?;
 
-    println!("Copying the whole source image to target image...");
-    fs::copy(in_image, out_image).with_context(|| {
-        format!(
-            "Failed to copy {} to {}",
-            in_image.display(),
-            out_image.display()
-        )
-    })?;
-
-    println!("Preparing Guestfs context, launch appliance VM...");
-    let (g, scratch_rootfs, source_rootfs, target_rootfs) =
-        create_guestfs_context(in_image, out_image)?;
-
-    println!("Encrypting root filesystem with LUKS2...");
-    encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
-
-    println!("Install cryptsetup on target...");
-    install_cryptsetup_on_target(&g, &target_rootfs, &vmk)?;
-
-    println!("Extract boot artifacts (kernel, initrd, params) from target image");
-    let (kernel_data, initrd_data, kernel_params) =
-        extract_boot_data(&g, &scratch_rootfs, &target_rootfs, &vmk)?;
-
     println!("Generating unsealing keypair...");
     let unsealing_priv_path = out_staging.join("unsealing.key");
     let unsealing_pub_path = out_staging.join("unsealing.pub");
     local_ops::generate_keys(&unsealing_priv_path, &unsealing_pub_path)?;
 
     println!("Sealing VMK with unsealing public key...");
-    let sealed_vmk_path = out_staging.join("vmk.sealed");
-    let sealed_vmk_path_clone = sealed_vmk_path.clone();
-    local_ops::seal_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_path)?;
+    let sealed_vmk_file = out_staging.join("vmk.sealed");
+    local_ops::seal_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_file)?;
 
     // Remove unsealing public key (not needed after sealing)
     fs::remove_file(&unsealing_pub_path).context("Failed to remove unsealing public key")?;
@@ -883,7 +951,6 @@ fn run_convert(
 
     // Save sealed unsealing key
     let sealed_unsealing_key_path = out_staging.join("unsealing.key.sealed");
-    let sealed_unsealing_key_path_clone = sealed_unsealing_key_path.clone();
     fs::write(&sealed_unsealing_key_path, &unsealing_key_encrypted)?;
 
     // Securely delete unencrypted unsealing private key
@@ -894,10 +961,7 @@ fn run_convert(
     println!("Securely deleting unencrypted VMK...");
     secure_delete_file(&vmk_path)?;
 
-    // Repack initrd and write artifacts to staging directory
-    println!("Repacking initrd and writing artifacts to staging directory...");
-
-    // Prepare data for repack_initrd
+    // Prepare data
     let attest_url_str = attest_url
         .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
         .ok_or_else(|| {
@@ -905,25 +969,49 @@ fn run_convert(
                 "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
             )
         })?;
-    let attest_url_bytes: Vec<u8> = attest_url_str.into_bytes();
 
-    let ca_cert_data = fs::read(&ca_cert_file)
-        .with_context(|| format!("Failed to read CA cert from {:?}", ca_cert_file))?;
+    println!("Copying the whole source image to target image...");
+    fs::copy(in_image, out_image).with_context(|| {
+        format!(
+            "Failed to copy {} to {}",
+            in_image.display(),
+            out_image.display()
+        )
+    })?;
 
-    // Read sealed VMK for repack_initrd
-    let sealed_vmk_data = fs::read(&sealed_vmk_path_clone)
-        .context("Failed to read sealed VMK for initrd repacking")?;
+    println!("Preparing Guestfs context, launch appliance VM...");
+    let (g, scratch_rootfs, source_rootfs, target_rootfs) =
+        create_guestfs_context(in_image, out_image)?;
 
-    // Repack initrd
-    let repacked_initrd = initrd::repack_initrd(
-        &initrd_data,
-        &attest_url_bytes,
-        &ca_cert_data,
-        &sealed_vmk_data,
+    println!("Encrypting root filesystem with LUKS2...");
+    encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
+
+    let ca_cert_path = ca_cert_file
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", ca_cert_file))?;
+    let sealed_vmk_path = sealed_vmk_file
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", sealed_vmk_file))?;
+
+    println!("Install cryptsetup on target and update initrd...");
+    install_cryptsetup_on_target(
+        &g,
+        &target_rootfs,
+        &vmk,
+        "target/x86_64-unknown-linux-musl/release/snpguard-client",
+        ca_cert_path,
+        sealed_vmk_path,
+        &attest_url_str,
+        "scripts/initramfs-tools/hook.sh",
+        "scripts/initramfs-tools/attest.sh",
     )?;
 
+    println!("Extract boot artifacts (kernel, initrd, params) from target image");
+    let (kernel_data, initrd_data, kernel_params) =
+        extract_boot_data(&g, &scratch_rootfs, &target_rootfs, &vmk)?;
+
     // Write artifacts to staging directory
-    // 1. Copy firmware if provided
+    // Copy firmware if provided
     if let Some(ref firmware_path) = firmware {
         let firmware_dest = out_staging.join("firmware-code.fd");
         fs::copy(firmware_path, &firmware_dest).with_context(|| {
@@ -935,17 +1023,17 @@ fn run_convert(
         println!("  Copied firmware to firmware-code.fd");
     }
 
-    // 2. Write repacked initrd
+    // Write extracted repacked initrd
     let initrd_dest = out_staging.join("initrd.img");
-    fs::write(&initrd_dest, &repacked_initrd).context("Failed to write repacked initrd")?;
+    fs::write(&initrd_dest, &initrd_data).context("Failed to write repacked initrd")?;
     println!("Wrote repacked initrd to initrd.img");
 
-    // 3. Write extracted kernel
+    // Write extracted kernel
     let kernel_dest = out_staging.join("vmlinuz");
     fs::write(&kernel_dest, &kernel_data).context("Failed to write kernel")?;
     println!("Wrote kernel to vmlinuz");
 
-    // 4. Write kernel params
+    // Write kernel params
     let params_dest = out_staging.join("kernel-params.txt");
     fs::write(&params_dest, &kernel_params).context("Failed to write kernel params")?;
     println!("Wrote kernel params to kernel-params.txt");
@@ -956,11 +1044,8 @@ fn run_convert(
     println!("Image conversion completed successfully!");
     println!("  Output image: {:?}", out_image);
     println!("  Staging directory: {:?}", out_staging);
-    println!("  Sealed VMK: {:?}", sealed_vmk_path_clone);
-    println!(
-        "  Sealed unsealing key: {:?}",
-        sealed_unsealing_key_path_clone
-    );
+    println!("  Sealed VMK: {:?}", sealed_vmk_path);
+    println!("  Sealed unsealing key: {:?}", sealed_unsealing_key_path);
 
     Ok(())
 }
