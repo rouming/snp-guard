@@ -884,7 +884,7 @@ fn run_convert(
 
     println!("Sealing VMK with unsealing public key...");
     let sealed_vmk_file = out_staging.join("vmk.sealed");
-    local_ops::seal_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_file)?;
+    local_ops::encrypt_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_file)?;
 
     // Remove unsealing public key (not needed after sealing)
     fs::remove_file(&unsealing_pub_path).context("Failed to remove unsealing public key")?;
@@ -949,9 +949,9 @@ fn run_convert(
     unsealing_key_encrypted.extend_from_slice(&encapped_bytes);
     unsealing_key_encrypted.extend_from_slice(&ciphertext);
 
-    // Save sealed unsealing key
-    let sealed_unsealing_key_path = out_staging.join("unsealing.key.sealed");
-    fs::write(&sealed_unsealing_key_path, &unsealing_key_encrypted)?;
+    // Save encrypted unsealing key
+    let enc_unsealing_key_path = out_staging.join("unsealing.key.enc");
+    fs::write(&enc_unsealing_key_path, &unsealing_key_encrypted)?;
 
     // Securely delete unencrypted unsealing private key
     println!("Securely deleting unencrypted unsealing private key...");
@@ -1043,7 +1043,7 @@ fn run_convert(
     println!("  Output image: {:?}", out_image);
     println!("  Staging directory: {:?}", out_staging);
     println!("  Sealed VMK: {:?}", sealed_vmk_path);
-    println!("  Sealed unsealing key: {:?}", sealed_unsealing_key_path);
+    println!("  Encrypted unsealing key: {:?}", enc_unsealing_key_path);
 
     Ok(())
 }
@@ -1056,7 +1056,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Seal { pub_key, data, out } => {
-            local_ops::seal_file(&pub_key, &data, &out)?;
+            local_ops::encrypt_file(&pub_key, &data, &out)?;
             Ok(())
         }
         Command::Unseal {
@@ -1064,7 +1064,7 @@ fn main() -> Result<()> {
             sealed_data,
             out,
         } => {
-            local_ops::unseal_file(&priv_key, &sealed_data, &out)?;
+            local_ops::decrypt_file(&priv_key, &sealed_data, &out)?;
             Ok(())
         }
         Command::Convert {

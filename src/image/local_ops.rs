@@ -13,8 +13,6 @@ use std::path::Path;
 /// Generates an X25519 keypair and saves as standard PEM files.
 pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
     let mut rng = OsRng;
-    println!("Generating X25519 Unsealing Keypair...");
-
     // 1. Generate Keypair using HPKE's KEM
     let (priv_key, pub_key) = <X25519HkdfSha256 as Kem>::gen_keypair(&mut rng);
     let priv_bytes = priv_key.to_bytes();
@@ -60,8 +58,8 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Seals a file using HPKE (X25519 + AES-GCM-256)
-pub fn seal_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Result<()> {
+/// Encrypts a file using HPKE (X25519 + AES-GCM-256)
+pub fn encrypt_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Result<()> {
     let mut rng = OsRng;
 
     // 1. Load Data
@@ -87,7 +85,7 @@ pub fn seal_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Resu
     let hpke_key = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&pub_bytes)
         .map_err(|e| anyhow!("Key conversion failed: {}", e))?;
 
-    // 3. Encrypt (HPKE Seal)
+    // 3. Encrypt (HPKE)
     let (encapped_key, mut sender_ctx) = hpke::setup_sender::<
         AesGcm256,
         HkdfSha256,
@@ -107,24 +105,24 @@ pub fn seal_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Resu
     fs::write(out_path, &output)
         .with_context(|| format!("Failed to write output to {:?}", out_path))?;
 
-    println!("Sealed {} bytes to {:?}", plaintext.len(), out_path);
+    println!("Encrypted {} bytes to {:?}", plaintext.len(), out_path);
     Ok(())
 }
 
-/// Unseals a file using HPKE (X25519 + AES-GCM-256)
-pub fn unseal_file(priv_key_path: &Path, sealed_data_path: &Path, out_path: &Path) -> Result<()> {
-    // 1. Load Sealed Blob
-    let sealed_blob = fs::read(sealed_data_path)
-        .with_context(|| format!("Failed to read sealed data file: {:?}", sealed_data_path))?;
+/// Decrypts a file using HPKE (X25519 + AES-GCM-256)
+pub fn decrypt_file(priv_key_path: &Path, enc_data_path: &Path, out_path: &Path) -> Result<()> {
+    // 1. Load encrypted blob
+    let enc_blob = fs::read(enc_data_path)
+        .with_context(|| format!("Failed to read encrypted data file: {:?}", enc_data_path))?;
 
-    if sealed_blob.len() < 32 {
+    if enc_blob.len() < 32 {
         return Err(anyhow!(
-            "Sealed blob too short (expected at least 32 bytes for encapped key)"
+            "Encrypted blob too short (expected at least 32 bytes for encapped key)"
         ));
     }
 
     // 2. Split Blob: [ Encapped_Key (32 bytes) || Ciphertext ]
-    let (encapped_bytes, ciphertext) = sealed_blob.split_at(32);
+    let (encapped_bytes, ciphertext) = enc_blob.split_at(32);
 
     // 3. Load and Parse Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let priv_pem_str = fs::read_to_string(priv_key_path)
@@ -166,6 +164,6 @@ pub fn unseal_file(priv_key_path: &Path, sealed_data_path: &Path, out_path: &Pat
     fs::write(out_path, &plaintext)
         .with_context(|| format!("Failed to write output to {:?}", out_path))?;
 
-    println!("Unsealed {} bytes to {:?}", plaintext.len(), out_path);
+    println!("Decrypted {} bytes to {:?}", plaintext.len(), out_path);
     Ok(())
 }
