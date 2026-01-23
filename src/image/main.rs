@@ -772,10 +772,15 @@ fn install_cryptsetup_on_target(
     let (install_cmds, update_initramfs_cmd) = match dist_family {
         DistroFamily::Debian => (
             vec![
-                "dhclient eth0",                       // bring the whole network up
+                // FIXME: we need to bring these tools with
+                // FIXME: appliance VM and not rely on
+                // FIXME: target rootfs
+                //
+                "dhcpcd -1 eth0", // bring the whole network up
+                // super important to have this here, see comments below
+                "echo nameserver 1.1.1.1 > /etc/resolv.conf",
                 "apt update -y",                       // update packages
                 "apt install -y cryptsetup-initramfs", // install cryptsetup
-                "pkill -KILL dhclient", // kill running dhclient, otherwise it holds /dev
             ],
             vec![
                 "update-initramfs -u -k all", // update initramfs
@@ -784,10 +789,22 @@ fn install_cryptsetup_on_target(
         DistroFamily::RedHat => bail!("RedHat distributions are not supported at the moment"),
     };
 
-    // Run install commands
+    // Run install commands in one command. Why join? Each command is
+    // not just a command; it is a set of preparations and cleaning
+    // routines done by the guestfs daemon. For example, on each
+    // command call a copy of /etc/resolv.conf from the appliance VM
+    // to rootfs occurs. Therefore, if you update /etc/resolv.conf
+    // inside rootfs in a separate command, the file will be
+    // immediately overwritten. I encountered a situation where
+    // /etc/resolv.conf was missing in the appliance VM (not sure if
+    // that's a bug or feature), but the result was that every command
+    // should be joined in a pipeline; otherwise, there's no DNS
+    // resolving.
     let cmd = install_cmds.join(";");
-    g.sh(&format!("{}", cmd))
+    let _out = g
+        .sh(&format!("{}", cmd))
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+    //println!("{}", _out);
 
     // Upload required files
     upload_snpguard_files(
@@ -802,8 +819,10 @@ fn install_cryptsetup_on_target(
 
     // Run update initramfs commands
     let cmd = update_initramfs_cmd.join(";");
-    g.sh(&format!("{}", cmd))
+    let _out = g
+        .sh(&format!("{}", cmd))
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+    //println!("{}", _out);
 
     Ok(())
 }
