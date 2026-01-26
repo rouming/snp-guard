@@ -11,18 +11,6 @@ esac
 # Required by initramfs-tools
 . /usr/share/initramfs-tools/hook-functions
 
-# Deploy crypt modules, dependencies of the SEV-SNP driver
-manual_add_modules \
-    crypto \
-    cryptd \
-    aes \
-    aesni_intel \
-    cbc \
-    xts \
-    sha256 \
-    sha512 \
-    dm_crypt
-
 # SEV-SNP guest driver
 force_load sev-guest
 
