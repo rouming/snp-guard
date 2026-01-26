@@ -2,7 +2,6 @@
 
 # ==============================================================================
 #  AMD SEV-SNP QEMU Launcher
-#  Features: Auto-Artifacts, ID-Block Policy Extraction, SLIRP Network
 # ==============================================================================
 
 # --- Styling & Colors ---
@@ -19,21 +18,22 @@ warn()  { echo -e "${YELLOW}${BOLD}[WARN]${NC} $1"; }
 err()   { echo -e "${RED}${BOLD}[ERR]${NC}  $1"; }
 
 # --- Default Parameters ---
-HDA_FILE="debian-12-genericcloud-amd64.qcow2"
+HDA_FILE=""
 GUEST_SIZE_IN_MB="4096"
 SMP_NCPUS="4"
 CPU_TYPE="EPYC-Milan"
 CONSOLE="serial" # Default to serial for cloud images
-QEMU_BIN=/usr/bin/qemu-9.2
+QEMU_BIN=/usr/bin/qemu-system-x86_64
 VNC_PORT=""
 NO_NET="0"
+NET_SCRIPT=""
 FREEZE="0"
 USE_VIRTIO="1"
 
 # SEV-SNP Defaults
 # 0x30000 = Bit 16 (SMT Allowed) | Bit 17 (Reserved, must be 1)
 # This is the fallback if no ID Block is provided.
-SEV_POLICY="0x30000" 
+SEV_POLICY="0x30000"
 CBITPOS=51
 REDUCED_PHYS_BITS=5
 
@@ -42,7 +42,7 @@ ARTIFACTS_ARCHIVE=""
 TEMP_DIR=""
 
 # Checks
-if [ id -u -ne 0 ]; then
+if [ $(id -u) -ne 0 ]; then
     err "This script must be run as root (for KVM/SEV access)."
     exit 1
 fi
@@ -54,6 +54,9 @@ fi
 
 # Trap for cleanup
 cleanup() {
+	if [ "$NO_NET" == "0" ]; then
+		network_down
+	fi
     if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
         rm -rf "$TEMP_DIR"
     fi
@@ -66,14 +69,16 @@ trap cleanup EXIT
 usage() {
     echo -e "${BOLD}Usage:${NC} $0 [options]"
     echo ""
-    echo "  --hda <file>          Path to disk image (default: $HDA_FILE)"
-    echo "  --artifacts <tar.gz>  Path to artifacts archive (contains kernel, bios, id-blocks)"
+    echo "  --qemu <file>         Path to QEMU binary"
+    echo "  --hda <file>          Path to disk image"
+    echo "  --artifacts <tar.gz>  Path to artifacts archive (contains kernel, bios, id-blocks, ...)"
     echo "  --mem <MB>            Guest memory in MB (default: $GUEST_SIZE_IN_MB)"
     echo "  --vcpus <n>           Number of vCPUs (default: $SMP_NCPUS)"
     echo "  --vcpu-type <type>    CPU Model (default: $CPU_TYPE, e.g. EPYC-Genoa)"
     echo "  --console <type>      'serial' (default) or 'qxl'"
     echo "  --vnc <display>       VNC display number (e.g., 0 for :0)"
     echo "  --nonet               Disable network"
+    echo "  --net-script <file>   Path to a network script with custom 'network_up()' and 'network_down()' functions"
     echo "  --freeze              Freeze CPU at startup (for debugging)"
     echo ""
     echo -e "${BOLD}Example:${NC}"
@@ -88,6 +93,10 @@ QEMU_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --qemu|-qemu)
+            QEMU_BIN="$2"
+            shift 2
+            ;;
         --hda|-hda)
             HDA_FILE="$2"
             shift 2
@@ -120,6 +129,10 @@ while [[ $# -gt 0 ]]; do
             NO_NET="1"
             shift 1
             ;;
+        --net-script|-net-script)
+            NET_SCRIPT="$2"
+            shift 2
+            ;;
         --freeze|-freeze)
             FREEZE="1"
             shift 1
@@ -149,7 +162,7 @@ if [ -n "$ARTIFACTS_ARCHIVE" ]; then
     TEMP_DIR=$(mktemp -d)
 
     # Extract to temp dir
-    tar -xzf "$ARTIFACTS_ARCHIVE" -C "$TEMP_DIR"
+    tar -xzf "$ARTIFACTS_ARCHIVE" -C "$TEMP_DIR" 2>/dev/null
 
     # Recursive finder helper
     find_artifact() {
@@ -176,15 +189,16 @@ if [ -n "$ARTIFACTS_ARCHIVE" ]; then
             SEV_POLICY="0x${EXTRACTED_POLICY_HEX}"
             ok "ID Block found. Enforcing Policy: ${SEV_POLICY}"
         else
-            warn "ID Block found but policy extraction failed. Using default."
+            warn "ID Block found but policy extraction failed. Using default"
         fi
     else
         warn "No ID Block in artifacts. Using generic Policy: ${SEV_POLICY}"
     fi
 
-    ok "Artifacts loaded successfully."
+    ok "Artifacts loaded successfully"
 else
-    warn "No artifacts provided. Using system defaults."
+    err "No artifacts provided"
+    exit 1
 fi
 
 # --- Constructing QEMU Command ---
@@ -193,9 +207,9 @@ fi
 QEMU_ARGS+=( "$QEMU_BIN" )
 QEMU_ARGS+=( "-enable-kvm" )
 QEMU_ARGS+=( "-cpu" "${CPU_TYPE}" )
-QEMU_ARGS+=( "-machine" "q35,confidential-guest-support=sev0,vmport=off" )
-QEMU_ARGS+=( "-smp" "${SMP_NCPUS},maxcpus=64" )
-QEMU_ARGS+=( "-m" "${GUEST_SIZE_IN_MB}M,slots=5,maxmem=30G" )
+QEMU_ARGS+=( "-machine" "q35,confidential-guest-support=sev0" )
+QEMU_ARGS+=( "-smp" "${SMP_NCPUS}" )
+QEMU_ARGS+=( "-m" "${GUEST_SIZE_IN_MB}M" )
 QEMU_ARGS+=( "-no-user-config" )
 QEMU_ARGS+=( "-nodefaults" )
 
@@ -205,10 +219,10 @@ if [ -n "$UEFI_BIOS_CODE" ]; then
 fi
 
 # EFIShell disable
-QEMU_ARGS+=( "-fw_cfg" "name=opt/org.tianocore/EFIShellSupport,string=no" )
+#QEMU_ARGS+=( "-fw_cfg" "name=opt/org.tianocore/EFIShellSupport,string=no" )
 
 # OVMF Debug logging
-QEMU_ARGS+=( "-debugcon" "file:ovmf.log" "-global" "isa-debugcon.iobase=0x402" )
+#QEMU_ARGS+=( "-debugcon" "file:ovmf.log" "-global" "isa-debugcon.iobase=0x402" )
 
 # --- SEV-SNP Configuration ---
 
@@ -242,12 +256,27 @@ fi
 
 # --- Network (Standard User/SLIRP) ---
 
-if [ "$NO_NET" == "0" ]; then
-    # Default QEMU 'user' networking. 
+network_up() {
+    # Default QEMU 'user' networking.
     # Forwards host port 2222 -> guest port 22 for SSH convenience.
     QEMU_ARGS+=( "-netdev" "user,id=net0,hostfwd=tcp::2222-:22" )
     QEMU_ARGS+=( "-device" "virtio-net-pci,netdev=net0,romfile=" )
     info "Network enabled (User Mode). SSH mapped: localhost:2222 -> guest:22"
+}
+
+network_down() {
+    :
+}
+
+if [ -n "$NET_SCRIPT" ]; then
+    if [ ! -f "$NET_SCRIPT" ]; then
+        err "Network script file not found: $NET_SCRIPT"
+        exit 1
+    fi
+    . "$NET_SCRIPT"
+fi
+if [ "$NO_NET" == "0" ]; then
+    network_up
 fi
 
 # --- Console & Graphics ---
