@@ -1,78 +1,80 @@
 # SnpGuard - SEV-SNP Attestation Service
 
-**SnpGuard** is an open-source SEV-SNP (Secure Encrypted Virtualization - Secure Nested Paging) attestation service written in Rust. It provides a secure, scalable solution for verifying the integrity and authenticity of guest virtual machines running on AMD EPYC processors with SEV-SNP support.
+**Zero-friction bootstrapping for AMD SEV-SNP Confidential VMs.**
+
+SnpGuard is a toolchain and attestation service designed to turn
+standard cloud images into Confidential VMs (CVMs) without complex
+manual configuration. It automates the lifecycle of measuring boot
+artifacts, encrypting disks, and securely releasing keys during the
+pre-boot phase.
 
 ## Motivation
 
-SEV-SNP provides hardware-based memory encryption and integrity protection for virtual machines. However, to fully leverage these security features, you need a way to:
+While libraries for SNP exist (thanks to
+[VirTEE](https://virtee.io/)), the ecosystem lacks an end-to-end
+toolchain for bootstrapping and attestating confidential
+VMs. Currently, operators must stitch together image builders,
+measurement calculators, and key brokers manually. `snp-guard` unifies
+this into a binding workflow: `convert` -> `register` -> `boot`. It
+is designed specifically to fill the IaaS/VM bootstrapping gap that
+heavier container-focused solutions overlook.
 
-1. **Verify VM Integrity**: Ensure that a guest VM is running the expected firmware, kernel, and initrd images
-2. **Secure Secret Release**: Only release secrets (e.g., disk encryption keys) to VMs that pass attestation
-3. **Centralized Management**: Manage attestation policies and secrets from a central service
-4. **Automated Boot Process**: Integrate attestation seamlessly into the VM boot process
+## The Problem
 
-SnpGuard addresses these needs by providing:
-- A **management frontend** for configuring attestation records
-- An **attestation service** that verifies SEV-SNP reports using AMD's certificate chain
-- A **lightweight client** that runs in the guest VM's initrd to perform attestation during boot
-- **HTTPS/TLS communication** with Protocol Buffers for secure, efficient data exchange
+Deploying AMD SEV-SNP VMs requires solving three technical challenges:
 
-## Architecture
+1. **The Measurement Problem:** To verify a CVM, you must calculate
+   the precise launch digest of its firmware, kernel, initrd, and
+   kernel command line. Any update to these artifacts changes the
+   measurement, breaking trust. Calculating this manually is
+   error-prone and brittle.
 
-```
-┌─────────────────┐          HTTPS/TLS + Protobuf         ┌──────────────────┐
-│  Guest VM       │ ────────────────────────────────────> │  SnpGuard Server │
-│  (initrd)       │                                       │                  │
-│                 │ <──────────────────────────────────── │  - Verifies      │
-│  snpguard-client│         Nonce + Attestation Report    │    Reports       │
-│                 │                                       │  - Releases      │
-│  Uses sev lib   │                                       │    Secrets       │
-│  tool           │                                       │  - Manages       │
-└─────────────────┘                                       │    Records       │
-                                                          └──────────────────┘
-                                                                     │
-                                                                     │ HTTP
-                                                                     ▼
-                                                          ┌──────────────────┐
-                                                          │  Management UI   │
-                                                          │  (Web Frontend)  │
-                                                          └──────────────────┘
-```
+2. **The Secret Delivery Problem:** The VM needs its volume master
+   key (VMK) before it can mount the root filesystem. However, you cannot
+   bake the key into the image (it would be visible in the host
+   storage) or send it over the network without verifying the receiver
+   first.
 
-## Features
+3. **The Bootstrapping Problem:** You need a trusted agent inside the
+   guest's early boot environment (initrd) to perform the
+   cryptographic handshake with the attestation server before the OS
+   creates users or networking configurations.
 
-- **HTTPS/TLS Communication**: Secure attestation protocol using TLS with certificate verification
-- **Protocol Buffers**: Efficient binary serialization for attestation messages
-- **AMD Certificate Verification**: Automatic fetching and verification of AMD VCEK certificates
-- **CPU Family Detection**: Automatic detection of CPU family (Genoa, Milan, Turin) from attestation reports
-- **Management Web UI**: Modern, user-friendly interface for managing attestation records
-- **Static Client Binary**: Client built with musl libc for inclusion in initrd images
-- **Initrd Integration**: Scripts for embedding attestation into both initramfs-tools and dracut initrds
-- **Artifact Generation**: Automatic generation of ID-Block and Auth-Block from user-provided keys
-- **Secret Management**: Secure storage and release of secrets upon successful attestation
+## The Solution
 
-## Prerequisites
+SnpGuard solves these problems by injecting a lightweight Rust-based
+agent into the VM's initrd and providing a centralized server to
+manage measurements.
 
-### Server Requirements
+* **Image Conversion:** The `snpguard-image` tool takes a stock
+  QCOW2 (e.g., Debian, Ubuntu), encrypts the root partition (LUKS),
+  injects the `snpguard-client` and a dedicated hook into the initrd
+  and extracts the exact kernel/initrd/cmdline that will be used for
+  booting.
 
-- Rust toolchain (1.70+)
-- SQLite (for database)
-- `mksquashfs` (for SquashFS artifact generation)
-- `tar` and `gzip` (for tarball generation)
-- TLS certificate and key (for production HTTPS)
+* **Registration & Measurement:** The extracted artifacts are
+  registered with the SnpGuard Server. The server records the
+  measurements and returns a `launch-artifacts.tar.gz` bundle
+  containing the kernel, initrd, and the cryptographic ID Block and
+  Authentication Block required to launch the VM.  The SnpGuard Server
+  leverages launch artifacts measurement to the [`sev` Rust
+  library](https://github.com/virtee/sev) and [`snpguest`
+  tool](https://github.com/virtee/snpguest) from the VirTEE community.
 
-**Note**: The `snpguest` tool is now included as a git submodule and built automatically as part of the project.
+* **Visual Management (Web UI):** A built-in dashboard allows
+  administrators to view and register images, launch artifacts, and
+  manage API tokens.
 
-### Client Requirements (in Guest VM)
+* **Remote Attestation:** On boot, the client (running in the initrd)
+  generates an AMD SEV-SNP attestation report. The SnpGuard Server
+  verifies this report against the registered measurements and
+  securely releases the volume master key (VMK) by encrypting it with
+  a user's ephemeral session key.
 
-- SEV-SNP enabled hardware and guest firmware
-- Network connectivity during boot
+## Quick Start
 
-## Building
-
-### Initial Setup
-
-If you're cloning the repository for the first time, initialize the git submodules:
+If you're cloning the repository for the first time, initialize the
+git submodules:
 
 ```bash
 git submodule update --init --recursive
@@ -80,418 +82,127 @@ git submodule update --init --recursive
 
 This is required because `snpguest` is included as a git submodule.
 
-### Build Everything
+### 1. Attestation Server & Web Dashboard
+
+Generate TLS certificates:
 
 ```bash
-make build
+./scripts/generate-tls-certs.sh --output data/tls --ip ${IP}
 ```
 
-This builds the server, statically-linked client, and `snpguest` tool.
+If a hostname should be used instead of `${IP}`, please provide the
+`--dns <HOSTNAME>` option instead of the `--ip` option. Multiple `--ip
+<IP>` or `--dns <HOSTNAME>` entries can be provided one after another.
 
-### Build Server Only
+Start the server. The server provides both the Attestation API and the
+Management Web UI.
 
 ```bash
-make build-server
+make run-server
 ```
 
-### Build Client Only (Static, musl)
+On first start, the server generates a master password and prints it
+to stdout. Copy it, then:
+
+* Navigate to the Web Dashboard at https://${HOSTNAME_OR_IP}:3000
+* Log in with the master password
+* Go to `Tokens` to create an API token for your CLI client
+
+### 2. Attestation Client
+
+Configure the client to connect to the attestation server:
 
 ```bash
-make build-client
+cargo run --bin snpguard-client config login \
+  --url https://${HOSTNAME_OR_IP}:3000 \
+  --token ${TOKEN}
 ```
 
-The client is built for `x86_64-unknown-linux-musl` to avoid glibc dependencies.
+### 3. Image Conversion
 
-### Build snpguest Tool Only (Static, musl)
+Download a standard cloud image and convert it to a confidential-ready
+image. This process uses **libguestfs** to perform surgical, offline
+manipulation of the QCOW2 image, including root filesystem encryption
+(LUKS), partition management, and injecting the attestation agent into
+the initrd.
 
 ```bash
-make build-snpguest
-```
-
-The `snpguest` tool is built from the included git submodule for `x86_64-unknown-linux-musl`.
-
-### Build Image Tool
-
-```bash
-make build-image
-```
-
-Builds the `snpguard-image` tool for image conversion and key management.
-
-**Note**: The image tool requires `libguestfs` to be installed on the system for the `convert` subcommand. Install it via your package manager (e.g., `apt-get install libguestfs-dev` on Debian/Ubuntu, or `dnf install libguestfs-devel` on Fedora/RHEL).
-
-## Setup
-
-### 1. Initialize Database
-
-```bash
-make db-setup
-```
-
-This creates the SQLite database and runs migrations.
-
-### 2. Configure DATA_DIR (single persistence root)
-
-All persistent state lives under one directory (default `/data`). Override for local dev:
-
-```bash
-export DATA_DIR="$(pwd)/data"
-```
-
-Expected layout (created automatically on startup):
-
-```
-/data/
- ├── tls/            (server.crt, server.key, ca.pem)
- ├── auth/           (master.pw.hash, ingestion.key, ingestion.pub)
- ├── db/             (snpguard.sqlite)
- ├── artifacts/
- │    ├── attestations/<attestation-id>/
- │    └── tmp/
- └── logs/
-```
-
-### 3. Authentication
-
-On first start the service:
-- Generates a Diceware passphrase (EFF large wordlist), prints it once to the console.
-- Stores only the Argon2 hash at `/data/auth/master.pw.hash` (or `${DATA_DIR}/auth/master.pw.hash`).
-
-Tokens (created from the web UI) can be used as Bearer tokens for management APIs.
-
-### 4. TLS (required)
-
-If `/data/tls/server.crt` and `/data/tls/server.key` are absent, the service auto-generates a self-signed pair (and `ca.pem`) for development. Provide your own by placing them under `/data/tls/` before start.
-
-### 5. Run Server
-
-```bash
-DATA_DIR="$(pwd)/data" make run-server
-```
-
-Or manually:
-
-```bash
-DATA_DIR="$(pwd)/data" cargo run --bin snpguard-server
-```
-
-The server listens on HTTPS:
-- **Management UI**: `https://localhost:3000`
-- **Attestation API**: `https://localhost:3000/v1/attest/nonce` and `/v1/attest/report`
-- **Management API**: `https://localhost:3000/v1/records/*`, `/v1/tokens/*`
-- TLS cert/key are loaded from `${DATA_DIR}/tls` (auto-generated if missing).
-
-## Usage
-
-### Creating an Attestation Record
-
-1. **Access Management UI**: Navigate to `https://localhost:3000` and log in
-2. **Click "Create New Record"**
-3. **Fill in the form**:
-   - **OS Name**: Descriptive name for this VM configuration
-   - **Unsealing Private Key**: X25519 private key (non-standard PEM format) for unsealing secrets (will be encrypted with server's ingestion public key and stored)
-     ```bash
-     # Generate using snpguard-image (recommended)
-     snpguard-image keygen --priv-out unsealing.key --pub-out unsealing.pub
-     # Then upload unsealing.key as the Unsealing Private Key
-     ```
-     **Note**: Keys generated by `snpguard-image keygen` use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format.
-   - **Firmware Image**: OVMF firmware binary (<10 MB)
-   - **Kernel Binary**: Linux kernel image (<50 MB)
-   - **Initrd Image**: Initial ramdisk (<50 MB)
-   - **Kernel Parameters**: Additional kernel command-line parameters
-   - **vCPUs**: Number of virtual CPUs
-   - **vCPU Type**: EPYC, EPYC-Milan, EPYC-Rome, or EPYC-Genoa
-   - **Service URL**: HTTPS URL of this attestation service
-
-**Note**: ID Block Key and Auth Block Key are now automatically generated by the server. You only need to provide the Unsealing Private Key.
-
-4. **Click "Generate & Save"**
-
-The service will:
-- Generate ID Block Key and Auth Block Key automatically
-- Generate measurements using `snpguest`
-- Create ID-Block and Auth-Block
-- Encrypt ID and Auth keys with the ingestion public key (HPKE) and store in database
-- Encrypt the unsealing private key with the ingestion public key (HPKE)
-- Compute key digests for lookup
-- Delete ID and Auth key files from artifacts (keys are stored encrypted in database)
-- Store the attestation record
-
-### Downloading Artifacts
-
-From the record view page, you can download:
-- **ID-Block** and **Auth-Block** binaries
-- **Tarball** (`artifacts.tar.gz`) with all files at root level
-- **SquashFS** (`artifacts.squashfs`) with proper permissions
-
-### Preparing Guest VM
-
-1. **Repack Initrd** with the attestation client:
-
-```bash
-# If using auto-generated self-signed certs:
-make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img CA_CERT=./data/tls/server.crt
-# Otherwise point CA_CERT at your CA / server cert:
-# make repack ... CA_CERT=./certs/ca.pem
-```
-
-Or manually:
-
-```bash
-./scripts/repack-initrd.sh /path/to/original-initrd.img /path/to/new-initrd.img
-```
-
-The repack script automatically detects and supports both:
-- **initramfs-tools** (Ubuntu, Debian): Installs hook at `scripts/local-top/snpguard_attest`
-- **dracut** (RedHat, CentOS, Fedora): Installs hook at `lib/dracut/hooks/pre-mount/99-snpguard.sh`
-
-Both hooks run after network initialization but before root filesystem mounting, ensuring attestation happens at the correct boot phase.
-
-2. **Ensure `snpguest` is in initrd**: The script expects `snpguest` to be available in the initrd's PATH
-
-3. **Boot the VM**: The attestation will happen automatically during boot (client pins `/etc/snpguard/ca.pem`; no insecure TLS fallback)
-
-### Attestation Flow
-
-1. **Guest VM boots** and network is initialized
-2. **Initrd hook runs** (`snpguard_attest` script)
-3. **Client requests nonce** (64 bytes) from attestation service via HTTPS
-4. **Client generates ephemeral session key** (X25519, 32 bytes public key)
-5. **Client creates binding hash**: SHA512(server_nonce || client_pub_bytes) -> 64 bytes
-6. **Client generates attestation report** with binding hash in report_data field using `snpguest report`
-7. **Client sends attestation request** with report, server_nonce, client_pub_bytes, and sealed_blob (HPKE-encrypted VMK)
-8. **Service verifies** (in strict order):
-   - Parses report with sev call from bytes
-   - Verifies stateless nonce from the report.report_data - must be generated by our code, signed with ephemeral secret, not expired (within +/- 60s window)
-   - Verifies hash binding - SHA512(server_nonce || client_pub_bytes) must match report.report_data
-   - Finds attestation record by report.image_id, report.id_key_digest, report.auth_key_digest
-   - Checks if record is not disabled
-   - Checks TCB (bootloader, TEE, SNP, microcode versions meet minimum requirements)
-   - Checks VMPL (must be 0 for kernel level)
-   - Verifies report certs (fetches AMD certificates from KDS, verifies certificate chain and report signature)
-   - Reencrypts sealed blob (unseals VMK using unsealing private key, reseals for client session)
-9. **Service responds** with success, encapped_key, and ciphertext (session-encrypted VMK)
-10. **Client decrypts session response** to get VMK and outputs to stdout in hex format
-
-**Security**: Nonce verification ensures the nonce was legitimately issued by the server before validating the binding hash, preventing replay attacks and ensuring the attestation report is bound to the specific session.
-
-## API Reference
-
-All API endpoints use HTTPS with Protocol Buffers (`application/x-protobuf`) for request/response payloads. For detailed API documentation, see [docs/api.md](docs/api.md).
-
-### Attestation Endpoints
-
-These endpoints are used by guest VMs during the attestation process.
-
-#### POST `/v1/attest/nonce`
-
-Request a random 64-byte nonce for attestation report generation.
-
-**Request** (Protobuf):
-```protobuf
-message NonceRequest {}
-```
-
-**Note**: The request message is empty. The `vm_id` field is not used in the current implementation.
-
-**Response** (Protobuf):
-```protobuf
-message NonceResponse {
-  bytes nonce = 1;  // Exactly 64 bytes
-}
-```
-
-#### POST `/v1/attest/report`
-
-Verify an attestation report and return secret if successful.
-
-**Request** (Protobuf):
-```protobuf
-message AttestationRequest {
-  bytes report_data = 1;  // SEV-SNP attestation report (binary)
-}
-```
-
-**Response** (Protobuf):
-```protobuf
-message AttestationResponse {
-  bool success = 1;
-  bytes secret = 2;  // Secret to release (if success)
-  string error_message = 3;  // Error description (if !success)
-}
-```
-
-### Management Endpoints
-
-These endpoints require authentication (master password or Bearer token) and are used for managing attestation records.
-
-- `GET /v1/records` - List records
-- `GET /v1/records/{id}` - Get single record
-- `POST /v1/records` - Create record
-- `POST /v1/records/{id}/enable|disable` - Toggle enabled
-- `DELETE /v1/records/{id}` - Delete record
-
-**Note**: Attestation records are immutable. To make changes, delete the old record and create a new one.
-- `GET /v1/records/{id}/export/tar|squash` - Export latest artifacts
-- `GET /v1/tokens` / `POST /v1/tokens` / `POST /v1/tokens/{id}/revoke` - Manage tokens
-- `GET /v1/health` - Health; accepts Bearer token (200 if valid)
-
-## Image Tool (`snpguard-image`)
-
-The `snpguard-image` tool provides utilities for managing keys and converting VM images for SnpGuard attestation.
-
-### Available Commands
-
-#### `keygen` - Generate Unsealing Keypair
-
-Generate an X25519 keypair for unsealing secrets:
-
-```bash
-snpguard-image keygen --priv-out unsealing.key --pub-out unsealing.pub
-```
-
-**Note**: Keys generated use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
-
-#### `seal` - Seal a File
-
-Seal a file (e.g., VMK) using a public key:
-
-```bash
-snpguard-image seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
-```
-
-The output file contains HPKE-encrypted data that can only be decrypted with the corresponding private key.
-
-#### `unseal` - Unseal a File
-
-Unseal a sealed blob using a private key:
-
-```bash
-snpguard-image unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
-```
-
-#### `convert` - Convert QCOW2 Image (Incomplete)
-
-Convert a QCOW2 image by encrypting the root filesystem with LUKS2:
-
-```bash
-snpguard-image convert \
-  --in-image source.qcow2 \
-  --out-image target.qcow2 \
+# Download latest Debian trixie
+wget https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
+
+# Convert standard Debian to a confidential-ready Debian
+cargo run --bin snpguard-image convert \
+  --in-image ./debian-13-genericcloud-amd64.qcow2 \
+  --out-image confidential.qcow2 \
   --out-staging ./staging \
-  --firmware firmware-code.fd
+  --firmware ./OVMF.AMDSEV.fd
 ```
 
-**Note**: This subcommand is currently **incomplete** and in active development. The implementation includes:
+**Note 1**: The image tool requires `libguestfs` to be installed on
+the system for the `convert` subcommand to inspecet and modify the
+QCOW2 image.
 
-- VMK generation (64-byte random key)
-- QCOW2 image copying
-- Root filesystem encryption with LUKS2 (requires `libguestfs` to be installed)
-- Unsealing key generation
-- VMK sealing with unsealing public key
-- Unsealing private key sealing with ingestion public key
-- Secure deletion of unencrypted keys
+**Note 2:** The image tool lists the available kernels and initrd
+images with their kernel parameters. The user is prompted to choose
+one to be the trusted boot target.
 
-**Requirements**:
-- `libguestfs` library must be installed on the system (e.g., `apt-get install libguestfs-dev` on Debian/Ubuntu, or `dnf install libguestfs-devel` on Fedora/RHEL)
-- Firmware path (required): `--firmware <PATH>` - Path to the OVMF firmware binary (e.g., `OVMF_CODE.fd` or `AmdSev-OVMF.fd`)
-- Configuration from `snpguard-client config login` or provide `--attest-url`, `--ingestion-public-key`, and `--ca-cert` options
+**Note 3:** The OVMF firmware binary must include `SNP_KERNEL_HASHES`,
+which is achieved by the special AmdSevX64 build. Refer to [this
+guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html#guest-ovmf-firmware)
+to build OVMF with `SNP_KERNEL_HASHES` enabled.
 
-**Current Limitations**:
-- The `encrypt_and_copy_rootfs` implementation using `libguestfs` is present but requires the system library for linking
-- Full integration and testing of the conversion workflow is pending
+### 4. Register Attestation Record
 
-## Command Line
-
-### Client (subcommands)
+Register the new image with the server. This uploads the measurements
+and the encrypted key, and returns the signed launch artifacts.
 
 ```bash
-# Store URL/token/CA after validating token via /v1/health
-snpguard-client config login --url https://attest.example.com --token <TOKEN>
-# TOFU (Trust On First Use): Client fetches server's CA cert and ingestion public key,
-# displays CA cert hash for verification, then saves both to config directory
-snpguard-client config logout
-
-# Generate unsealing keypair (offline, using snpguard-image)
-# Note: Keys use non-standard PEM format (raw 32-byte keys wrapped in PEM, NOT PKCS#8)
-snpguard-image keygen --priv-out unsealing.key --pub-out unsealing.pub
-
-# Seal a file (e.g., VMK) for a specific public key (offline)
-snpguard-image seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
-
-# Unseal a file using the private key (offline)
-snpguard-image unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
-
-# Attestation (uses pinned CA from config)
-# Output is hex-encoded VMK, convert to binary for cryptsetup
-snpguard-client attest --url https://attest.example.com --ca-cert ./ca.pem --sealed-blob blob.sealed | xxd -r -p | cryptsetup luksOpen /dev/sda2 root_crypt --key-file=-
-
-# Example workflow:
-# 1. Generate keys: snpguard-image keygen --priv-out unsealing.key --pub-out unsealing.pub
-# 2. Create plaintext blob: pwgen -s 32 1 | tr -d '\n' > blob.txt
-# 3. Seal the blob: snpguard-image seal --pub-key unsealing.pub --data blob.txt --out blob.sealed
-# 4. Unseal locally (test): snpguard-image unseal --priv-key unsealing.key --sealed-data blob.sealed --out blob.decrypted
-# 5. Run attestation: snpguard-client attest --url ... --sealed-blob blob.sealed | xxd -r -p > blob.decrypted
-# 6. Verify: cmp blob.txt blob.decrypted
-
-# Management (defaults to stored config)
-snpguard-client manage list
-snpguard-client manage show <id>
-snpguard-client manage register --os-name ubuntu \
-  --unsealing-private-key unsealing-private-key.pem \
-  --vcpus 4 --vcpu-type EPYC --kernel-params "console=ttyS0" \
-  --firmware firmware-code.fd --kernel vmlinuz --initrd initrd.img
-# Or use staging directory (generated by image convert --out-staging):
-snpguard-client manage register --os-name ubuntu \
+cargo run --bin snpguard-client manage register \
+  --os-name Debian13-CoCo \
+  --vcpus 4 --vcpu-type EPYC-Milan \
+  --allowed-smt \
+  --min-tcb-bootloader 0 --min-tcb-tee 0 --min-tcb-snp 0 --min-tcb-microcode 0 \
   --staging-dir ./staging \
-  --enc-unsealing-private-key ./staging/unsealing.key.enc \
-  --vcpus 4 --vcpu-type EPYC
-snpguard-client manage export --id <id> --format tar --out-bundle artifacts.tar.gz   # format: tar|squashfs
+  --out-bundle ./launch-artifacts.tar.gz
 ```
 
-`manage show` now prints kernel params and artifact filenames; `manage list/show` also support `--json`.
+You can now view this registered image and its measurements in the Web
+Dashboard.
 
-## Security Considerations
+### 5. Run CoCo VM
 
-1. **TLS Certificates**: Always use valid TLS certificates in production. The client verifies certificates to prevent man-in-the-middle attacks.
+Launch the confidential VM on the platform using the secured disk and
+the signed artifacts:
 
-2. **Key Management**: 
-   - ID-Block and Auth-Block keys are generated automatically by the server, encrypted with the ingestion key (HPKE), and stored in the database. Key files are deleted from the artifacts folder after block generation.
-   - Unsealing private keys are encrypted with HPKE (Hybrid Public Key Encryption) using X25519HkdfSha256, HkdfSha256, and AesGcm256 before storage.
-   - The ingestion private key (`/data/auth/ingestion.key`) must be backed up securely - if lost, encrypted keys (ID, Auth, and unsealing) cannot be recovered.
-   - The ingestion public key is available via `GET /v1/public/info` for TOFU and client-side encryption.
-   - **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
+```bash
+sudo ./scripts/launch-qemu-snp.sh \
+  --hda confidential.qcow2 \
+  --artifacts launch-artifacts.tar.gz
+```
 
-3. **Encryption**: ID-Block keys, Auth-Block keys, and unsealing private keys are all encrypted at rest using HPKE (Hybrid Public Key Encryption) with X25519HkdfSha256, HkdfSha256, and AesGcm256. The ingestion key pair is generated on server deployment and stored with restricted permissions (0400 for private key). Key files are deleted from the filesystem after encryption and storage in the database.
+Upon boot, the VM will verify itself against the server, receive the
+key, unlock the disk, and boot the OS.
 
-4. **Network Security**: Ensure the attestation service is only accessible from trusted networks or use firewall rules.
+## Architecture Components
 
-5. **Nonce Verification**: While the current implementation focuses on signature verification, consider implementing stricter nonce tracking for additional security.
+* **snpguard-server:** The core service provides a REST API and a web
+  UI for management, validates hardware reports against AMD's
+  certificate chain, and securely releases the volume master key.
 
-## Troubleshooting
+* **snpguard-image:** CLI tool that leverages **libguestfs** for
+  offline image manipulation. It automates the encryption of the
+  rootfs and the injection of the attestation agent into the initrd.
 
-### Client fails to connect
+* **snpguard-client:** A dual-purpose Rust binary:
+  * **Host**: Used by developers to register images and download
+    launch bundles.
+  * **Guest**: A lightweight, static binary (built against the `musl`
+    C standard library for a smaller footprint, and built as static to
+    avoid any external dependencies) embedded in the VM's initrd that
+    performs the hardware attestation handshake and unlocks the
+    rootfs.
 
-- Verify TLS certificate is valid
-- Check network connectivity from guest VM
-
-### Attestation fails
-
-- Check that the attestation record exists and is enabled
-- Verify that the key digests match (ID-Block and Auth-Block keys)
-- Ensure CPU family detection is correct
-- Check server logs for detailed error messages
-
-### Report verification fails
-
-- Verify `snpguest` is installed and in PATH
-- Check network connectivity to AMD KDS (for certificate fetching)
-- Ensure the attestation report is valid and not corrupted
-
-## Deployment
-
-### Docker
+## Docker
 
 Build and run the container:
 
@@ -499,121 +210,30 @@ Build and run the container:
 # Build the image
 docker build -t snp-guard .
 
+# Create required folders
+mkdir -p ./data/db
+
 # Run the container
-docker run -p 3000:3000 -v ./data:/data snp-guard
+docker run -d \
+  --name snp-guard \
+  -p 3000:3000 \
+  -v "$(pwd)/data:/data" \
+  -e DATA_DIR=/data \
+  -e DATABASE_URL="sqlite:///data/db/snpguard.sqlite?mode=rwc" \
+  --restart unless-stopped \
+  snp-guard
+
+# Get master password from stdout if started for the first time
+docker container logs snp-guard
 ```
 
-### Docker Compose
+## Documentation
 
-For easier deployment with persistent storage:
-
-```bash
-docker-compose up -d
-```
-
-The application will be available at `https://localhost:3000`.
-
-### Environment Variables
-
-- `DATA_DIR`: Root persistence directory (default: `/data`)
-- `RUST_LOG`: Log level (default: `info`)
-
-### Master Password (Web UI)
-
-- On first container start, the service generates a human-readable master password, prints it once to the logs, hashes it with Argon2, and stores only the hash.
-- Keep that password safe; it is not stored in plaintext and won’t be shown again unless you delete the hash file to regenerate a new one.
-- Web login uses HTTP Basic Auth; username is ignored—enter any value, and supply the master password in the password field.
-
-### Attestation REST API (HTTPS + Protobuf)
-
-- All attestation and management APIs are REST-style HTTPS with protobuf payloads (`application/x-protobuf`).
-- Endpoints (prefix `/v1`):
-  - `POST /v1/attest/nonce` -> `NonceResponse` (no request fields)
-  - `POST /v1/attest/report` -> `AttestationRequest` / `AttestationResponse`
-  - `GET /v1/records` -> `ListRecordsResponse`
-  - `GET /v1/records/{id}` -> `GetRecordResponse`
-  - `POST /v1/records` -> `CreateRecordRequest` / `CreateRecordResponse`
-  - `POST /v1/records/{id}/enable` -> `ToggleEnabledResponse`
-  - `POST /v1/records/{id}/disable` -> `ToggleEnabledResponse`
-  - `GET /v1/records/{id}/export/tar|squash` -> latest artifacts (regenerated each time)
-  - `GET /v1/tokens`, `POST /v1/tokens`, `POST /v1/tokens/{id}/revoke` -> token CRUD
-  - `GET /v1/health` -> 200; with Bearer token returns 200 if valid else 401
-- Attestation client uses the same protobuf messages over HTTPS with full TLS verification.
-- Management routes are protected by master password or Bearer token (for automation).
-
-### Attestation Report Parsing
-
-- The server parses SEV-SNP attestation reports using the `sev` crate's `AttestationReport` type (virtee/sev). Offsets for policy, image_id, report_data (binding hash), key digests, and TCB come directly from the struct definitions, avoiding manual slicing.
-- The attestation flow uses a binding hash (SHA512 of server_nonce || client_pub_bytes) embedded in the report's report_data field to ensure the report was generated with the correct session key.
-
-### TLS and Client Pinning
-
-- Server: HTTPS-only. Certs are read from `${DATA_DIR}/tls/server.crt` and `server.key`; if missing, a self-signed pair (and `ca.pem`) is auto-generated. No client certificate is required.
-- Client: Always verifies TLS using a pinned CA cert at `/etc/snpguard/ca.pem` inside the initrd; system trust store is not used. No skip/unsafe mode.
-- `scripts/repack-initrd.sh` installs the client and copies the CA cert from `${CA_CERT:-./certs/ca.pem}` to `/etc/snpguard/ca.pem` inside the initrd.
-
-### Volumes
-
-- `/data`: Persistent storage for the SQLite database
-
-## Development
-
-### Project Structure
-
-```
-snp-guard/
-├── snpguest/            # Git submodule: AMD SEV-SNP tool
-├── src/
-│   ├── client/          # Attestation client (for initrd)
-│   ├── server/          # Attestation service
-│   └── common/          # Shared protobuf definitions
-├── entity/              # Database entities
-├── migration/          # Database migrations
-├── protos/              # Protocol buffer definitions
-├── ui/                  # Web UI templates
-├── scripts/             # Utility scripts
-└── docs/                # Documentation
-```
-
-### Running Tests
-
-```bash
-cargo test
-```
-
-### Code Formatting
-
-```bash
-cargo fmt
-```
-
-### Linting
-
-```bash
-cargo clippy
-```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+- [API Documentation](docs/api.md)
+- [Architecture](docs/architecture.md)
+- [User Guide](docs/user_guide.md)
+- [Initrd Support](docs/initrd_support.md)
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0.
-See the [LICENSE](LICENSE) file for details.
-
-## References
-
-- [AMD SEV-SNP Documentation](https://www.amd.com/en/developer/sev.html)
-- [snpguest Tool](https://github.com/virtee/snpguest) (included as git submodule)
-- [SEV-SNP Attestation Guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html)
-
-## Support
-
-For issues and questions, please open an issue on the GitHub repository.
+Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
