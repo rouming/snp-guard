@@ -1,41 +1,58 @@
-# Initrd Support: initramfs-tools and dracut
+# Initrd Support: initramfs-tools
 
-SnpGuard supports both major Linux initrd systems: **initramfs-tools** (used by Ubuntu/Debian) and **dracut** (used by RedHat/CentOS/Fedora and derivatives).
+SnpGuard supports **initramfs-tools** (used by Ubuntu/Debian) for installing attestation hooks into guest VM images. Support for **dracut** (used by RedHat/CentOS/Fedora) is in progress and not yet implemented.
 
-## Automatic Detection
+## Installation Method
 
-The repack script (`scripts/repack-initrd.sh`) automatically detects which initrd format is being used and installs the appropriate hook:
+The attestation hooks are automatically installed during the image conversion phase using `snpguard-image convert`. The conversion process:
 
-### Detection Logic
+1. Encrypts the root filesystem with LUKS2
+2. Installs `cryptsetup-initramfs` package in the guest image
+3. Uploads the SnpGuard client binary and configuration files
+4. Installs initramfs-tools hooks:
+   - `hook.sh` → `/etc/initramfs-tools/hooks/snpguard` (installs client and config into initrd)
+   - `attest.sh` → `/etc/initramfs-tools/scripts/local-top/snpguard-attest` (runs attestation during boot)
+5. Regenerates the initrd using `update-initramfs -u -k all`
 
-1. **initramfs-tools**: Detected by presence of `scripts/` directory
-2. **dracut**: Detected by presence of `lib/dracut/hooks` or `usr/lib/dracut/hooks` directory
-
-If both are detected (rare), both hooks will be installed for maximum compatibility.
+The hooks are installed directly into the guest image filesystem, and the initrd is regenerated automatically. No manual repacking is required.
 
 ## initramfs-tools (Ubuntu, Debian)
 
-### Hook Location
-```
-scripts/local-top/snpguard_attest
-```
+### Hook Files
+
+The image conversion installs two files:
+
+1. **Hook Script** (`scripts/initramfs-tools/hook.sh`):
+   - Installed at: `/etc/initramfs-tools/hooks/snpguard`
+   - Purpose: Runs during initrd generation to include the SnpGuard client binary and configuration files
+   - Includes: `snpguard-client` binary, CA certificate, attestation URL, sealed VMK blob
+
+2. **Attestation Script** (`scripts/initramfs-tools/attest.sh`):
+   - Installed at: `/etc/initramfs-tools/scripts/local-top/snpguard-attest`
+   - Purpose: Runs during boot to perform attestation and unlock the encrypted root filesystem
+   - Phase: `local-top` (after network initialization, before root mounting)
 
 ### Boot Phase
+
 - **Phase**: `local-top`
 - **Timing**: After network initialization, before root filesystem mounting
 - **Purpose**: Ensures network is available for attestation, but runs before disk decryption
 
-### Hook Structure
-```bash
-#!/bin/sh
-PREREQ=""
-prereqs() { echo "$PREREQ"; }
-case $1 in prereqs) prereqs; exit 0 ;; esac
+### Hook Behavior
 
-# Attestation logic here
-```
+The attestation script (`attest.sh`) performs the following:
+
+1. **Network Setup**: Ensures network is configured and routing is correct
+2. **Read Configuration**: Reads attestation URL from `/etc/snpguard/attest.url`
+3. **Perform Attestation**: Calls `/usr/bin/snpguard-client attest` with:
+   - URL from config file
+   - CA certificate from `/etc/snpguard/ca.pem`
+   - Sealed VMK blob from `/etc/snpguard/vmk.sealed`
+4. **Unlock Root**: Uses the decrypted VMK to unlock the LUKS-encrypted root device
+5. **Error Handling**: Exits with error if attestation fails
 
 ### Supported Distributions
+
 - Ubuntu (all versions)
 - Debian (all versions)
 - Linux Mint
@@ -43,118 +60,81 @@ case $1 in prereqs) prereqs; exit 0 ;; esac
 
 ## dracut (RedHat, CentOS, Fedora)
 
-### Hook Location
-```
-lib/dracut/hooks/pre-mount/99-snpguard.sh
-```
-or
-```
-usr/lib/dracut/hooks/pre-mount/99-snpguard.sh
-```
+**Status**: Support for dracut is in progress and not yet implemented. Only initramfs-tools (Debian flavors) is currently supported.
 
-### Boot Phase
-- **Phase**: `pre-mount`
-- **Timing**: Before root filesystem mounting
-- **Purpose**: Runs after network is available but before root mount
-
-### Hook Structure
-```bash
-#!/bin/bash
-# SnpGuard attestation hook for dracut
-
-# Attestation logic here
-```
-
-### Supported Distributions
-- RedHat Enterprise Linux (RHEL)
-- CentOS
-- Fedora
-- Rocky Linux
-- AlmaLinux
-- Oracle Linux
-- Other RHEL-based distributions
+When implemented, dracut support will:
+- Install hooks at `lib/dracut/hooks/pre-mount/99-snpguard.sh`
+- Run in the `pre-mount` phase (before root filesystem mounting)
+- Support RedHat Enterprise Linux, CentOS, Fedora, Rocky Linux, AlmaLinux, and other RHEL-based distributions
 
 ## Boot Sequence
 
-Both hooks follow a similar boot sequence:
+The complete boot sequence with SnpGuard attestation:
 
 ```
 1. Kernel loads
 2. Initrd starts
 3. Network initialization
 4. [SnpGuard Hook Runs Here] ← Attestation happens
-   - Reads rd.attest.url from /proc/cmdline
+   - Reads attestation URL from /etc/snpguard/attest.url
    - Calls snpguard-client (uses sev library directly)
-   - Receives secret
+   - Receives decrypted VMK
+   - Unlocks LUKS-encrypted root device
 5. Root filesystem mounting
-6. Disk decryption (using secret from step 4)
-7. System boot continues
+6. System boot continues
 ```
-
-## Hook Behavior
-
-Both hooks implement the same logic:
-
-1. **Parse kernel command line** for `rd.attest.url=...`
-2. **Wait for network** (2 second delay to ensure network is up)
-3. **Call attestation client**: `/bin/snpguard-client --url "$ATTEST_URL"` (uses sev library directly for report generation)
-4. **Capture secret** to `/tmp/disk-secret`
-5. **Handle errors**: Exit with error if attestation fails
 
 ## Usage
 
-The repack script handles everything automatically:
+The hooks are automatically installed when converting an image:
 
 ```bash
-./scripts/repack-initrd.sh /path/to/original-initrd.img /path/to/new-initrd.img
+cargo run --bin snpguard-image convert \
+  --in-image ./debian-13-genericcloud-amd64.qcow2 \
+  --out-image confidential.qcow2 \
+  --out-staging ./staging \
+  --firmware ./OVMF.AMDSEV.fd
 ```
 
-The script will:
-1. Extract the initrd (using `unmkinitramfs` if available, or manual cpio extraction)
-2. Install `snpguard-client` binary
-3. Detect the initrd format
-4. Install the appropriate hook
-5. Repack the initrd
+The conversion process will:
+1. Encrypt the root filesystem
+2. Install cryptsetup-initramfs
+3. Install SnpGuard hooks
+4. Regenerate the initrd with hooks included
+
+No manual intervention is required.
 
 ## Verification
 
-After repacking, you can verify the hook was installed:
+After image conversion, you can verify the hooks were installed by examining the staging directory:
 
-### For initramfs-tools:
 ```bash
-# Extract and check
-unmkinitramfs new-initrd.img /tmp/check
-ls -la /tmp/check/main/scripts/local-top/snpguard_attest
+# The converted initrd is in the staging directory
+ls -la staging/initrd.img
 ```
 
-### For dracut:
-```bash
-# Extract and check
-cd /tmp/check
-zcat new-initrd.img | cpio -idm
-ls -la lib/dracut/hooks/pre-mount/99-snpguard.sh
-```
+The initrd contains:
+- `/usr/bin/snpguard-client` (client binary)
+- `/etc/snpguard/ca.pem` (CA certificate)
+- `/etc/snpguard/attest.url` (attestation URL)
+- `/etc/snpguard/vmk.sealed` (sealed VMK blob)
+- The attestation script in `scripts/local-top/snpguard-attest`
 
 ## Troubleshooting
 
 ### Hook Not Running
 
-1. **Check hook exists**: Verify the hook file is present in the repacked initrd
-2. **Check permissions**: Ensure the hook has execute permissions (`chmod +x`)
-3. **Check boot logs**: Look for "SnpGuard: Starting attestation..." messages
-4. **Verify kernel parameter**: Ensure `rd.attest.url=...` is in kernel command line
+1. **Check initrd was regenerated**: Verify `update-initramfs` ran successfully during conversion
+2. **Check boot logs**: Look for "snpguard attest" messages in boot logs
+3. **Verify configuration**: Ensure `/etc/snpguard/attest.url` contains the correct URL
+4. **Network issues**: Ensure network is properly configured in initrd
 
-### Wrong Hook Installed
+### Attestation Fails
 
-- The script auto-detects the format
-- If detection fails, both hooks will be installed
-- This is safe and ensures compatibility
-
-### Network Not Available
-
-- Both hooks include a 2-second delay to allow network initialization
-- If network is still not available, the attestation will fail
-- Ensure network is configured in the initrd (standard for both systems)
+1. **Check network connectivity**: The guest VM must be able to reach the attestation server
+2. **Verify CA certificate**: Ensure the CA certificate matches the server's certificate
+3. **Check sealed blob**: Verify `vmk.sealed` was created correctly during conversion
+4. **Review server logs**: Check attestation server logs for detailed error messages
 
 ### SEV-SNP Not Available
 
@@ -167,16 +147,16 @@ ls -la lib/dracut/hooks/pre-mount/99-snpguard.sh
 
 | Feature | initramfs-tools | dracut |
 |---------|----------------|--------|
-| Hook location | `scripts/local-top/` | `lib/dracut/hooks/pre-mount/` |
-| Hook name | `snpguard_attest` | `99-snpguard.sh` |
-| Script type | `/bin/sh` | `/bin/bash` |
-| Prereq function | Required | Not used |
-| Detection | `scripts/` directory | `dracut/hooks/` directory |
+| Status | Implemented | In progress |
+| Hook location | `/etc/initramfs-tools/hooks/snpguard` | (not yet implemented) |
+| Script location | `/etc/initramfs-tools/scripts/local-top/snpguard-attest` | (not yet implemented) |
+| Boot phase | `local-top` | `pre-mount` (planned) |
+| Supported distros | Debian, Ubuntu | (planned: RHEL, CentOS, Fedora) |
 
 ## Best Practices
 
-1. **Test before production**: Always test the repacked initrd in a VM first
-2. **Verify hook execution**: Check boot logs to confirm the hook runs
-3. **Network configuration**: Ensure network is properly configured in initrd
-4. **Backup original**: Keep a backup of the original initrd image
-5. **Documentation**: Document which initrd format you're using
+1. **Use image conversion**: Always use `snpguard-image convert` to prepare images - it handles hook installation automatically
+2. **Verify conversion**: Check that the staging directory contains all required artifacts
+3. **Test before production**: Always test the converted image in a VM before deploying
+4. **Network configuration**: Ensure network is properly configured in the guest image
+5. **Backup original**: Keep a backup of the original image before conversion

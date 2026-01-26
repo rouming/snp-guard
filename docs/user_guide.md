@@ -131,44 +131,33 @@ These artifacts need to be provided to your VM boot process.
 
 ## Preparing the Guest VM
 
-### Step 1: Repack Initrd
+### Image Conversion
 
-The initrd needs to include the `snpguard-client` binary and the attestation hook. The repack script automatically detects the initrd format and installs the appropriate hook.
+The `snpguard-image convert` command automatically prepares the guest VM image for attestation. It:
 
-```bash
-make repack INITRD_IN=/path/to/original-initrd.img INITRD_OUT=/path/to/new-initrd.img
-```
+1. Encrypts the root filesystem with LUKS2
+2. Installs `cryptsetup-initramfs` in the guest image
+3. Installs the SnpGuard client binary and configuration files
+4. Installs initramfs-tools hooks (`hook.sh` and `attest.sh`)
+5. Regenerates the initrd with hooks included
 
-Or manually:
+**Supported Distributions**:
 
-```bash
-./scripts/repack-initrd.sh /path/to/original-initrd.img /path/to/new-initrd.img
-```
+- **initramfs-tools** (Debian, Ubuntu): Fully supported
+  - Hooks are installed at `/etc/initramfs-tools/hooks/snpguard` and `/etc/initramfs-tools/scripts/local-top/snpguard-attest`
+  - The initrd is automatically regenerated using `update-initramfs -u -k all`
 
-**Supported Initrd Formats**:
-
-1. **initramfs-tools** (Ubuntu, Debian):
-   - Automatically detected by presence of `scripts/` directory
-   - Hook installed at: `scripts/local-top/snpguard_attest`
-   - Runs in `local-top` phase: after network setup, before root mounting
-   - Compatible with: Ubuntu, Debian, and derivatives
-
-2. **dracut** (RedHat, CentOS, Fedora, etc.):
-   - Automatically detected by presence of `lib/dracut/hooks` or `usr/lib/dracut/hooks`
-   - Hook installed at: `lib/dracut/hooks/pre-mount/99-snpguard.sh`
-   - Runs in `pre-mount` phase: before root filesystem mounting
-   - Compatible with: RedHat Enterprise Linux, CentOS, Fedora, Rocky Linux, AlmaLinux
-
-The script will detect which format is being used and install the appropriate hook. If both formats are detected (rare), both hooks will be installed for maximum compatibility.
+- **dracut** (RedHat, CentOS, Fedora): Not yet implemented
+  - Support for dracut-based distributions is in progress
 
 **Prerequisites**:
 - The client binary must be built: `make build-client`
 - SEV-SNP must be enabled in the guest firmware and hardware
-- The original initrd image must be in cpio+gzip format (standard for both systems)
+- The image must use initramfs-tools (Debian/Ubuntu)
 
-### Step 2: Boot the VM
+### Boot the VM
 
-Boot the VM. The attestation will happen automatically during the initrd phase, after network initialization but before root filesystem mounting.
+Boot the VM. The attestation will happen automatically during the initrd phase, after network initialization but before root filesystem mounting. The hooks installed during image conversion handle the entire attestation process.
 
 ## Managing Attestation Records
 
@@ -270,21 +259,19 @@ snpguard-client manage export --id <record-id> --format tar --out-bundle artifac
 - Ensure files are in the correct format
 - Check server disk space
 
-### Initrd Repacking Issues
+### Image Conversion Issues
 
-**Problem**: Repacked initrd doesn't work
+**Problem**: Image conversion fails or hooks are not installed
 
 **Solutions**:
-- Ensure `snpguest` is available in the initrd
-- Verify the client binary is built for the correct architecture
-- Check that the initrd format is supported:
-  - **initramfs-tools**: Look for `scripts/` directory in unpacked initrd
-  - **dracut**: Look for `lib/dracut/hooks` or `usr/lib/dracut/hooks` directory
-- Verify the hook was installed:
-  - **initramfs-tools**: Check for `scripts/local-top/snpguard_attest`
-  - **dracut**: Check for `lib/dracut/hooks/pre-mount/99-snpguard.sh`
-- Ensure the hook has execute permissions
-- Test the repacked initrd in a VM before production use
+- Ensure the source image uses initramfs-tools (Debian/Ubuntu) - dracut is not yet supported
+- Verify the client binary is built: `make build-client`
+- Check that `cryptsetup-initramfs` can be installed in the guest image
+- Verify network access during conversion (needed to install packages)
+- Check conversion logs for errors during hook installation
+- Verify the staging directory contains all required artifacts after conversion
+- Ensure the converted initrd includes the SnpGuard client and hooks
+- Test the converted image in a VM before production use
 - Check boot logs for hook execution messages
 
 ## Best Practices

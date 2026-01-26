@@ -8,7 +8,7 @@ DATA_DIR ?= ./data
 DB_URL := sqlite://$(DATA_DIR)/db/snpguard.sqlite?mode=rwc
 CLIENT_TARGET := x86_64-unknown-linux-musl
 
-.PHONY: all build build-server build-client build-image build-snpguest db-setup clean repack help
+.PHONY: all build build-server build-client build-image build-snpguest db-setup clean help
 
 all: build
 
@@ -50,6 +50,3 @@ clean: ## Clean artifacts and data
 	$(CARGO) clean
 	rm -rf $(DATA_DIR)
 	rm -rf artifacts
-
-repack: build-client ## Embed client into initrd (Usage: make repack INITRD_IN=... INITRD_OUT=...)
-	./scripts/repack-initrd.sh $(INITRD_IN) $(INITRD_OUT)

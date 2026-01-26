@@ -14,9 +14,10 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Guest VM                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Initrd (initramfs-tools or dracut)                      │  │
-│  │  - initramfs-tools: scripts/local-top/snpguard_attest  │  │
-│  │  - dracut: lib/dracut/hooks/pre-mount/99-snpguard.sh   │  │
+│  │  Initrd (initramfs-tools)                                │  │
+│  │  - Hook: /etc/initramfs-tools/hooks/snpguard            │  │
+│  │  - Script: scripts/local-top/snpguard-attest            │  │
+│  │  Note: dracut support is in progress                    │  │
 │  │  ┌────────────────────────────────────────────────────┐  │  │
 │  │  │  snpguard-client (static binary, musl)             │  │  │
 │  │  │  - Requests nonce                                  │  │  │
@@ -107,6 +108,13 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 - Direct SEV-SNP hardware access via sev library
 - HTTPS client with certificate verification
 - Protobuf message serialization
+
+**Installation**:
+- Installed automatically during `snpguard-image convert`
+- Hook scripts (`hook.sh` and `attest.sh`) are installed into the guest image
+- Initrd is regenerated with hooks included
+- Currently supports initramfs-tools (Debian/Ubuntu) only
+- Dracut support is in progress
 
 ### Management Frontend
 
