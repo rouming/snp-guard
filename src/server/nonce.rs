@@ -6,7 +6,7 @@ pub const NONCE_SIZE: usize = 64;
 const TS_SIZE: usize = 8;
 const RND_SIZE: usize = 32;
 const MAC_SIZE: usize = 24; // truncated HMAC-SHA256
-const MAX_SKEW_SECS: u64 = 60; // +/- 60s window
+const MAX_SKEW_SECS: u64 = 60; // 60s timeout
 
 #[derive(Debug, thiserror::Error)]
 pub enum NonceError {
@@ -24,7 +24,7 @@ pub enum NonceError {
 pub fn generate_nonce(secret: &[u8]) -> [u8; NONCE_SIZE] {
     let mut nonce = [0u8; NONCE_SIZE];
 
-    // timestamp minutes
+    // timestamp seconds
     let ts = current_unix_time().expect("time failed");
     nonce[..TS_SIZE].copy_from_slice(&ts.to_be_bytes());
 
@@ -38,7 +38,7 @@ pub fn generate_nonce(secret: &[u8]) -> [u8; NONCE_SIZE] {
     nonce
 }
 
-/// Verify received nonce within +/- 60s window
+/// Verify that the received nonce is not expired
 pub fn verify_nonce(secret: &[u8], nonce: &[u8]) -> Result<(), NonceError> {
     if nonce.len() != NONCE_SIZE {
         return Err(NonceError::InvalidLength);
