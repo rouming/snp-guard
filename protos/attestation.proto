@@ -94,7 +94,7 @@ message AttestationRecord {
   string firmware_path = 9;
   string kernel_path = 10;
   string initrd_path = 11;
-  bytes image_id = 12;      // Image ID (random 16 bytes) for attestation report matching
+  bytes image_id = 12;       // Image ID (random 16 bytes) for attestation report matching
   bool allowed_debug = 13;   // Allow debug mode
   bool allowed_migrate_ma = 14; // Allow migration with MA
   bool allowed_smt = 15;     // Allow Simultaneous Multithreading

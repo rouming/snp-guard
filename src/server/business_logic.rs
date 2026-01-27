@@ -74,22 +74,6 @@ fn generate_ec_key_pem() -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to serialize key to PEM: {}", e))
 }
 
-/// Generate a secure random 16-bytes of ASCII characters. Only uses
-/// printable characters (alphanumeric) to ensure 1 char = 1 byte.
-pub fn random_ascii_16() -> [u8; 16] {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-    let mut result = [0u8; 16];
-
-    // Fill each position with a secure random choice from ALPHABET
-    for b in &mut result {
-        let idx = (OsRng.next_u32() % ALPHABET.len() as u32) as usize;
-        *b = ALPHABET[idx];
-    }
-
-    result
-}
-
 /// Securely delete a file by overwriting its contents before removal.
 /// This helps prevent recovery of sensitive data from disk.
 fn secure_delete_file(path: &Path) -> Result<(), String> {
@@ -153,14 +137,8 @@ pub async fn create_record_logic(
     // The guard will be dropped when this function returns, cleaning up on error
     let mut cleanup_guard = ArtifactDirGuard::new(artifact_dir.clone());
 
-    // Generate a unique image_id as a random ASCII string of 16
-    // bytes. The issue is that the `snpguest` CLI is broken and
-    // the `--image-id` or `--family-id` parameters can only
-    // accept 16 printable ASCII characters, so it's not possible
-    // to pass a UUID, for instance. Once API fixed (if this PR
-    // merged: https://github.com/virtee/snpguest/pull/145), then
-    // return the UUID generation
-    let image_id = random_ascii_16();
+    // Generate unique image_id as UUID (16 bytes)
+    let image_id = Uuid::new_v4();
 
     let result = async {
         fs::create_dir_all(&artifact_dir)
@@ -213,7 +191,7 @@ pub async fn create_record_logic(
             &artifact_dir.join("id-block-key.pem"),
             &artifact_dir.join("id-auth-key.pem"),
             &artifact_dir,
-            image_id.as_ref(),
+            image_id.as_bytes(),
         )
         .map_err(|e| format!("Failed to generate measurement and blocks: {}", e))?;
 
@@ -250,7 +228,7 @@ pub async fn create_record_logic(
             auth_key_encrypted: Set(Some(auth_key_encrypted)),
             created_at: Set(chrono::Utc::now().naive_utc()),
             enabled: Set(true),
-            image_id: Set(image_id.to_vec()),
+            image_id: Set(image_id.as_bytes().to_vec()),
             allowed_debug: Set(req.allowed_debug),
             allowed_migrate_ma: Set(req.allowed_migrate_ma),
             allowed_smt: Set(req.allowed_smt),

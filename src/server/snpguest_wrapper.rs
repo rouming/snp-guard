@@ -55,14 +55,12 @@ pub fn generate_measurement_and_block(
 
     let measurement = String::from_utf8(output.stdout)?.trim().to_string();
 
-    // Validate that image_id contains valid ASCII characters
-    if !image_id.is_ascii() {
-        return Err(anyhow!("image_id must be an ASCII string"));
+    // Validate image_id is exactly 16 bytes
+    if image_id.len() != 16 {
+        return Err(anyhow!("image_id must be a 16-bytes long"));
     }
 
-    let image_id_str = String::from_utf8(image_id.to_vec())?;
-
-    // 2. Generate ID-Block and Auth-Block
+    // 2. Generate ID-Block and Auth-Block with image-id
     let status = Command::new(&snpguest_path)
         .arg("--quiet")
         .arg("generate")
@@ -71,7 +69,7 @@ pub fn generate_measurement_and_block(
         .arg(auth_key)
         .arg(&measurement)
         .arg("--image-id")
-        .arg(image_id_str)
+        .arg(hex::encode(image_id))
         .arg("--policy")
         .arg(policy.to_string())
         .arg("--id-file")
