@@ -21,6 +21,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+//xxx remove
 const DEFAULT_CA_CERT: &str = "/etc/snpguard/ca.pem";
 
 #[derive(Parser, Debug)]
@@ -40,6 +41,7 @@ enum Command {
         #[arg(long, value_name = "PATH", default_value = DEFAULT_CA_CERT)]
         ca_cert: String,
         #[arg(long, value_name = "PATH")]
+        //xxx is not an option, but requiref
         sealed_blob: Option<PathBuf>,
     },
     /// Management operations (requires stored token)
