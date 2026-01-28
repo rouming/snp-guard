@@ -17,6 +17,7 @@ use tower_http::trace::TraceLayer;
 
 pub const MAX_BODY_BYTES: usize = 300 * 1024 * 1024;
 
+mod artifacts;
 mod auth;
 mod business_logic;
 mod config;

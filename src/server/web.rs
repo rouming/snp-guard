@@ -1,3 +1,4 @@
+use crate::artifacts;
 use crate::auth;
 use crate::ingestion_key;
 use crate::service_core::{self, ServiceState, TokenInfo};
@@ -9,8 +10,6 @@ use axum::{
 };
 use chrono::Duration;
 use common::snpguard::AttestationRecord;
-use std::fs;
-use std::process::Command;
 use std::sync::Arc;
 use tokio_util::io::ReaderStream;
 
@@ -464,45 +463,12 @@ pub async fn download_artifact(
         return "Invalid path".into_response();
     }
     let artifact_dir = state.data_paths.attestations_dir.join(&id);
-    let path = artifact_dir.join(&file_name);
 
-    // SquashFS Generator
-    if file_name == "artifacts.squashfs" {
-        let def_path = artifact_dir.join("squash.def");
-        // Strict permissions
-        fs::write(&def_path, "/ d 755 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n").unwrap();
-        Command::new("mksquashfs")
-            .arg(&artifact_dir)
-            .arg(&path)
-            .arg("-noappend")
-            .arg("-all-root")
-            .arg("-pf")
-            .arg(&def_path)
-            .status()
-            .unwrap();
-    }
-
-    // Tarball Generator - create with correct filenames in root (/)
-    if file_name == "artifacts.tar.gz" {
-        // Create tarball with files at root level
-        let status = Command::new("tar")
-            .arg("-czf")
-            .arg(&path)
-            .arg("-C")
-            .arg(&artifact_dir)
-            .arg("--transform=s|^|/|")
-            .arg("firmware-code.fd")
-            .arg("vmlinuz")
-            .arg("initrd.img")
-            .arg("kernel-params.txt")
-            .arg("id-block.bin")
-            .arg("id-auth.bin")
-            .status();
-
-        if status.is_err() {
-            return "Failed to create tarball".into_response();
-        }
-    }
+    // Generate artifact archive if needed
+    let path = match artifacts::generate_artifact(&artifact_dir, &file_name) {
+        Ok(p) => p,
+        Err(e) => return format!("Failed to generate artifact: {}", e).into_response(),
+    };
 
     match tokio::fs::File::open(path).await {
         Ok(file) => {
