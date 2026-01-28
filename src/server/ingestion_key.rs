@@ -68,7 +68,7 @@ impl IngestionKeys {
                 }
             }
 
-            // Save private key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+            // Save private key
             // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
             // Standard tools like openssl may not recognize this format.
             let priv_pem = Pem::new("PRIVATE KEY", private_bytes.to_vec());
@@ -88,7 +88,7 @@ impl IngestionKeys {
 
             println!("Ingestion private key saved: {:?}", priv_path);
 
-            // Save public key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+            // Save public key
             // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
             // Standard tools like openssl may not recognize this format.
             let pub_pem = Pem::new("PUBLIC KEY", public_bytes.to_vec());
@@ -116,7 +116,6 @@ impl IngestionKeys {
 
     pub fn get_public_key_pem(&self) -> Result<String> {
         let public_bytes = self.public_key.to_bytes();
-        // Non-standard PEM format - raw 32-byte key wrapped in PEM
         // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
         let pub_pem = Pem::new("PUBLIC KEY", public_bytes.to_vec());
         let pub_pem_str = pem::encode_config(

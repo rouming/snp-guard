@@ -219,7 +219,7 @@ pub async fn verify_report_core(
         };
     }
 
-    // 1. Parse report with sev call from bytes
+    // Parse report with sev call from bytes
     let parsed = match parse_snp_report(&req.report_data) {
         Ok(p) => p,
         Err(e) => {
@@ -232,9 +232,9 @@ pub async fn verify_report_core(
         }
     };
 
-    // 2. Verify stateless nonce from the report.report_data
-    // Note: The nonce is verified from req.server_nonce, and the binding hash ensures
-    // it matches what's embedded in report.report_data
+    // Verify stateless nonce from the report.report_data. The nonce is
+    // verified from req.server_nonce, and the binding hash ensures it
+    // matches what's embedded in report.report_data
     if let Err(e) = crate::nonce::verify_nonce(&state.attestation_state.secret, &req.server_nonce) {
         return AttestationResponse {
             success: false,
@@ -244,7 +244,7 @@ pub async fn verify_report_core(
         };
     }
 
-    // 3. Verify hash binding
+    // Verify hash binding
     if let Err(e) = verify_binding_hash(
         &req.server_nonce,
         &req.client_pub_bytes,
@@ -258,7 +258,8 @@ pub async fn verify_report_core(
         };
     }
 
-    // 4. Find attestation record by report.image_id, report.id_key_digest, report.auth_key_digest
+    // Find attestation record by report.image_id,
+    // report.id_key_digest, report.auth_key_digest
     let record = match vm::Entity::find()
         .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
         .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
@@ -289,7 +290,7 @@ pub async fn verify_report_core(
         }
     };
 
-    // 5. Check if record is not disabled
+    // Check if record is not disabled
     if !vm.enabled {
         return AttestationResponse {
             success: false,
@@ -299,7 +300,7 @@ pub async fn verify_report_core(
         };
     }
 
-    // 6. Check TCB
+    // Check TCB
     let current_bootloader = parsed.report.current_tcb.bootloader;
     let current_tee = parsed.report.current_tcb.tee;
     let current_snp = parsed.report.current_tcb.snp;
@@ -350,7 +351,7 @@ pub async fn verify_report_core(
         };
     }
 
-    // 7. Check VMPL
+    // Check VMPL
     if parsed.report.vmpl > 0 {
         return AttestationResponse {
             success: false,
@@ -363,7 +364,7 @@ pub async fn verify_report_core(
         };
     }
 
-    // 8. Verify report certs (verify report signature)
+    // Verify report certs (verify report signature)
     let temp_dir = match tempfile::TempDir::new() {
         Ok(dir) => dir,
         Err(_) => {
@@ -395,7 +396,6 @@ pub async fn verify_report_core(
         };
     }
 
-    // 9. Reencrypt sealed blob
     // Decrypt unsealing private key from DB using ingestion key
     let unsealing_priv_bytes = match state
         .ingestion_keys
@@ -433,7 +433,7 @@ pub async fn verify_report_core(
     active.request_count = Set(vm.request_count + 1);
     let _ = active.update(&state.db).await;
 
-    // 10. Success
+    // Success
     AttestationResponse {
         success: true,
         encapped_key,

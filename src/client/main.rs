@@ -254,7 +254,7 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
     let base = normalize_https(url)?;
     let mut rng = OsRng;
 
-    // 1. Get server nonce
+    // Get server nonce
     let mut buf = Vec::new();
     NonceRequest {}.encode(&mut buf)?;
     let resp = client
@@ -272,17 +272,17 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
     }
     let server_nonce = nonce_resp.nonce;
 
-    // 2. Generate ephemeral session key (X25519)
+    // Generate ephemeral session key (X25519)
     let (client_secret, client_public) = <X25519HkdfSha256 as Kem>::gen_keypair(&mut rng);
     let client_pub_bytes = client_public.to_bytes().to_vec();
 
-    // 3. Create binding hash: SHA512(server_nonce || client_pub_bytes)
+    // Create binding hash: SHA512(server_nonce || client_pub_bytes)
     let mut hasher = Sha512::new();
     hasher.update(&server_nonce);
     hasher.update(&client_pub_bytes);
     let binding_digest: [u8; 64] = hasher.finalize().into();
 
-    // 4. Get AMD SNP report with binding digest in report_data
+    // Get AMD SNP report with binding digest in report_data
     let mut fw = Firmware::open().context(
         "Failed to open SEV firmware device (/dev/sev-guest). Ensure SEV-SNP is enabled.",
     )?;
@@ -290,16 +290,15 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
         .get_report(None, Some(binding_digest), Some(0))
         .context("Failed to get attestation report from SEV firmware")?;
 
-    // report_bytes is [u8; 1184], convert to Vec<u8>
     let report_data = report_bytes.to_vec();
 
-    // 5. Read sealed blob (required)
+    // Read sealed blob
     let sealed_blob_path =
         sealed_blob.ok_or_else(|| anyhow!("--sealed-blob is required for attestation"))?;
     let sealed_blob_data = fs::read(sealed_blob_path)
         .with_context(|| format!("Failed to read sealed blob from {:?}", sealed_blob_path))?;
 
-    // 6. Send attestation request
+    // Send attestation request
     let mut req_bytes = Vec::new();
     AttestationRequest {
         report_data,
@@ -325,12 +324,11 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
         bail!("Attestation failed: {}", verify_resp.error_message);
     }
 
-    // 7. Decrypt session response (HPKE)
-    // 7a. Parse server's encapped key
+    // Parse server's encapped key
     let encapped = <X25519HkdfSha256 as Kem>::EncappedKey::from_bytes(&verify_resp.encapped_key)
         .map_err(|_| anyhow!("Invalid server encapped key"))?;
 
-    // 7b. Setup HPKE receiver
+    // Setup HPKE receiver
     let mut receiver_ctx = hpke::setup_receiver::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
         &OpModeR::Base,
         &client_secret,
@@ -339,12 +337,12 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
     )
     .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
 
-    // 7c. Open ciphertext to get VMK
+    // Open ciphertext to get VMK
     let vmk = receiver_ctx
         .open(&verify_resp.ciphertext, &[])
         .map_err(|e| anyhow!("Session decryption failed: {}", e))?;
 
-    // 8. Output VMK to stdout in hex format
+    // Output VMK to stdout in hex format
     let vmk_hex = hex::encode(&vmk);
     println!("{}", vmk_hex);
     Ok(())
@@ -691,7 +689,7 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             let ca_dest = ca_dest_path()?;
             let ingestion_key_dest = ingestion_key_dest_path()?;
 
-            // Step 1: Request public info (without TLS verification - TOFU)
+            // Request public info (without TLS verification - TOFU)
             println!("Requesting server public information...");
             let insecure_client = reqwest::Client::builder()
                 .danger_accept_invalid_certs(true)
@@ -723,7 +721,7 @@ fn run_config(action: ConfigCmd) -> Result<()> {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Server response missing 'ingestion_pub_key' field"))?;
 
-            // Step 2: Hash the CA cert and show to user
+            // Hash the CA cert and show to user
             let mut hasher = Sha256::new();
             hasher.update(ca_cert.as_bytes());
             let ca_hash = hex::encode(hasher.finalize());
@@ -734,13 +732,13 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             println!("You can obtain the hash from the server administrator or");
             println!("by inspecting the server's CA certificate file.\n");
 
-            // Step 3: Get user confirmation
+            // Get user confirmation
             if !get_user_confirmation("Does this hash match the server's CA certificate?")? {
                 println!("Aborted. Hash verification failed.");
                 std::process::exit(1);
             }
 
-            // Step 4: Validate token via health endpoint using received CA cert
+            // Validate token via health endpoint using received CA cert
             println!("\nValidating token with server...");
             let client = build_client_from_bytes(ca_cert.as_bytes())?;
             let resp = futures::executor::block_on(
@@ -756,7 +754,7 @@ fn run_config(action: ConfigCmd) -> Result<()> {
                 std::process::exit(1);
             }
 
-            // Step 5: Save CA cert and ingestion key to config dir
+            // Save CA cert and ingestion key to config dir
             let config_parent = ca_dest
                 .parent()
                 .ok_or_else(|| anyhow!("Cannot determine config directory"))?;

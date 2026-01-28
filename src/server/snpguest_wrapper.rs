@@ -22,7 +22,7 @@ pub fn generate_measurement_and_block(
     validate_ec_key(id_key)?;
     validate_ec_key(auth_key)?;
 
-    // 1. Calculate Measurement
+    // Calculate Measurement
     let snpguest_path = std::env::current_exe()?
         .parent()
         .ok_or_else(|| anyhow!("Cannot get executable directory"))?
@@ -60,7 +60,7 @@ pub fn generate_measurement_and_block(
         return Err(anyhow!("image_id must be a 16-bytes long"));
     }
 
-    // 2. Generate ID-Block and Auth-Block with image-id
+    // Generate ID-Block and Auth-Block with image-id
     let status = Command::new(&snpguest_path)
         .arg("--quiet")
         .arg("generate")
@@ -157,8 +157,7 @@ pub fn verify_report_signature(report_path: &Path) -> Result<()> {
     let temp_dir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
     let certs_dir = temp_dir.path();
 
-    // Requires snpguest 0.4+
-    // 1. Fetch CA
+    // Fetch CA
     let status = Command::new(&snpguest_path)
         .arg("fetch")
         .arg("ca")
@@ -171,7 +170,7 @@ pub fn verify_report_signature(report_path: &Path) -> Result<()> {
         return Err(anyhow!("Failed to fetch CA certificates"));
     }
 
-    // 2. Fetch VCEK (Needs report to identify chip)
+    // Fetch VCEK (Needs report to identify chip)
     let status = Command::new(&snpguest_path)
         .arg("fetch")
         .arg("vcek")
@@ -183,7 +182,7 @@ pub fn verify_report_signature(report_path: &Path) -> Result<()> {
         return Err(anyhow!("Failed to fetch VCEK certificate"));
     }
 
-    // 3. Verify Certs
+    // Verify Certs
     let status = Command::new(&snpguest_path)
         .arg("verify")
         .arg("certs")
@@ -193,7 +192,7 @@ pub fn verify_report_signature(report_path: &Path) -> Result<()> {
         return Err(anyhow!("Failed to verify certificate chain"));
     }
 
-    // 4. Verify Attestation
+    // Verify Attestation
     let status = Command::new(&snpguest_path)
         .arg("verify")
         .arg("attestation")

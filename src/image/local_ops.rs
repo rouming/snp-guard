@@ -13,12 +13,12 @@ use std::path::Path;
 /// Generates an X25519 keypair and saves as standard PEM files.
 pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
     let mut rng = OsRng;
-    // 1. Generate Keypair using HPKE's KEM
+    // Generate Keypair using HPKE's KEM
     let (priv_key, pub_key) = <X25519HkdfSha256 as Kem>::gen_keypair(&mut rng);
     let priv_bytes = priv_key.to_bytes();
     let pub_bytes = pub_key.to_bytes();
 
-    // 2. Write Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Write Private Key
     // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
     // Standard tools like openssl may not recognize this format.
     let priv_pem = Pem::new("PRIVATE KEY", priv_bytes.to_vec());
@@ -30,7 +30,7 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
     fs::write(priv_path, priv_pem_str.as_bytes())
         .with_context(|| format!("Failed to write private key to {:?}", priv_path))?;
 
-    // Set Permissions (Read-only for owner)
+    // Set permissions (read-only for owner)
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -39,7 +39,7 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
         fs::set_permissions(priv_path, perms)?;
     }
 
-    // 3. Write Public Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Write Public Key
     // Note: This is NOT standard PKCS#8 format. It's a simple PEM wrapper around raw bytes.
     // Standard tools like openssl may not recognize this format.
     let pub_pem = Pem::new("PUBLIC KEY", pub_bytes.to_vec());
@@ -62,14 +62,14 @@ pub fn generate_keys(priv_path: &Path, pub_path: &Path) -> Result<()> {
 pub fn encrypt_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> Result<()> {
     let mut rng = OsRng;
 
-    // 1. Load Data
+    // Load Data
     let plaintext = fs::read(data_path)
         .with_context(|| format!("Failed to read data file: {:?}", data_path))?;
 
     let pub_pem_str = fs::read_to_string(pub_key_path)
         .with_context(|| format!("Failed to read public key: {:?}", pub_key_path))?;
 
-    // 2. Parse Public Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Parse Public Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let pub_pem = pem::parse(&pub_pem_str).map_err(|e| anyhow!("Invalid PEM format: {}", e))?;
 
     if pub_pem.tag() != "PUBLIC KEY" {
@@ -85,7 +85,7 @@ pub fn encrypt_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> R
     let hpke_key = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&pub_bytes)
         .map_err(|e| anyhow!("Key conversion failed: {}", e))?;
 
-    // 3. Encrypt (HPKE)
+    // Encrypt (HPKE)
     let (encapped_key, mut sender_ctx) = hpke::setup_sender::<
         AesGcm256,
         HkdfSha256,
@@ -98,7 +98,7 @@ pub fn encrypt_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> R
         .seal(&plaintext, &[])
         .map_err(|e| anyhow!("Encryption failed: {}", e))?;
 
-    // 4. Serialize: [ Encapped_Key (32b) || Ciphertext ]
+    // Serialize: [ Encapped_Key (32b) || Ciphertext ]
     let mut output = encapped_key.to_bytes().to_vec();
     output.extend_from_slice(&ciphertext);
 
@@ -111,7 +111,7 @@ pub fn encrypt_file(pub_key_path: &Path, data_path: &Path, out_path: &Path) -> R
 
 /// Decrypts a file using HPKE (X25519 + AES-GCM-256)
 pub fn decrypt_file(priv_key_path: &Path, enc_data_path: &Path, out_path: &Path) -> Result<()> {
-    // 1. Load encrypted blob
+    // Load encrypted blob
     let enc_blob = fs::read(enc_data_path)
         .with_context(|| format!("Failed to read encrypted data file: {:?}", enc_data_path))?;
 
@@ -121,10 +121,10 @@ pub fn decrypt_file(priv_key_path: &Path, enc_data_path: &Path, out_path: &Path)
         ));
     }
 
-    // 2. Split Blob: [ Encapped_Key (32 bytes) || Ciphertext ]
+    // Split Blob: [ Encapped_Key (32 bytes) || Ciphertext ]
     let (encapped_bytes, ciphertext) = enc_blob.split_at(32);
 
-    // 3. Load and Parse Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
+    // Load and Parse Private Key (non-standard PEM format - raw 32-byte key wrapped in PEM)
     let priv_pem_str = fs::read_to_string(priv_key_path)
         .with_context(|| format!("Failed to read private key: {:?}", priv_key_path))?;
 
@@ -143,11 +143,11 @@ pub fn decrypt_file(priv_key_path: &Path, enc_data_path: &Path, out_path: &Path)
     let hpke_priv = <X25519HkdfSha256 as Kem>::PrivateKey::from_bytes(&priv_bytes)
         .map_err(|e| anyhow!("Key conversion failed: {}", e))?;
 
-    // 4. Parse Encapped Key
+    // Parse Encapped Key
     let encapped_key = <X25519HkdfSha256 as Kem>::EncappedKey::from_bytes(encapped_bytes)
         .map_err(|e| anyhow!("Invalid encapped key: {}", e))?;
 
-    // 5. Decrypt (HPKE Open)
+    // Decrypt (HPKE Open)
     let mut receiver_ctx = hpke::setup_receiver::<AesGcm256, HkdfSha256, X25519HkdfSha256>(
         &OpModeR::Base,
         &hpke_priv,
@@ -160,7 +160,7 @@ pub fn decrypt_file(priv_key_path: &Path, enc_data_path: &Path, out_path: &Path)
         .open(ciphertext, &[])
         .map_err(|e| anyhow!("Decryption failed: {}", e))?;
 
-    // 6. Write Plaintext
+    // Write Plaintext
     fs::write(out_path, &plaintext)
         .with_context(|| format!("Failed to write output to {:?}", out_path))?;
 

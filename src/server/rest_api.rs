@@ -151,7 +151,6 @@ fn proto_error(status: StatusCode, msg: &str) -> Response {
         .unwrap()
 }
 
-// --- Token helpers (management API auth) ---
 fn auth_header_token(headers: &axum::http::HeaderMap) -> Option<String> {
     headers
         .get(axum::http::header::AUTHORIZATION)
@@ -426,7 +425,8 @@ async fn list_tokens(State(state): State<Arc<ServiceState>>) -> Response {
 }
 
 async fn create_token(State(state): State<Arc<ServiceState>>, body: Bytes) -> Response {
-    // body: expected: label (string) and optional expires_at seconds since epoch in plain text? For simplicity JSON
+    // body: expected: label (string) and optional expires_at seconds
+    // since epoch in plain text? For simplicity JSON
     #[derive(serde::Deserialize)]
     struct CreateReq {
         label: String,

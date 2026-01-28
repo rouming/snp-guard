@@ -52,10 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         paths.db_file.to_string_lossy().replace('\\', "/")
     );
 
-    // 1. DB
+    // DB
     let conn = Database::connect(db_url).await?;
 
-    // 2. Attestation state (shared between endpoints)
+    // Attestation state (shared between endpoints)
     let mut secret = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut secret);
 
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret,
     });
 
-    // 3. Ingestion keys (for encrypting unsealing private keys)
+    // Ingestion keys (for encrypting unsealing private keys)
     let ingestion_keys = Arc::new(ingestion_key::IngestionKeys::load_or_create(
         &paths.ingestion_key,
         &paths.ingestion_pub,
@@ -106,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES)) // allow large multipart uploads
         .layer(TraceLayer::new_for_http());
 
-    // 5. Combined app (REST API + web UI)
+    // Combined app (REST API + web UI)
     let app = Router::new()
         .merge(management_app)
         .nest("/v1", rest_router)
