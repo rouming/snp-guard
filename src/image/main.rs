@@ -331,7 +331,7 @@ fn extract_boot_data(
         .map_err(|e| anyhow!("Failed to mount {}: {:?}", scratch_rootfs, e))?;
     defer! {
         if let Err(e) = g.umount("/", UmountOptArgs::default()) {
-            println!("WARN: Failed to umount {}: {:?}", "/", e);
+            println!("WARN: Failed to umount /: {:?}", e);
         }
     }
 
@@ -596,10 +596,10 @@ fn encrypt_and_copy_rootfs(
 
     // Mount scratch rootfs
     g.mount(scratch_rootfs, "/")
-        .map_err(|e| anyhow!("Failed to mount {}: {:?}", "/", e))?;
+        .map_err(|e| anyhow!("Failed to mount /: {:?}", e))?;
     defer! {
         if let Err(e) = g.umount("/", UmountOptArgs::default()) {
-            println!("WARN: Failed to umount {}: {:?}", "/", e);
+            println!("WARN: Failed to umount /: {:?}", e);
         }
     }
 
@@ -721,6 +721,7 @@ pub fn upload_snpguard_files(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn install_cryptsetup_on_target(
     g: &guestfs::Handle,
     target_rootfs: &str,
@@ -802,7 +803,7 @@ fn install_cryptsetup_on_target(
     // resolving.
     let cmd = install_cmds.join(";");
     let _out = g
-        .sh(&format!("{}", cmd))
+        .sh(&cmd)
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
     //println!("{}", _out);
 
@@ -820,7 +821,7 @@ fn install_cryptsetup_on_target(
     // Run update initramfs commands
     let cmd = update_initramfs_cmd.join(";");
     let _out = g
-        .sh(&format!("{}", cmd))
+        .sh(&cmd)
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
     //println!("{}", _out);
 

@@ -411,7 +411,11 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             let bytes = resp.bytes().await?;
             let _ = DeleteRecordResponse::decode(&bytes[..])?;
         }
-        ManageCmd::Export { id, format, out_bundle } => {
+        ManageCmd::Export {
+            id,
+            format,
+            out_bundle,
+        } => {
             let endpoint = match format.as_str() {
                 "tar" => "export/tar",
                 "squash" | "squashfs" => "export/squash",
@@ -502,10 +506,10 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
                 if unsealing_key_pem.tag() != "PRIVATE KEY" {
                     bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
                 }
-                let unsealing_key_bytes: [u8; 32] = unsealing_key_pem
-                    .contents()
-                    .try_into()
-                    .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
+                let unsealing_key_bytes: [u8; 32] =
+                    unsealing_key_pem.contents().try_into().map_err(|_| {
+                        anyhow!("Invalid unsealing private key length (expected 32 bytes)")
+                    })?;
 
                 // Read ingestion public key from saved config (stored during login)
                 let ingestion_key_path = ingestion_key_dest_path()?;
@@ -906,6 +910,7 @@ fn print_list(records: Vec<common::snpguard::AttestationRecord>, json: bool) -> 
     }
     Ok(())
 }
+
 async fn toggle(
     client: &reqwest::Client,
     base: &str,
