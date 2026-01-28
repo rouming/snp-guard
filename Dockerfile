@@ -68,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:3000/ || exit 1
 
 # Run migration first, then start the server
-ENTRYPOINT ["/bin/sh", "-c", "cd /app && DATA_DIR=${DATA_DIR:-/data} && DATABASE_URL=\"sqlite://${DATA_DIR}/db/snpguard.sqlite?mode=rwc\" /usr/local/bin/migration && DATA_DIR=${DATA_DIR:-/data} /usr/local/bin/snpguard-server"]
+ENTRYPOINT ["/bin/sh", "-c", "cd /app && DATA_DIR=${DATA_DIR:-/data} /usr/local/bin/migration up -u sqlite://${DATA_DIR}/db/snpguard.sqlite?mode=rwc && DATA_DIR=${DATA_DIR:-/data} /usr/local/bin/snpguard-server"]

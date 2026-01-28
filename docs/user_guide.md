@@ -403,7 +403,6 @@ You can integrate the attestation API into your own tools. See `docs/api.md` for
 ### Environment Variables
 
 - `DATA_DIR`: Root persistence directory (default: `/data`)
-- `DATABASE_URL`: DB URL
 
 ## Getting Help
 

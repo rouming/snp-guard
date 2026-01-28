@@ -210,16 +210,12 @@ Build and run the container:
 # Build the image
 docker build -t snp-guard .
 
-# Create required folders
-mkdir -p ./data/db
-
 # Run the container
 docker run -d \
   --name snp-guard \
   -p 3000:3000 \
   -v "$(pwd)/data:/data" \
   -e DATA_DIR=/data \
-  -e DATABASE_URL="sqlite:///data/db/snpguard.sqlite?mode=rwc" \
   --restart unless-stopped \
   snp-guard
 
