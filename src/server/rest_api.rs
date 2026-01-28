@@ -297,56 +297,12 @@ async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) ->
     use tokio_util::io::ReaderStream;
 
     let artifact_dir = state.data_paths.attestations_dir.join(id);
-    let path = artifact_dir.join(filename);
 
-    // Always regenerate archives to reflect the latest artifacts
-    if filename.ends_with(".squashfs") {
-        let def_path = artifact_dir.join("squash.def");
-        if let Err(e) = std::fs::write(
-            &def_path,
-            "/ d 755 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n",
-        ) {
-            return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
-        }
-        // Remove stale file first to avoid reusing old content
-        let _ = std::fs::remove_file(&path);
-        if let Err(e) = std::process::Command::new("mksquashfs")
-            .arg(&artifact_dir)
-            .arg(&path)
-            .arg("-noappend")
-            .arg("-all-root")
-            .arg("-pf")
-            .arg(&def_path)
-            .status()
-        {
-            return proto_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Failed to create squashfs: {e}"),
-            );
-        }
-    } else if filename.ends_with(".tar.gz") {
-        // Remove stale file first to ensure updated contents
-        let _ = std::fs::remove_file(&path);
-        let status = std::process::Command::new("tar")
-            .arg("-czf")
-            .arg(&path)
-            .arg("-C")
-            .arg(&artifact_dir)
-            .arg("--transform=s|^|/|")
-            .arg("firmware-code.fd")
-            .arg("vmlinuz")
-            .arg("initrd.img")
-            .arg("kernel-params.txt")
-            .arg("id-block.bin")
-            .arg("id-auth.bin")
-            .status();
-        if status.is_err() {
-            return proto_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to create tarball",
-            );
-        }
-    }
+    // Generate artifact archive
+    let path = match crate::artifacts::generate_artifact(&artifact_dir, filename) {
+        Ok(p) => p,
+        Err(e) => return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    };
 
     match tokio::fs::File::open(path).await {
         Ok(file) => {
