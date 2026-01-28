@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::MAX_BODY_BYTES;
+use crate::{auth, MAX_BODY_BYTES};
 use axum::{
     body::{Body, Bytes},
     extract::{DefaultBodyLimit, Path, State},
@@ -9,13 +9,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use base64::Engine;
 use prost::Message;
 
 use crate::master_password::MasterAuth;
 use crate::nonce;
 use crate::service_core::ServiceState;
-use argon2::{password_hash::PasswordHash, password_hash::PasswordVerifier, Argon2};
 use common::snpguard::{
     AttestationRequest, CreateRecordRequest, CreateRecordResponse, DeleteRecordResponse,
     GetRecordResponse, ListRecordsResponse, NonceRequest, NonceResponse, ToggleEnabledRequest,
@@ -159,34 +157,6 @@ fn auth_header_token(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn verify_master(
-    headers: &axum::http::HeaderMap,
-    master: &crate::master_password::MasterAuth,
-) -> bool {
-    headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|auth| auth.strip_prefix("Basic "))
-        .and_then(|encoded| {
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .ok()
-        })
-        .and_then(|decoded| String::from_utf8(decoded).ok())
-        .and_then(|credentials| credentials.splitn(2, ':').nth(1).map(|pw| pw.to_owned()))
-        .and_then(|supplied_password| {
-            PasswordHash::new(&master.hash)
-                .ok()
-                .map(|hash| (supplied_password, hash))
-        })
-        .map(|(supplied_password, parsed_hash)| {
-            Argon2::default()
-                .verify_password(supplied_password.as_bytes(), &parsed_hash)
-                .is_ok()
-        })
-        .unwrap_or(false)
-}
-
 #[derive(Clone)]
 struct AuthCtx {
     state: Arc<ServiceState>,
@@ -214,7 +184,7 @@ async fn management_auth(
     }
 
     // Fallback to master password
-    if verify_master(headers, &ctx.master) {
+    if auth::verify_master_from_header(headers, &ctx.master) {
         return next.run(req).await;
     }
 

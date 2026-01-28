@@ -48,36 +48,7 @@ pub async fn master_auth_middleware(
         return next.run(request).await;
     }
 
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok());
-
-    let authorized = auth_header
-        .and_then(|auth| auth.strip_prefix("Basic "))
-        .and_then(|encoded| {
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .ok()
-        })
-        .and_then(|decoded| String::from_utf8(decoded).ok())
-        .and_then(|credentials| {
-            credentials
-                .splitn(2, ':')
-                .nth(1)
-                .map(|password| password.to_owned())
-        })
-        .and_then(|supplied_password| {
-            PasswordHash::new(&master.hash)
-                .ok()
-                .map(|parsed_hash| (supplied_password, parsed_hash))
-        })
-        .map(|(supplied_password, parsed_hash)| {
-            Argon2::default()
-                .verify_password(supplied_password.as_bytes(), &parsed_hash)
-                .is_ok()
-        })
-        .unwrap_or(false);
+    let authorized = verify_master_from_header(request.headers(), &master);
 
     if authorized {
         // Issue a session cookie for subsequent requests
@@ -116,6 +87,28 @@ pub async fn master_auth_middleware(
             .body(Body::from("Unauthorized - enter master password"))
             .unwrap()
     }
+}
+
+/// Verify master password using HTTP Basic Authorization header.
+pub fn verify_master_from_header(headers: &HeaderMap, master: &MasterAuth) -> bool {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|auth| auth.strip_prefix("Basic "))
+        .and_then(|encoded| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()
+        })
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .and_then(|credentials| {
+            credentials
+                .split_once(':')
+                .map(|x| x.1)
+                .map(|pw| pw.to_owned())
+        })
+        .map(|supplied_password| verify_password(master, &supplied_password))
+        .unwrap_or(false)
 }
 
 pub fn verify_password(master: &MasterAuth, supplied_password: &str) -> bool {
