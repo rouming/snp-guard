@@ -163,25 +163,28 @@ fn verify_master(
     headers: &axum::http::HeaderMap,
     master: &crate::master_password::MasterAuth,
 ) -> bool {
-    let auth_header = headers
+    headers
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok());
-    if let Some(auth) = auth_header {
-        if let Some(encoded) = auth.strip_prefix("Basic ") {
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-                if let Ok(credentials) = String::from_utf8(decoded) {
-                    let parts: Vec<&str> = credentials.splitn(2, ':').collect();
-                    let supplied_password = if parts.len() == 2 { parts[1] } else { "" };
-                    if let Ok(parsed_hash) = PasswordHash::new(&master.hash) {
-                        return Argon2::default()
-                            .verify_password(supplied_password.as_bytes(), &parsed_hash)
-                            .is_ok();
-                    }
-                }
-            }
-        }
-    }
-    false
+        .and_then(|h| h.to_str().ok())
+        .and_then(|auth| auth.strip_prefix("Basic "))
+        .and_then(|encoded| {
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()
+        })
+        .and_then(|decoded| String::from_utf8(decoded).ok())
+        .and_then(|credentials| credentials.splitn(2, ':').nth(1).map(|pw| pw.to_owned()))
+        .and_then(|supplied_password| {
+            PasswordHash::new(&master.hash)
+                .ok()
+                .map(|hash| (supplied_password, hash))
+        })
+        .map(|(supplied_password, parsed_hash)| {
+            Argon2::default()
+                .verify_password(supplied_password.as_bytes(), &parsed_hash)
+                .is_ok()
+        })
+        .unwrap_or(false)
 }
 
 #[derive(Clone)]
