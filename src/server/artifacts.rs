@@ -9,7 +9,7 @@ pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf>
     let path = artifact_dir.join(filename);
 
     // Always regenerate archives to reflect the latest artifacts
-    if filename.ends_with(".squashfs") || filename == "artifacts.squashfs" {
+    if filename.ends_with(".squashfs") {
         let def_path = artifact_dir.join("squash.def");
         std::fs::write(
             &def_path,
@@ -29,7 +29,7 @@ pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf>
             .arg(&def_path)
             .status()
             .map_err(|e| anyhow!("Failed to create squashfs: {}", e))?;
-    } else if filename.ends_with(".tar.gz") || filename == "artifacts.tar.gz" {
+    } else if filename.ends_with(".tar.gz") {
         // Remove stale file first to ensure updated contents
         let _ = std::fs::remove_file(&path);
 
