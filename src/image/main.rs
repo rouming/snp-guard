@@ -400,6 +400,7 @@ fn extract_boot_data(
 
             // Try to mount this partition and check if it contains grub.cfg
             if let Ok(()) = g.mount_ro(&part, bootcheck_dir) {
+                // xxx fixme
                 _guards.borrow_mut().push(Box::new(move || {
                     if let Err(e) = g.umount(bootcheck_dir, UmountOptArgs::default()) {
                         println!("WARN: Failed to umount {}: {:?}", bootcheck_dir, e);
@@ -456,6 +457,8 @@ fn extract_boot_data(
         entries.len(),
         if entries.len() == 1 { "y" } else { "ies" }
     );
+
+    // xxx fixme: every entry has to be checked on sev support
 
     let selected_entry: &GrubEntry = if entries.len() == 1 {
         // Single entry - use it automatically
