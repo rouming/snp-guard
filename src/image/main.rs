@@ -414,6 +414,11 @@ fn extract_boot_data(
                     boot_mount = Some(bootcheck_dir.to_string());
                     break;
                 }
+                // Umount previously mounted bootcheck_dir, we
+                // continue mounting other partitions
+                if let Some(umount) = _guards.borrow_mut().pop() {
+                    umount();
+                }
             }
         }
         if boot_mount.is_none() {
