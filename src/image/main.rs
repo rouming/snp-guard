@@ -301,64 +301,116 @@ fn create_guestfs_context(
     Ok((g, scratch_rootfs.to_string(), source_rootfs, target_rootfs))
 }
 
-/// Extracts kernel, initrd, and kernel parameters from target image using GRUB parser.
-/// Returns (kernel_data, initrd_data, kernel_params)
-fn extract_boot_data(
-    g: &guestfs::Handle,
-    scratch_rootfs: &str,
-    target_rootfs: &str,
-    vmk: &[u8],
-) -> Result<(Vec<u8>, Vec<u8>, String)> {
-    use grub_parser::{parse_grub_cfg_from_str, GrubEntry};
-    use guestfs::UmountOptArgs;
-
-    println!("  Scratch rootfs: {}", scratch_rootfs);
-    println!("  Target rootfs: {}", target_rootfs);
-
-    // Convert VMK to string for LUKS
-    let luks_key = hex::encode(vmk);
-
-    g.luks_open(target_rootfs, &luks_key, "root_crypt")
-        .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
-    defer! {
-        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
-            println!("WARN: Failed to close LUKS: {:?}", e);
-        }
+/// Checks if a specific kernel version supports SEV-SNP by examining its config and modules
+fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Result<bool> {
+    // Check kernel config file
+    let config_path = format!("/boot/config-{}", version);
+    if !g
+        .exists(&config_path)
+        .map_err(|e| anyhow!("Failed to check if config exists: {:?}", e))?
+    {
+        println!("  [!] ERROR: Config {} does not exist!", config_path);
+        return Ok(false);
     }
 
-    // Mount scratch rootfs
-    g.mount(scratch_rootfs, "/")
-        .map_err(|e| anyhow!("Failed to mount {}: {:?}", scratch_rootfs, e))?;
+    let config_str = g
+        .cat(&config_path)
+        .map_err(|e| anyhow!("Failed to read config: {:?}", e))?;
+
+    // Check if SEV-Guest is built into kernel
+    if config_str.contains("CONFIG_SEV_GUEST=y") {
+        println!("  [+] Found: SEV-Guest is built into the kernel binary.");
+        return Ok(true);
+    }
+
+    // Check if SEV-Guest is configured as module
+    if config_str.contains("CONFIG_SEV_GUEST=m") {
+        println!("  [*] Configured as module: Searching for sev-guest.ko...");
+
+        // Search for sev-guest.ko module in /usr/lib/modules/<version>/
+        let modules_dir = format!("/usr/lib/modules/{}", version);
+        if !g
+            .exists(&modules_dir)
+            .map_err(|e| anyhow!("Failed to check if modules dir exists: {:?}", e))?
+        {
+            println!("  [!] ERROR: CONFIG_SEV_GUEST=m but modules directory not found!");
+            return Ok(false);
+        }
+
+        // Search recursively for sev-guest.ko (matches sev-guest.ko, sev-guest.ko.zst, etc.)
+        let all_files = g
+            .find(&modules_dir)
+            .map_err(|e| anyhow!("Failed to find files: {:?}", e))?;
+
+        for file in all_files {
+            if file.contains("sev-guest.ko") {
+                println!("  [+] Found module file: {}{}", modules_dir, file);
+                return Ok(true);
+            }
+        }
+
+        println!("  [!] ERROR: CONFIG_SEV_GUEST=m but no .ko file exists on disk!");
+        return Ok(false);
+    }
+
+    // SEV-Guest support is disabled
+    println!("  [-] SEV-Guest support is disabled in this kernel's config.");
+    Ok(false)
+}
+
+/// Verifies if a kernel supports SEV-SNP by checking kernel config and modules
+fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<bool> {
+    // Extract kernel version from path (e.g., /boot/vmlinuz-5.10.0-123)
+    let kernel_name = Path::new(kernel_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("Invalid kernel path: {}", kernel_path))?;
+
+    // Try to extract version from kernel name
+    // Common patterns: vmlinuz-5.10.0-123, vmlinuz-5.10.0-123-generic, etc.
+    if let Some(version) = kernel_name.strip_prefix("vmlinuz-") {
+        return check_kernel_version_sev_support(g, version);
+    }
+
+    println!(
+        "  [-] Can't determine version for the kernel {}",
+        kernel_name
+    );
+    Ok(false)
+}
+
+/// Partition type where boot files are located
+#[derive(Debug, Clone)]
+enum BootPartition {
+    Rootfs,
+    Boot(String), // device path
+}
+
+/// Inspects source image to find GRUB entries and verify SEV-SNP support.
+/// Returns (supported_entries, unsupported_entries, boot_partition)
+fn inspect_source_image_boot_data(
+    g: &guestfs::Handle,
+    source_rootfs: &str,
+) -> Result<(
+    Vec<grub_parser::GrubEntry>,
+    Vec<grub_parser::GrubEntry>,
+    BootPartition,
+)> {
+    use grub_parser::parse_grub_cfg_from_str;
+    use guestfs::{IsFileOptArgs, UmountOptArgs};
+
+    // Mount source rootfs read-only
+    g.mount_ro(source_rootfs, "/")
+        .map_err(|e| anyhow!("Failed to mount source rootfs: {:?}", e))?;
     defer! {
         if let Err(e) = g.umount("/", UmountOptArgs::default()) {
             println!("WARN: Failed to umount /: {:?}", e);
         }
     }
 
-    // Create /target mountpoint
-    let target_mount = "/target";
-    g.mkdir(target_mount)
-        .map_err(|e| anyhow!("Failed to create {}: {:?}", target_mount, e))?;
-    defer! {
-        if let Err(e) = g.rmdir(target_mount) {
-            println!("WARN: Failed to rmdir {}: {:?}", target_mount, e);
-        }
-    }
-
-    // Mount target as /target
-    g.mount_ro("/dev/mapper/root_crypt", target_mount)
-        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
-    defer! {
-        if let Err(e) = g.umount(target_mount, UmountOptArgs::default()) {
-            println!("WARN: Failed to umount {}: {:?}", target_mount, e);
-        }
-    }
-
-    println!("  Mounted target rootfs to {}", target_mount);
-
     // Check for /boot partition or use root filesystem
-    let mut grub_cfg_path = format!("{}/boot/grub/grub.cfg", target_mount);
-    let mut boot_mount: Option<String> = None;
+    let mut grub_cfg_path = "/boot/grub/grub.cfg".to_string();
+    let mut boot_partition = BootPartition::Rootfs;
     let _guards = RefCell::new(Vec::<Box<dyn FnOnce() + '_>>::new());
     defer! {
         let mut guards = _guards.borrow_mut();
@@ -368,7 +420,6 @@ fn extract_boot_data(
     };
 
     // First, check if grub.cfg exists in root filesystem's /boot
-    use guestfs::IsFileOptArgs;
     let root_grub_exists = g
         .is_file(&grub_cfg_path, IsFileOptArgs::default())
         .map_err(|e| anyhow!("Failed to check if grub.cfg exists: {:?}", e))?;
@@ -382,19 +433,11 @@ fn extract_boot_data(
             .list_partitions()
             .map_err(|e| anyhow!("Failed to list partitions: {:?}", e))?;
 
-        // Create /boot_check mountpoint
-        let bootcheck_dir = "/boot_check";
-        g.mkdir(bootcheck_dir)
-            .map_err(|e| anyhow!("Failed to create {}: {:?}", bootcheck_dir, e))?;
-        _guards.borrow_mut().push(Box::new(move || {
-            if let Err(e) = g.rmdir(bootcheck_dir) {
-                println!("WARN: Failed to rmdir {}: {:?}", bootcheck_dir, e);
-            }
-        }));
+        let bootcheck_dir = "/boot";
 
         for part in partitions {
-            // Skip the target rootfs partition
-            if part == target_rootfs {
+            // Skip the source rootfs partition
+            if part == source_rootfs {
                 continue;
             }
 
@@ -405,36 +448,35 @@ fn extract_boot_data(
                         println!("WARN: Failed to umount {}: {:?}", bootcheck_dir, e);
                     }
                 }));
-                let boot_check_grub = format!("{bootcheck_dir}/grub/grub.cfg");
+                let boot_check_grub = format!("{}/grub/grub.cfg", bootcheck_dir);
                 if g.is_file(boot_check_grub.as_str(), IsFileOptArgs::default())
                     .map_err(|e| anyhow!("Failed to check if file exists: {:?}", e))?
                 {
                     println!("  Found /boot partition at: {}", part);
                     grub_cfg_path = boot_check_grub.to_string();
-                    boot_mount = Some(bootcheck_dir.to_string());
+                    boot_partition = BootPartition::Boot(part);
                     break;
                 }
-                // Umount previously mounted bootcheck_dir, we
-                // continue mounting other partitions
+                // Umount previously mounted bootcheck_dir, we continue mounting other partitions
                 if let Some(umount) = _guards.borrow_mut().pop() {
                     umount();
                 }
             }
         }
-        if boot_mount.is_none() {
+        if matches!(boot_partition, BootPartition::Rootfs) {
             println!("  No separate /boot partition found with grub.cfg");
         }
     } else {
         println!("  Found /boot/grub/grub.cfg in root filesystem");
     }
 
-    // Final check if grub.cfg exists (should have been found above, but double-check)
+    // Final check if grub.cfg exists
     if !g
         .is_file(&grub_cfg_path, IsFileOptArgs::default())
         .map_err(|e| anyhow!("Failed to check if grub.cfg exists: {:?}", e))?
     {
         bail!(
-            "GRUB configuration file not found at: {}. Please ensure the target image has a valid GRUB installation.",
+            "GRUB configuration file not found at: {}. Please ensure the source image has a valid GRUB installation.",
             grub_cfg_path
         );
     }
@@ -462,10 +504,153 @@ fn extract_boot_data(
         if entries.len() == 1 { "y" } else { "ies" }
     );
 
-    let selected_entry: &GrubEntry = if entries.len() == 1 {
-        // Single entry - use it automatically
-        let entry = &entries[0];
-        println!("  Using single menu entry:");
+    // Verify SEV-SNP support for each entry
+    let mut supported = Vec::new();
+    let mut unsupported = Vec::new();
+
+    for entry in entries {
+        println!("\n  Checking SEV-SNP support for kernel: {}", entry.kernel);
+
+        match verify_sev_guest_support(g, &entry.kernel) {
+            Ok(true) => {
+                println!("  [+] Kernel supports SEV-SNP");
+                supported.push(entry);
+            }
+            Ok(false) => {
+                println!("  [-] Kernel does NOT support SEV-SNP");
+                unsupported.push(entry);
+            }
+            Err(e) => {
+                println!("  [!] Error checking SEV-SNP support: {}", e);
+                unsupported.push(entry);
+            }
+        }
+    }
+
+    Ok((supported, unsupported, boot_partition))
+}
+
+/// Extracts kernel, initrd, and kernel parameters from target image using pre-verified GRUB entries.
+/// Returns (kernel_data, initrd_data, kernel_params)
+/// This function works on the target image and uses the pre-verified entry list from source image.
+fn extract_boot_data(
+    g: &guestfs::Handle,
+    scratch_rootfs: &str,
+    target_rootfs: &str,
+    vmk: &[u8],
+    supported_entries: &[grub_parser::GrubEntry],
+    unsupported_entries: &[grub_parser::GrubEntry],
+    boot_partition: &BootPartition,
+) -> Result<(Vec<u8>, Vec<u8>, String)> {
+    use guestfs::UmountOptArgs;
+
+    println!("  Scratch rootfs: {}", scratch_rootfs);
+    println!("  Target rootfs: {}", target_rootfs);
+
+    let _guards = RefCell::new(Vec::<Box<dyn FnOnce() + '_>>::new());
+    defer! {
+        let mut guards = _guards.borrow_mut();
+        while let Some(cleanup) = guards.pop() {
+            cleanup();
+        }
+    }
+
+    // Handle boot partition based on type
+    match boot_partition {
+        BootPartition::Rootfs => {
+            // Boot is on rootfs: decrypt target rootfs and mount it as /
+            let luks_key = hex::encode(vmk);
+            g.luks_open(target_rootfs, &luks_key, "root_crypt")
+                .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
+            _guards.borrow_mut().push(Box::new(move || {
+                if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+                    println!("WARN: Failed to close LUKS: {:?}", e);
+                }
+            }));
+
+            g.mount_ro("/dev/mapper/root_crypt", "/")
+                .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+            _guards.borrow_mut().push(Box::new(move || {
+                if let Err(e) = g.umount("/", UmountOptArgs::default()) {
+                    println!("WARN: Failed to umount /: {:?}", e);
+                }
+            }));
+
+            println!("  Mounted decrypted target rootfs as /");
+            None // Boot is on rootfs, so no separate boot mount
+        }
+        BootPartition::Boot(boot_dev) => {
+            // Mount scratch rootfs temporarily (needed for creating mount points)
+            g.mount(scratch_rootfs, "/")
+                .map_err(|e| anyhow!("Failed to mount {}: {:?}", scratch_rootfs, e))?;
+            _guards.borrow_mut().push(Box::new(move || {
+                if let Err(e) = g.umount("/", UmountOptArgs::default()) {
+                    println!("WARN: Failed to umount /: {:?}", e);
+                }
+            }));
+
+            // Boot is on separate partition: mount boot partition as /boot
+            let boot_mountpoint = "/boot";
+            g.mkdir(boot_mountpoint)
+                .map_err(|e| anyhow!("Failed to create {}: {:?}", boot_mountpoint, e))?;
+            _guards.borrow_mut().push(Box::new(move || {
+                if let Err(e) = g.rmdir(boot_mountpoint) {
+                    println!("WARN: Failed to rmdir {}: {:?}", boot_mountpoint, e);
+                }
+            }));
+
+            g.mount_ro(boot_dev, boot_mountpoint)
+                .map_err(|e| anyhow!("Failed to mount boot partition {}: {:?}", boot_dev, e))?;
+            _guards.borrow_mut().push(Box::new(move || {
+                if let Err(e) = g.umount(boot_mountpoint, UmountOptArgs::default()) {
+                    println!("WARN: Failed to umount {}: {:?}", boot_mountpoint, e);
+                }
+            }));
+
+            println!("  Mounted boot partition to {}", boot_mountpoint);
+            Some(boot_mountpoint.to_string())
+        }
+    };
+
+    // Display available entries
+    println!("\n  Available GRUB menu entries:");
+
+    // Show supported entries (selectable)
+    if !supported_entries.is_empty() {
+        println!("  SEV-SNP supported entries (selectable):");
+        for (idx, entry) in supported_entries.iter().enumerate() {
+            let default_marker = if entry.is_default { " (default)" } else { "" };
+            println!("    [{}] Kernel: {}{}", idx, entry.kernel, default_marker);
+            if let Some(ref initrd) = entry.initrd {
+                println!("         Initrd: {}", initrd);
+            }
+            println!("         Parameters: {}", entry.params);
+        }
+    }
+
+    // Show unsupported entries (not selectable, but visible)
+    if !unsupported_entries.is_empty() {
+        println!("\n  SEV-SNP unsupported entries (excluded from selection):");
+        for (idx, entry) in unsupported_entries.iter().enumerate() {
+            let entry_num = supported_entries.len() + idx;
+            println!(
+                "    [{}] Kernel: {} (SEV-SNP not supported)",
+                entry_num, entry.kernel
+            );
+            if let Some(ref initrd) = entry.initrd {
+                println!("         Initrd: {}", initrd);
+            }
+            println!("         Parameters: {}", entry.params);
+        }
+    }
+
+    // Select entry from supported list only
+    let selected_entry: &grub_parser::GrubEntry = if supported_entries.is_empty() {
+        bail!("No SEV-SNP supported kernels found. Cannot proceed.");
+    } else if supported_entries.len() == 1 {
+        // Single supported entry - use it automatically
+        let entry = &supported_entries[0];
+        println!("\n  Using single SEV-SNP supported menu entry:");
         println!("    Kernel: {}", entry.kernel);
         if let Some(ref initrd) = entry.initrd {
             println!("    Initrd: {}", initrd);
@@ -475,18 +660,11 @@ fn extract_boot_data(
         println!("    Parameters: {}", entry.params);
         entry
     } else {
-        // Multiple entries - ask user to select
-        println!("\n  Multiple GRUB menu entries found. Please select one:");
-        for (idx, entry) in entries.iter().enumerate() {
-            let default_marker = if entry.is_default { " (default)" } else { "" };
-            println!("  [{}] Kernel: {}{}", idx, entry.kernel, default_marker);
-            if let Some(ref initrd) = entry.initrd {
-                println!("       Initrd: {}", initrd);
-            }
-            println!("       Parameters: {}", entry.params);
-        }
-
-        print!("\n  Enter entry number (0-{}): ", entries.len() - 1);
+        // Multiple supported entries - ask user to select
+        print!(
+            "\n  Enter entry number (0-{}): ",
+            supported_entries.len() - 1
+        );
         io::stdout()
             .flush()
             .map_err(|e| anyhow!("Failed to flush stdout: {}", e))?;
@@ -501,15 +679,15 @@ fn extract_boot_data(
             .parse()
             .map_err(|_| anyhow!("Invalid entry number: {}", input.trim()))?;
 
-        if selected_idx >= entries.len() {
+        if selected_idx >= supported_entries.len() {
             bail!(
                 "Entry number {} is out of range (0-{})",
                 selected_idx,
-                entries.len() - 1
+                supported_entries.len() - 1
             );
         }
 
-        let entry = &entries[selected_idx];
+        let entry = &supported_entries[selected_idx];
         println!("\n  Selected entry {}:", selected_idx);
         println!("    Kernel: {}", entry.kernel);
         if let Some(ref initrd) = entry.initrd {
@@ -521,43 +699,25 @@ fn extract_boot_data(
         entry
     };
 
-    // Convert paths relative to target mount or boot partition
-    // GRUB paths in grub.cfg are typically relative to the partition where grub.cfg is located
-    let kernel_path = if selected_entry.kernel.starts_with('/') {
-        // Absolute path - resolve based on where grub.cfg was found
-        if let Some(ref boot_mnt) = boot_mount {
-            // If boot is separate, absolute paths are relative to boot partition
-            format!("{}{}", boot_mnt, selected_entry.kernel)
-        } else {
-            // Absolute paths are relative to root
-            format!("{}{}", target_mount, selected_entry.kernel)
-        }
+    let kernel_path = if selected_entry.kernel.starts_with("/boot") {
+        selected_entry.kernel.clone()
     } else {
-        // Relative path - assume it's relative to the partition containing grub.cfg
-        if let Some(ref boot_mnt) = boot_mount {
-            format!("{}/{}", boot_mnt, selected_entry.kernel)
-        } else {
-            format!("{}/boot/{}", target_mount, selected_entry.kernel)
-        }
+        format!("/boot{}", selected_entry.kernel)
     };
 
-    let initrd_path = selected_entry.initrd.as_ref().map(|initrd| {
-        if initrd.starts_with('/') {
-            if let Some(ref boot_mnt) = boot_mount {
-                format!("{}{}", boot_mnt, initrd)
+    let initrd_path = selected_entry
+        .initrd
+        .as_deref()
+        .map(|p| {
+            if p.starts_with("/boot") {
+                p.to_string()
             } else {
-                format!("{}{}", target_mount, initrd)
+                format!("/boot{}", p)
             }
-        } else if let Some(ref boot_mnt) = boot_mount {
-            format!("{}/{}", boot_mnt, initrd)
-        } else {
-            format!("{}/boot/{}", target_mount, initrd)
-        }
-    });
+        })
+        .ok_or_else(|| anyhow!("No initrd found in boot configuration"))?;
 
     // Read initrd from target image
-    let initrd_path =
-        initrd_path.ok_or_else(|| anyhow!("No initrd found in boot configuration"))?;
     let initrd_data = g
         .read_file(&initrd_path)
         .map_err(|e| anyhow!("Failed to read initrd from {}: {:?}", initrd_path, e))?;
@@ -1008,6 +1168,26 @@ fn run_convert(
     let (g, scratch_rootfs, source_rootfs, target_rootfs) =
         create_guestfs_context(in_image, out_image)?;
 
+    // Inspect source image to verify SEV-SNP support
+    println!("Inspecting source image for SEV-SNP kernel support...");
+    let (supported_entries, unsupported_entries, boot_partition) =
+        inspect_source_image_boot_data(&g, &source_rootfs)?;
+
+    // Check if any kernels support SEV-SNP
+    if supported_entries.is_empty() {
+        bail!(
+            "No SEV-SNP supported kernels found in source image. Cannot proceed with conversion.\n\
+            Found {} unsupported kernel(s). Please use an image with SEV-SNP enabled kernels.",
+            unsupported_entries.len()
+        );
+    }
+
+    println!(
+        "\n  Found {} SEV-SNP supported kernel(s) and {} unsupported kernel(s)",
+        supported_entries.len(),
+        unsupported_entries.len()
+    );
+
     println!("Encrypting root filesystem with LUKS2...");
     encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
 
@@ -1032,8 +1212,15 @@ fn run_convert(
     )?;
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
-    let (kernel_data, initrd_data, kernel_params) =
-        extract_boot_data(&g, &scratch_rootfs, &target_rootfs, &vmk)?;
+    let (kernel_data, initrd_data, kernel_params) = extract_boot_data(
+        &g,
+        &scratch_rootfs,
+        &target_rootfs,
+        &vmk,
+        &supported_entries,
+        &unsupported_entries,
+        &boot_partition,
+    )?;
 
     // Write artifacts to staging directory
     // Copy firmware (required)
