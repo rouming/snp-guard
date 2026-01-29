@@ -21,8 +21,6 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_CA_CERT: &str = "/etc/snpguard/ca.pem";
-
 #[derive(Parser, Debug)]
 #[command(author, version, about = "SnpGuard client")]
 struct Cli {
@@ -37,17 +35,17 @@ enum Command {
     Attest {
         #[arg(long, value_name = "URL")]
         url: String,
-        #[arg(long, value_name = "PATH", default_value = DEFAULT_CA_CERT)]
+        #[arg(long, value_name = "PATH")]
         ca_cert: String,
         #[arg(long, value_name = "PATH")]
-        sealed_blob: Option<PathBuf>,
+        sealed_blob: PathBuf,
     },
     /// Management operations (requires stored token)
     Manage {
         #[arg(long, value_name = "URL")]
         url: Option<String>,
-        #[arg(long, value_name = "PATH", default_value = DEFAULT_CA_CERT)]
-        ca_cert: String,
+        #[arg(long, value_name = "PATH")]
+        ca_cert: Option<String>,
         #[command(subcommand)]
         action: ManageCmd,
     },
@@ -151,12 +149,12 @@ async fn main() -> Result<()> {
             url,
             ca_cert,
             sealed_blob,
-        } => run_attest(&url, &ca_cert, sealed_blob.as_deref()).await,
+        } => run_attest(&url, &ca_cert, &sealed_blob).await,
         Command::Manage {
             url,
             ca_cert,
             action,
-        } => run_manage(url.as_deref(), &ca_cert, action).await,
+        } => run_manage(url.as_deref(), ca_cert.as_deref(), action).await,
         Command::Config { action } => run_config(action),
     }
 }
@@ -249,7 +247,7 @@ fn build_client_from_bytes(ca_pem: &[u8]) -> Result<reqwest::Client> {
     Ok(client)
 }
 
-async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Result<()> {
+async fn run_attest(url: &str, ca_cert: &str, sealed_blob: &Path) -> Result<()> {
     let client = build_client(ca_cert)?;
     let base = normalize_https(url)?;
     let mut rng = OsRng;
@@ -293,10 +291,8 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
     let report_data = report_bytes.to_vec();
 
     // Read sealed blob
-    let sealed_blob_path =
-        sealed_blob.ok_or_else(|| anyhow!("--sealed-blob is required for attestation"))?;
-    let sealed_blob_data = fs::read(sealed_blob_path)
-        .with_context(|| format!("Failed to read sealed blob from {:?}", sealed_blob_path))?;
+    let sealed_blob_data = fs::read(sealed_blob)
+        .with_context(|| format!("Failed to read sealed blob from {:?}", sealed_blob))?;
 
     // Send attestation request
     let mut req_bytes = Vec::new();
@@ -348,20 +344,24 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: Option<&Path>) -> Res
     Ok(())
 }
 
-async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Result<()> {
+async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd) -> Result<()> {
     let cfg = load_config()?;
     let token = cfg
         .token
         .clone()
         .ok_or_else(|| anyhow!("Token not found; run config login"))?;
+
     let base = if let Some(u) = url {
         normalize_https(u)?
     } else if let Some(u) = cfg.url {
         u
     } else {
-        bail!("URL not provided and not stored; pass --url or login with a URL")
+        bail!("URL not provided and not stored; pass --url or run config login")
     };
-    let ca_path = if let Some(stored) = cfg.ca_cert {
+
+    let ca_path = if let Some(ca_path) = ca_cert {
+        ca_path.to_string()
+    } else if let Some(stored) = cfg.ca_cert {
         config_dir()
             .unwrap_or_default()
             .join("snpguard")
@@ -369,8 +369,9 @@ async fn run_manage(url: Option<&str>, ca_cert: &str, action: ManageCmd) -> Resu
             .to_string_lossy()
             .to_string()
     } else {
-        ca_cert.to_string()
+        bail!("ca_cert not provided and not stored; pass --ca-cert or run config login")
     };
+
     let client = build_client(&ca_path)?;
     match action {
         ManageCmd::List { json } => {
