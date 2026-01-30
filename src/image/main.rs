@@ -179,34 +179,51 @@ fn secure_delete_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Guard to ensure staging directory is cleaned up on error
-struct StagingGuard {
-    path: PathBuf,
-    should_cleanup: bool,
+/// Guard to ensure paths are cleaned up on error
+struct CleanupGuard {
+    dir: PathBuf,
+    file: Option<PathBuf>,
+    keep: bool,
 }
 
-impl StagingGuard {
-    fn new(path: PathBuf) -> Self {
+impl CleanupGuard {
+    fn new(dir: PathBuf) -> Self {
         Self {
-            path,
-            should_cleanup: true,
+            dir,
+            file: None,
+            keep: false,
         }
     }
 
+    fn register_file(&mut self, file: PathBuf) {
+        self.file = Some(file);
+    }
+
     fn keep(&mut self) {
-        self.should_cleanup = false;
+        self.keep = true;
     }
 }
 
-impl Drop for StagingGuard {
+impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        if self.should_cleanup && self.path.exists() {
-            if let Err(e) = fs::remove_dir_all(&self.path) {
-                eprintln!(
+        if self.keep {
+            return;
+        }
+
+        if self.dir.exists() {
+            if let Err(e) = fs::remove_dir_all(&self.dir) {
+                println!(
                     "Warning: Failed to cleanup staging directory {:?}: {}",
-                    self.path, e
+                    self.dir, e
                 );
             }
+        }
+        if let Some(file) = &self.file {
+            file.exists().then(|| {
+                if let Err(e) = fs::remove_file(file) {
+                    println!("Warning: Failed to cleanup file {:?}: {}", self.dir, e);
+                }
+            });
         }
     }
 }
@@ -1052,7 +1069,7 @@ fn run_convert(
         bail!("Staging directory already exists: {:?}", out_staging);
     }
     fs::create_dir_all(out_staging)?;
-    let mut staging_guard = StagingGuard::new(out_staging.to_path_buf());
+    let mut cleanup_guard = CleanupGuard::new(out_staging.to_path_buf());
 
     // Generate random 64-byte VMK
     println!("Generating Volume Master Key (VMK)...");
@@ -1163,6 +1180,7 @@ fn run_convert(
             out_image.display()
         )
     })?;
+    cleanup_guard.register_file(out_image.to_path_buf());
 
     println!("Preparing Guestfs context, launch appliance VM...");
     let (g, scratch_rootfs, source_rootfs, target_rootfs) =
@@ -1248,8 +1266,8 @@ fn run_convert(
     fs::write(&params_dest, &kernel_params).context("Failed to write kernel params")?;
     println!("Wrote kernel params to kernel-params.txt");
 
-    // Mark staging as kept (don't cleanup on success)
-    staging_guard.keep();
+    // Mark staging and target image as kept
+    cleanup_guard.keep();
 
     println!("Image conversion completed successfully!");
     println!("  Output image: {:?}", out_image);
