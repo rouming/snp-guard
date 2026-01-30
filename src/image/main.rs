@@ -904,7 +904,7 @@ pub fn upload_snpguard_files(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn install_cryptsetup_on_target(
+fn install_snpguard_on_target(
     g: &guestfs::Handle,
     target_rootfs: &str,
     vmk: &[u8],
@@ -1064,10 +1064,20 @@ fn run_convert(
         );
     }
 
-    // Create staging directory
+    if out_staging.exists() && out_image.exists() {
+        bail!(
+            "Staging directory {:?} and output image file {:?} already exist",
+            out_staging,
+            out_image
+        );
+    }
     if out_staging.exists() {
         bail!("Staging directory already exists: {:?}", out_staging);
     }
+    if out_image.exists() {
+        bail!("Output image file already exists: {:?}", out_image);
+    }
+    // Create staging directory
     fs::create_dir_all(out_staging)?;
     let mut cleanup_guard = CleanupGuard::new(out_staging.to_path_buf());
 
@@ -1216,8 +1226,8 @@ fn run_convert(
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", sealed_vmk_file))?;
 
-    println!("Install cryptsetup on target and update initrd...");
-    install_cryptsetup_on_target(
+    println!("Install snpguard-client on target and update initrd...");
+    install_snpguard_on_target(
         &g,
         &target_rootfs,
         &vmk,
@@ -1228,6 +1238,7 @@ fn run_convert(
         "scripts/initramfs-tools/hook.sh",
         "scripts/initramfs-tools/attest.sh",
     )?;
+    fs::remove_file(&sealed_vmk_path).context("Failed to remove sealed VMK")?;
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
     let (kernel_data, initrd_data, kernel_params) = extract_boot_data(
@@ -1249,7 +1260,7 @@ fn run_convert(
             firmware, firmware_dest
         )
     })?;
-    println!("  Copied firmware to firmware-code.fd");
+    println!("Copied firmware to firmware-code.fd");
 
     // Write extracted repacked initrd
     let initrd_dest = out_staging.join("initrd.img");
@@ -1272,7 +1283,6 @@ fn run_convert(
     println!("Image conversion completed successfully!");
     println!("  Output image: {:?}", out_image);
     println!("  Staging directory: {:?}", out_staging);
-    println!("  Sealed VMK: {:?}", sealed_vmk_path);
     println!("  Encrypted unsealing key: {:?}", enc_unsealing_key_path);
 
     Ok(())
