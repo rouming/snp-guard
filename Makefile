@@ -28,7 +28,7 @@ build-client: ## Build Guest Client (Static)
 	rustup target add $(CLIENT_TARGET) || true
 	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-client --target $(CLIENT_TARGET)
 
-build-image: ## Build Image Tool
+build-image: build-client ## Build Image Tool
 	$(CARGO) build $(PROFILE_FLAG) --bin snpguard-image
 
 build-snpguest: ## Build snpguest tool (Static)
