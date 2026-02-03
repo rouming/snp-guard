@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::collections::HashSet;
 use std::io::{self, BufRead};
 
 /// Represents a GRUB menu entry
@@ -15,6 +16,27 @@ pub fn parse_grub_cfg_from_str(content: &str) -> io::Result<Vec<GrubEntry>> {
     use std::io::Cursor;
     let reader = io::BufReader::new(Cursor::new(content));
     parse_grub_cfg_from_reader(reader)
+}
+
+/// Deduplicate GRUB entries, preserving an order
+fn dedup_preserve_order(entries: Vec<GrubEntry>) -> Vec<GrubEntry> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+
+    for entry in entries {
+        // Only hash kernel + initrd + params (ignore is_default)
+        let key = (
+            entry.kernel.clone(),
+            entry.initrd.clone(),
+            entry.params.clone(),
+        );
+
+        if seen.insert(key) {
+            result.push(entry);
+        }
+    }
+
+    result
 }
 
 /// Parse GRUB configuration from a BufRead reader
@@ -119,5 +141,5 @@ fn parse_grub_cfg_from_reader<R: BufRead>(reader: R) -> io::Result<Vec<GrubEntry
         }
     }
 
-    Ok(entries)
+    Ok(dedup_preserve_order(entries))
 }

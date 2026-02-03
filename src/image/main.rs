@@ -557,7 +557,7 @@ fn inspect_source_image_boot_data(
     }
 
     println!(
-        "  Found {} GRUB menu entr{}",
+        "  Found {} unique GRUB menu entr{}",
         entries.len(),
         if entries.len() == 1 { "y" } else { "ies" }
     );
