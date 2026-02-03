@@ -121,10 +121,10 @@ cargo run --bin snpguard-client config login \
 ### 3. Image Conversion
 
 Download a standard cloud image and convert it to a confidential-ready
-image. This process uses **libguestfs** to perform surgical, offline
-manipulation of the QCOW2 image, including root filesystem encryption
-(LUKS), partition management, and injecting the attestation agent into
-the initrd.
+image. This process uses **qemu-img** and **libguestfs** to perform
+surgical, offline manipulation of the QCOW2 image, including root
+filesystem encryption (LUKS), partition management, and injecting the
+attestation agent into the initrd.
 
 ```bash
 # Download latest Debian trixie
@@ -138,15 +138,21 @@ cargo run --bin snpguard-image convert \
   --firmware ./OVMF.AMDSEV.fd
 ```
 
-**Note 1**: The image tool requires `libguestfs` to be installed on
-the system for the `convert` subcommand to inspecet and modify the
-QCOW2 image.
+**Note 1**: To use AMD SEV-SNP technology, SEV-SNP must be enabled in
+guest kernels, which is verified by the image tool. For example,
+default Debian cloud images support SEV-SNP starting from the Trixie
+distribution (Debian 13). Ubuntu introduced SEV-SNP support starting
+from Ubuntu Noble (Ubuntu 24.04).
 
-**Note 2:** The image tool lists the available kernels and initrd
+**Note 2**: The image tool requires `qemu-img` and `libguestfs` to be
+installed on the system for the `convert` subcommand to inspecet and
+modify the QCOW2 image.
+
+**Note 3:** The image tool lists the available kernels and initrd
 images with their kernel parameters. The user is prompted to choose
 one to be the trusted boot target.
 
-**Note 3:** The OVMF firmware binary must include `SNP_KERNEL_HASHES`,
+**Note 4:** The OVMF firmware binary must include `SNP_KERNEL_HASHES`,
 which is achieved by the special AmdSevX64 build. Refer to [this
 guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html#guest-ovmf-firmware)
 to build OVMF with `SNP_KERNEL_HASHES` enabled.
