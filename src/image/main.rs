@@ -4,6 +4,7 @@ mod local_ops;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use dirs::config_dir;
+use grub_parser::GrubEntry;
 use hpke::{
     aead::AesGcm256,
     kdf::HkdfSha256,
@@ -14,9 +15,25 @@ use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
 use scopeguard::defer;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+const REQUIRED_FREE_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Round down `value` in bytes to 1MB
+fn round_down_1mb(value: u64) -> u64 {
+    const MB: u64 = 1 * 1024 * 1024;
+    (value / MB) * MB
+}
+
+#[derive(PartialEq)]
+enum DistroFamily {
+    Debian,
+    Ubuntu,
+    RedHat,
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "SnpGuard image tool")]
@@ -179,6 +196,21 @@ fn secure_delete_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Returns distribution family
+fn get_dist_family(g: &guestfs::Handle, rootfs: &str) -> Result<DistroFamily> {
+    // Get distribution
+    let dist = g
+        .inspect_get_distro(rootfs)
+        .map_err(|e| anyhow!("Failed to inspect distro on {}: {:?}", rootfs, e))?;
+
+    match dist.as_str() {
+        "debian" => Ok(DistroFamily::Debian),
+        "ubuntu" => Ok(DistroFamily::Ubuntu),
+        "fedora" | "centos" | "rhel" => Ok(DistroFamily::RedHat),
+        _ => bail!("Unsupported distribution {}", dist),
+    }
+}
+
 /// Guard to ensure paths are cleaned up on error
 struct CleanupGuard {
     dir: PathBuf,
@@ -318,16 +350,21 @@ fn create_guestfs_context(
     Ok((g, scratch_rootfs.to_string(), source_rootfs, target_rootfs))
 }
 
+enum SEVGuestSupport {
+    Supported,
+    SupportedButNoModule,
+    NotSupported,
+}
+
 /// Checks if a specific kernel version supports SEV-SNP by examining its config and modules
-fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Result<bool> {
+fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Result<SEVGuestSupport> {
     // Check kernel config file
     let config_path = format!("/boot/config-{}", version);
     if !g
         .exists(&config_path)
         .map_err(|e| anyhow!("Failed to check if config exists: {:?}", e))?
     {
-        println!("  [!] ERROR: Config {} does not exist!", config_path);
-        return Ok(false);
+        bail!("ERROR: Config {} does not exist!", config_path);
     }
 
     let config_str = g
@@ -337,7 +374,7 @@ fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Resul
     // Check if SEV-Guest is built into kernel
     if config_str.contains("CONFIG_SEV_GUEST=y") {
         println!("  [+] Found: SEV-Guest is built into the kernel binary.");
-        return Ok(true);
+        return Ok(SEVGuestSupport::Supported);
     }
 
     // Check if SEV-Guest is configured as module
@@ -351,7 +388,7 @@ fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Resul
             .map_err(|e| anyhow!("Failed to check if modules dir exists: {:?}", e))?
         {
             println!("  [!] ERROR: CONFIG_SEV_GUEST=m but modules directory not found!");
-            return Ok(false);
+            return Ok(SEVGuestSupport::SupportedButNoModule);
         }
 
         // Search recursively for sev-guest.ko (matches sev-guest.ko, sev-guest.ko.zst, etc.)
@@ -362,21 +399,20 @@ fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Resul
         for file in all_files {
             if file.contains("sev-guest.ko") {
                 println!("  [+] Found module file: {}{}", modules_dir, file);
-                return Ok(true);
+                return Ok(SEVGuestSupport::Supported);
             }
         }
 
         println!("  [!] ERROR: CONFIG_SEV_GUEST=m but no .ko file exists on disk!");
-        return Ok(false);
+        return Ok(SEVGuestSupport::SupportedButNoModule);
     }
 
     // SEV-Guest support is disabled
     println!("  [-] SEV-Guest support is disabled in this kernel's config.");
-    Ok(false)
+    Ok(SEVGuestSupport::NotSupported)
 }
 
-/// Verifies if a kernel supports SEV-SNP by checking kernel config and modules
-fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<bool> {
+fn kernel_version_from_kernel_path(kernel_path: &str) -> Result<&str> {
     // Extract kernel version from path (e.g., /boot/vmlinuz-5.10.0-123)
     let kernel_name = Path::new(kernel_path)
         .file_name()
@@ -386,14 +422,16 @@ fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<bo
     // Try to extract version from kernel name
     // Common patterns: vmlinuz-5.10.0-123, vmlinuz-5.10.0-123-generic, etc.
     if let Some(version) = kernel_name.strip_prefix("vmlinuz-") {
-        return check_kernel_version_sev_support(g, version);
+        return Ok(version);
     }
 
-    println!(
-        "  [-] Can't determine version for the kernel {}",
-        kernel_name
-    );
-    Ok(false)
+    bail!("Can't determine version for the kernel {}", kernel_name)
+}
+
+/// Verifies if a kernel supports SEV-SNP by checking kernel config and modules
+fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<SEVGuestSupport> {
+    let version = kernel_version_from_kernel_path(kernel_path)?;
+    check_kernel_version_sev_support(g, version)
 }
 
 /// Partition type where boot files are located
@@ -424,6 +462,9 @@ fn inspect_source_image_boot_data(
             println!("WARN: Failed to umount /: {:?}", e);
         }
     }
+
+    // Get distribution family
+    let dist_family = get_dist_family(g, source_rootfs)?;
 
     // Check for /boot partition or use root filesystem
     let mut grub_cfg_path = "/boot/grub/grub.cfg".to_string();
@@ -529,11 +570,20 @@ fn inspect_source_image_boot_data(
         println!("\n  Checking SEV-SNP support for kernel: {}", entry.kernel);
 
         match verify_sev_guest_support(g, &entry.kernel) {
-            Ok(true) => {
+            Ok(SEVGuestSupport::Supported) => {
                 println!("  [+] Kernel supports SEV-SNP");
                 supported.push(entry);
             }
-            Ok(false) => {
+            Ok(SEVGuestSupport::SupportedButNoModule) => {
+                if dist_family == DistroFamily::Ubuntu {
+                    println!("  [+] Kernel supports SEV-SNP, but no module is found. Since the guest is Ubuntu, the next step will be to try to install 'linux-modules-extra'");
+                    supported.push(entry);
+                } else {
+                    println!("  [-] Kernel supports SEV-SNP, but no module is found");
+                    unsupported.push(entry);
+                }
+            }
+            Ok(SEVGuestSupport::NotSupported) => {
                 println!("  [-] Kernel does NOT support SEV-SNP");
                 unsupported.push(entry);
             }
@@ -747,6 +797,42 @@ fn extract_boot_data(
     Ok((kernel_data, initrd_data, selected_entry.params.clone()))
 }
 
+fn expand_rootfs(g: &guestfs::Handle, target_rootfs: &str, additional_bytes: u64) -> Result<()> {
+    let target_dev = g
+        .part_to_dev(target_rootfs)
+        .map_err(|e| anyhow!("Failed to get device from target rootfs: {:?}", e))?;
+
+    g.part_expand_gpt(&target_dev)
+        .map_err(|e| anyhow!("Failed to expand GPT for target disk: {:?}", e))?;
+
+    let part_num = g
+        .part_to_partnum(target_rootfs)
+        .map_err(|e| anyhow!("Failed to get partition number of target rootfs: {:?}", e))?;
+
+    let parts = g
+        .part_list(&target_dev)
+        .map_err(|e| anyhow!("Failed to get partition lists on target rootfs: {:?}", e))?;
+
+    let part_end = parts
+        .iter()
+        .find(|p| p.part_num == part_num)
+        .map(|p| p.part_end)
+        .ok_or_else(|| anyhow!("Failed to find the rootfs partition in the partition list"))?;
+
+    // Round down to 1Mb
+    let aligned_end_bytes = round_down_1mb(part_end + additional_bytes);
+
+    // Convert to the last inclusive sector. Subtract 1 from bytes,
+    // not from sectors to be on the safe side if round up above
+    // changes.
+    let end_sector = (aligned_end_bytes - 1) >> 9;
+
+    g.part_resize(target_dev.as_str(), part_num, end_sector as i64)
+        .map_err(|e| anyhow!("Failed to get resize target rootfs: {:?}", e))?;
+
+    Ok(())
+}
+
 fn encrypt_and_copy_rootfs(
     g: &guestfs::Handle,
     scratch_rootfs: &str,
@@ -755,26 +841,6 @@ fn encrypt_and_copy_rootfs(
     vmk: &[u8],
 ) -> Result<()> {
     use guestfs::{MkfsOptArgs, UmountOptArgs};
-    // SURGERY on target
-    g.wipefs(target_rootfs)
-        .map_err(|e| anyhow!("Failed to wipefs on target: {:?}", e))?;
-
-    // Convert VMK to string for LUKS
-    let luks_key = hex::encode(vmk);
-
-    g.luks_format(target_rootfs, &luks_key, 0)
-        .map_err(|e| anyhow!("Failed to format LUKS: {:?}", e))?;
-    g.luks_open(target_rootfs, &luks_key, "root_crypt")
-        .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
-    defer! {
-        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
-            println!("WARN: Failed to close LUKS: {:?}", e);
-        }
-    }
-
-    // Format the inner filesystem
-    g.mkfs("ext4", "/dev/mapper/root_crypt", MkfsOptArgs::default())
-        .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
 
     // Mount scratch rootfs
     g.mount(scratch_rootfs, "/")
@@ -803,7 +869,7 @@ fn encrypt_and_copy_rootfs(
         }
     }
 
-    // Mount source and target
+    // Mount source rootfs
     g.mount_ro(source_rootfs, source_dir)
         .map_err(|e| anyhow!("Failed to mount {}: {:?}", source_rootfs, e))?;
     defer! {
@@ -811,6 +877,32 @@ fn encrypt_and_copy_rootfs(
             println!("WARN: Failed to umount {}: {:?}", source_dir, e);
         }
     }
+
+    // Wipe target rootfs
+    g.wipefs(target_rootfs)
+        .map_err(|e| anyhow!("Failed to wipefs on target: {:?}", e))?;
+
+    // Expand target rootfs to have some free space
+    expand_rootfs(g, target_rootfs, REQUIRED_FREE_BYTES)?;
+
+    // Convert VMK to string for LUKS
+    let luks_key = hex::encode(vmk);
+
+    g.luks_format(target_rootfs, &luks_key, 0)
+        .map_err(|e| anyhow!("Failed to format LUKS: {:?}", e))?;
+
+    g.luks_open(target_rootfs, &luks_key, "root_crypt")
+        .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
+    defer! {
+        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+            println!("WARN: Failed to close LUKS: {:?}", e);
+        }
+    }
+
+    // Format the inner filesystem
+    g.mkfs("ext4", "/dev/mapper/root_crypt", MkfsOptArgs::default())
+        .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
+
     g.mount("/dev/mapper/root_crypt", target_dir)
         .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
     defer! {
@@ -906,8 +998,11 @@ pub fn upload_snpguard_files(
 #[allow(clippy::too_many_arguments)]
 fn install_snpguard_on_target(
     g: &guestfs::Handle,
+    source_rootfs: &str,
     target_rootfs: &str,
     vmk: &[u8],
+    supported_entries: &Vec<GrubEntry>,
+    boot_partition: &BootPartition,
     snpguard_client_path: &str,
     ca_pem_path: &str,
     vmk_sealed_path: &str,
@@ -915,11 +1010,6 @@ fn install_snpguard_on_target(
     hook_path: &str,
     local_top_path: &str,
 ) -> Result<()> {
-    enum DistroFamily {
-        Debian,
-        RedHat,
-    }
-
     // Convert VMK to string for LUKS
     let luks_key = hex::encode(vmk);
 
@@ -931,16 +1021,8 @@ fn install_snpguard_on_target(
         }
     }
 
-    // Get distribution
-    let dist = g
-        .inspect_get_distro(target_rootfs)
-        .map_err(|e| anyhow!("Failed to inspect distro on {}: {:?}", target_rootfs, e))?;
-
-    let dist_family = match dist.as_str() {
-        "debian" | "ubuntu" => DistroFamily::Debian,
-        "fedora" | "centos" | "rhel" => DistroFamily::RedHat,
-        _ => bail!("Unsupported distribution {}", dist),
-    };
+    // Get distribution family
+    let dist_family = get_dist_family(g, target_rootfs)?;
 
     // Mount target as /
     g.mount("/dev/mapper/root_crypt", "/")
@@ -951,24 +1033,50 @@ fn install_snpguard_on_target(
         }
     }
 
-    // Map the package name and command
-    let (install_cmds, update_initramfs_cmd) = match dist_family {
-        DistroFamily::Debian => (
-            vec![
-                // FIXME: we need to bring these tools with
-                // FIXME: appliance VM and not rely on
-                // FIXME: target rootfs
-                //
-                "dhcpcd -1 eth0", // bring the whole network up
-                // super important to have this here, see comments below
-                "echo nameserver 1.1.1.1 > /etc/resolv.conf",
-                "apt update -y",                       // update packages
-                "apt install -y cryptsetup-initramfs", // install cryptsetup
-            ],
-            vec![
-                "update-initramfs -u -k all", // update initramfs
-            ],
-        ),
+    // Mount separate /boot if needed
+    if let BootPartition::Boot(boot_dev) = boot_partition {
+        let boot_mountpoint = "/boot";
+        g.mount(boot_dev, boot_mountpoint)
+            .map_err(|e| anyhow!("Failed to mount boot partition {}: {:?}", boot_dev, e))?;
+    }
+
+    // Installation and initramfs commands
+    let (install_cmds, update_initramfs_cmd): (Vec<String>, Vec<String>) = match dist_family {
+        DistroFamily::Debian | DistroFamily::Ubuntu => {
+            let mut install = vec![
+                // brings the whole network up
+                "dhcpcd -1 eth0".to_string(),
+                // super important to have this here, see a big comment below
+                "echo nameserver 1.1.1.1 > /etc/resolv.conf".to_string(),
+                "apt update -y".to_string(),
+                "apt install -y cryptsetup cryptsetup-initramfs".to_string(),
+            ];
+
+            // Compute extra kernel module packages for Ubuntu
+            let extra_modules_pkg = if dist_family == DistroFamily::Ubuntu {
+                let mut seen = HashSet::new();
+                for entry in supported_entries {
+                    let version = kernel_version_from_kernel_path(&entry.kernel)?;
+                    seen.insert(version);
+                }
+                seen.iter()
+                    .map(|s| format!("linux-modules-extra-{s}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                String::new()
+            };
+
+            // Extra modules
+            if !extra_modules_pkg.is_empty() {
+                install.push(format!("apt install -y {}", extra_modules_pkg));
+            }
+
+            // Update initramfs
+            let update_initramfs = vec!["update-initramfs -u -k all".to_string()];
+
+            (install, update_initramfs)
+        }
         DistroFamily::RedHat => bail!("RedHat distributions are not supported at the moment"),
     };
 
@@ -983,7 +1091,7 @@ fn install_snpguard_on_target(
     // that's a bug or feature), but the result was that every command
     // should be joined in a pipeline; otherwise, there's no DNS
     // resolving.
-    let cmd = install_cmds.join(";");
+    let cmd = install_cmds.join("; ");
     let _out = g
         .sh(&cmd)
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
@@ -1001,11 +1109,48 @@ fn install_snpguard_on_target(
     )?;
 
     // Run update initramfs commands
-    let cmd = update_initramfs_cmd.join(";");
+    let cmd = update_initramfs_cmd.join("; ");
     let _out = g
         .sh(&cmd)
         .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
     //println!("{}", _out);
+
+    // Copy the source rootfs label to the target rootfs after
+    // `cryptsetup` is installed.
+    let rootfs_label = g
+        .get_e2label(source_rootfs)
+        .map_err(|e| anyhow!("Failed to get a label on source rootfs: {:?}", e))?;
+
+    if !rootfs_label.is_empty() {
+        let _out = g
+            .sh(&format!(
+                "cryptsetup config {} --label {}",
+                target_rootfs, rootfs_label
+            ))
+            .map_err(|e| anyhow!("Failed to execute 'cryptsetup config': {:?}", e))?;
+        //println!("{}", _out);
+    }
+
+    Ok(())
+}
+
+/// Resize a QCOW2 image, increasing its size by `additional_bytes`.
+pub fn resize_qcow2(image_path: &Path, additional_bytes: u64) -> Result<()> {
+    if !image_path.exists() {
+        bail!("Image file does not exist: {:?}", image_path);
+    }
+
+    // Run qemu-img resize
+    let status = std::process::Command::new("qemu-img")
+        .args(["resize"])
+        .arg(image_path)
+        .arg(format!("+{}", additional_bytes))
+        .stdout(std::process::Stdio::null())
+        .status()?;
+
+    if !status.success() {
+        bail!("qemu-img resize failed");
+    }
 
     Ok(())
 }
@@ -1192,6 +1337,16 @@ fn run_convert(
     })?;
     cleanup_guard.register_file(out_image.to_path_buf());
 
+    println!(
+        "Increase the size of the target QCOW image by {}MB...",
+        REQUIRED_FREE_BYTES >> 20
+    );
+    // Resize the disk with a 2MB buffer. This ensures enough
+    // physical space for the 1MB alignment offset at the
+    // start and the secondary GPT header at the end of the
+    // disk.
+    resize_qcow2(out_image, REQUIRED_FREE_BYTES + (2 << 20))?;
+
     println!("Preparing Guestfs context, launch appliance VM...");
     let (g, scratch_rootfs, source_rootfs, target_rootfs) =
         create_guestfs_context(in_image, out_image)?;
@@ -1229,8 +1384,11 @@ fn run_convert(
     println!("Install snpguard-client on target and update initrd...");
     install_snpguard_on_target(
         &g,
+        &source_rootfs,
         &target_rootfs,
         &vmk,
+        &supported_entries,
+        &boot_partition,
         "target/x86_64-unknown-linux-musl/release/snpguard-client",
         ca_cert_path,
         sealed_vmk_path,
@@ -1238,7 +1396,7 @@ fn run_convert(
         "scripts/initramfs-tools/hook.sh",
         "scripts/initramfs-tools/attest.sh",
     )?;
-    fs::remove_file(&sealed_vmk_path).context("Failed to remove sealed VMK")?;
+    fs::remove_file(sealed_vmk_path).context("Failed to remove sealed VMK")?;
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
     let (kernel_data, initrd_data, kernel_params) = extract_boot_data(
