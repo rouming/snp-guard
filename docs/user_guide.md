@@ -64,7 +64,7 @@ This implements TOFU (Trust On First Use) - fetches server's public identity (CA
 
 ### 4. Image Conversion (Prepare Guest VM)
 
-Download a standard cloud image and convert it to a confidential-ready image. This process uses **libguestfs** to perform surgical, offline manipulation of the QCOW2 image, including root filesystem encryption (LUKS), partition management, and injecting the attestation agent into the initrd.
+Download a standard cloud image and convert it to a confidential-ready image. This process uses **qemu-img** and **libguestfs** to perform surgical, offline manipulation of the QCOW2 image, including root filesystem encryption (LUKS), partition management, and injecting the attestation agent into the initrd.
 
 ```bash
 # Download latest Debian trixie
@@ -80,28 +80,33 @@ cargo run --bin snpguard-image convert \
 
 **What the conversion does:**
 
-1. Encrypts the root filesystem with LUKS2
-2. Generates a random Volume Master Key (VMK) for disk encryption
-3. Generates an unsealing keypair internally (used to encrypt the VMK)
-4. Seals the VMK with the unsealing public key
-5. Installs `cryptsetup-initramfs` in the guest image
-6. Installs the SnpGuard client binary and configuration files
-7. Installs initramfs-tools hooks (`hook.sh` and `attest.sh`)
-8. Regenerates the initrd with hooks included
-9. Extracts boot artifacts (kernel, initrd, kernel parameters) to the staging directory
+1. Increase the target QCOW image and root filesystem partition sizes
+1. Encrypts the target root filesystem with LUKS2
+1. Generates a random Volume Master Key (VMK) for disk encryption
+1. Generates an unsealing keypair internally (used to encrypt the VMK)
+1. Encrypts the unsealing private key using the public SnpGuard server's ingestion key and places it in the staging directory
+1. Encrypts (seals) the VMK with the unsealing public key
+1. Uploads the sealed VMK into the guest image
+1. Installs `cryptsetup-initramfs` in the guest image
+1. Installs the SnpGuard client binary and configuration files
+1. Installs initramfs-tools hooks (`hook.sh` and `attest.sh`)
+1. Regenerates the initrd with hooks included
+1. Extracts boot artifacts (kernel, initrd, kernel parameters, firmware) to the staging directory
 
 **Prerequisites:**
 
 - The client binary must be built: `make build-client`
-- `libguestfs` must be installed on the system for the `convert` subcommand
+- `libguestfs` and `qemu-img` must be installed on the system for the `convert` subcommand
 - SEV-SNP must be enabled in the guest firmware and hardware
 - The image must use initramfs-tools (Debian/Ubuntu) - dracut is not yet supported
 
 **Notes:**
 
+- To use AMD SEV-SNP technology, SEV-SNP must be enabled in guest kernels, which is verified by the image tool. For example, default Debian cloud images support SEV-SNP starting from the Trixie distribution (Debian 13). Ubuntu introduced SEV-SNP support starting from Ubuntu Noble (Ubuntu 22.04).
+- The image tool requires `qemu-img` and `libguestfs` to be installed on the system for the `convert` subcommand to inspecet and modify the QCOW2 image.
 - The image tool lists the available kernels and initrd images with their kernel parameters. The user is prompted to choose one to be the trusted boot target.
 - The OVMF firmware binary must include `SNP_KERNEL_HASHES`, which is achieved by the special AmdSevX64 build. Refer to [this guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html#guest-ovmf-firmware) to build OVMF with `SNP_KERNEL_HASHES` enabled.
-- For `convert`, if you've run `snpguard-client config login`, the attestation URL, ingestion public key, and CA certificate will be read from the stored configuration. Otherwise, you must provide them via `--attest-url`, `--ingestion-public-key`, and `--ca-cert` options.
+- For the image `convert` tool, if you've run `snpguard-client config login`, the attestation URL, ingestion public key, and CA certificate will be read from the stored configuration. Otherwise, you must provide them via `--attest-url`, `--ingestion-public-key`, and `--ca-cert` options.
 
 **Staging Directory Contents:**
 
@@ -111,7 +116,7 @@ After conversion, the staging directory (`./staging`) contains:
 - `initrd.img`: Repacked initrd with SnpGuard client and hooks
 - `kernel-params.txt`: Kernel command-line parameters
 - `vmk.sealed`: Sealed VMK blob (encrypted with unsealing public key)
-- `unsealing.key.enc`: Encrypted unsealing private key (encrypted with ingestion public key)
+- `unsealing.key.enc`: Encrypted unsealing private key (encrypted with the SnpGuard's server ingestion public key)
 
 ### 5. Register Attestation Record
 

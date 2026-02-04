@@ -147,7 +147,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
    │
    ├─> Network initialized
    │
-   ├─> Initrd hook runs (snpguard_attest)
+   ├─> Initrd hook runs (/scripts/local-top/snpguard-attest)
    │
    ├─> Client requests nonce
    │   POST /v1/attest/nonce
@@ -357,6 +357,8 @@ Keys are stored encrypted in the database (id_key_encrypted, auth_key_encrypted 
 - **tar/gzip**: Required for tarball generation
 
 - **libguestfs**: Required for the image conversion tool
+
+- **qemu-img**: Required for the image conversion tool
 
 ## Performance Considerations
 
