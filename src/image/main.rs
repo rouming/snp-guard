@@ -28,6 +28,12 @@ fn round_down_1mb(value: u64) -> u64 {
     (value / MB) * MB
 }
 
+/// Round up `value` in bytes to 1MB
+fn round_up_1mb(value: u64) -> u64 {
+    const MB: u64 = 1 * 1024 * 1024;
+    ((value + MB - 1) / MB) * MB
+}
+
 #[derive(PartialEq)]
 enum DistroFamily {
     Debian,
@@ -100,6 +106,15 @@ enum Command {
         /// Firmware path (required)
         #[arg(long)]
         firmware: PathBuf,
+    },
+    /// Embed boot artifacts into a QCOW2 image
+    Embed {
+        /// Path to the QCOW2 image file
+        #[arg(long)]
+        image: PathBuf,
+        /// Path to the tar.gz bundle containing boot artifacts
+        #[arg(long)]
+        in_bundle: PathBuf,
     },
 }
 
@@ -1446,6 +1461,206 @@ fn run_convert(
     Ok(())
 }
 
+/// Embed boot artifacts into a QCOW2 image
+///
+/// This function implements an idempotent update of a boot partition
+/// identified by filesystem label "launch_artifacts". If the
+/// partition doesn't exist, it creates a new 512MB partition, formats
+/// it as ext4, and sets the label. Then it wipes the partition and
+/// extracts the bundle contents into a A/B directory structure.
+fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
+    use guestfs::{AddDriveOptArgs, Handle, MkfsOptArgs};
+
+    const LABEL: &str = "LAUNCH_ARTIFACTS";
+    const PARTITION_SIZE_MB: u64 = 512;
+
+    // Discovery
+    let g = Handle::create().map_err(|e| anyhow!("Failed to create guestfs handle: {:?}", e))?;
+    g.add_drive(
+        &image_path.to_string_lossy(),
+        AddDriveOptArgs {
+            label: Some("source"),
+            readonly: Some(false),
+            format: Some("qcow2"),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| anyhow!("Failed to add drive: {:?}", e))?;
+    g.launch()
+        .map_err(|e| anyhow!("Failed to launch guestfs: {:?}", e))?;
+
+    // Disk labels
+    let labels = g
+        .list_disk_labels()
+        .map_err(|e| anyhow!("Failed to list disk labels: {:?}", e))?;
+
+    let disk = labels
+        .iter()
+        .find(|(label, _)| *label == "source")
+        .map(|(_, disk)| disk)
+        .ok_or_else(|| anyhow::anyhow!("Failed to find QCOW image by the label"))?;
+
+    let parts = g
+        .part_list(&disk)
+        .map_err(|e| anyhow!("Failed to get partition lists : {:?}", e))?;
+
+    let mut target_partition = None;
+
+    for p in parts {
+        let candidate = format!("{}{}", disk, p.part_num);
+
+        let label = g
+            .vfs_label(&candidate)
+            .map_err(|e| anyhow!("Failed to get FS label on {}: {:?}", candidate, e))?;
+
+        if label == LABEL {
+            target_partition = Some(candidate);
+            break;
+        }
+    }
+
+    // Try to find device by FS LABEL
+    let (g, target_partition) = match target_partition {
+        Some(dev) => {
+            println!("Found a previously created `LAUNCH_ARTIFACTS` partition, wiping it...");
+
+            // Wipefs partition
+            g.wipefs(&dev)
+                .map_err(|e| anyhow!("Failed to wipefs on target partition: {:?}", e))?;
+
+            // Partition exists, proceed directly to population
+            (g, dev)
+        }
+        _ => {
+            // Create partition and populate
+
+            // We must close the handle to resize the file safely
+            g.shutdown()
+                .map_err(|e| anyhow!("Failed to shutdown guestfs: {:?}", e))?;
+            drop(g);
+
+            println!(
+                "Increase the size of the target QCOW image by {}MB...",
+                PARTITION_SIZE_MB
+            );
+
+            // Resize the disk with a 2MB buffer. This ensures enough
+            // physical space for the 1MB alignment offset at the
+            // start and the secondary GPT header at the end of the
+            // disk.
+            resize_qcow2(image_path, (PARTITION_SIZE_MB + 2) << 20)?;
+
+            // Create guestfs once again
+            let g = Handle::create()
+                .map_err(|e| anyhow!("Failed to create guestfs handle: {:?}", e))?;
+            g.add_drive(
+                &image_path.to_string_lossy(),
+                AddDriveOptArgs {
+                    label: Some("source"),
+                    readonly: Some(false),
+                    format: Some("qcow2"),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| anyhow!("Failed to add drive: {:?}", e))?;
+
+            // Run appliance VM
+            g.launch()
+                .map_err(|e| anyhow!("Failed to launch guestfs: {:?}", e))?;
+
+            // Disk labels
+            let labels = g
+                .list_disk_labels()
+                .map_err(|e| anyhow!("Failed to list disk labels: {:?}", e))?;
+
+            let disk = labels
+                .iter()
+                .find(|(label, _)| *label == "source")
+                .map(|(_, disk)| disk)
+                .ok_or_else(|| anyhow::anyhow!("Failed to find QCOW image by the label"))?;
+
+            g.part_expand_gpt(&disk)
+                .map_err(|e| anyhow!("Failed to expand GPT for target disk: {:?}", e))?;
+
+            // Calculate geometry
+            let parts = g
+                .part_list(&disk)
+                .map_err(|e| anyhow!("Failed to get partition list: {:?}", e))?;
+            let last_end = parts.last().map(|p| p.part_end).ok_or_else(|| {
+                anyhow::anyhow!("Failed to get the last partition; the disk is empty.")
+            })?;
+
+            // Align start to next 1MB
+            let start = round_up_1mb(last_end);
+
+            // End
+            let end = start + (PARTITION_SIZE_MB << 20);
+
+            let start_sector = start >> 9;
+            let end_sector = (end - 1) >> 9;
+
+            println!("Add new partition...");
+
+            // Create primary partition
+            g.part_add(&disk, "p", start_sector as i64, end_sector as i64)
+                .map_err(|e| anyhow!("Failed to add partition: {:?}", e))?;
+
+            // Identify new partition (it is the last one)
+            let parts = g
+                .part_list(&disk)
+                .map_err(|e| anyhow!("Failed to get partition list: {:?}", e))?;
+            let new_part_num = parts
+                .last()
+                .ok_or_else(|| anyhow!("Failed to find new partition"))?
+                .part_num;
+            let new_dev = format!("{}{}", disk, new_part_num);
+
+            // Hand over control of the new handle
+            (g, new_dev)
+        }
+    };
+
+    println!("Format `LAUNCH_ARTIFACTS` partition as ext4...");
+
+    // Population
+    g.mkfs("ext4", &target_partition, MkfsOptArgs::default())
+        .map_err(|e| anyhow!("Failed to format partition: {:?}", e))?;
+    g.set_e2label(&target_partition, LABEL)
+        .map_err(|e| anyhow!("Failed to set filesystem label: {:?}", e))?;
+    g.mount(&target_partition, "/")
+        .map_err(|e| anyhow!("Failed to mount partition: {:?}", e))?;
+
+    println!("Populate the `LAUNCH_ARTIFACTS` partition with files from the bundle...");
+
+    // Setup structure
+    g.mkdir("/A")
+        .map_err(|e| anyhow!("Failed to create /A directory: {:?}", e))?;
+    g.mkdir("/B")
+        .map_err(|e| anyhow!("Failed to create /B directory: {:?}", e))?;
+    use guestfs::TarInOptArgs;
+
+    let bundle_path_str = bundle_path.to_str().unwrap();
+    if bundle_path_str.ends_with("gz") {
+        g.tgz_in(bundle_path.to_str().unwrap(), "/A")
+            .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
+    } else {
+        g.tar_in(bundle_path.to_str().unwrap(), "/A", TarInOptArgs::default())
+            .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
+    }
+
+    // Create symlink (artifacts -> A)
+    g.ln_s("A", "/artifacts")
+        .map_err(|e| anyhow!("Failed to create symlink: {:?}", e))?;
+
+    use guestfs::UmountOptArgs;
+    g.umount("/", UmountOptArgs::default())
+        .map_err(|e| anyhow!("Failed to unmount: {:?}", e))?;
+    g.shutdown()
+        .map_err(|e| anyhow!("Failed to shutdown guestfs: {:?}", e))?;
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
@@ -1482,5 +1697,6 @@ fn main() -> Result<()> {
             ca_cert,
             firmware,
         ),
+        Command::Embed { image, in_bundle } => run_embed(&image, &in_bundle),
     }
 }
