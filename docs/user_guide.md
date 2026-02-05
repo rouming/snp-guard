@@ -187,9 +187,47 @@ cargo run --bin snpguard-client manage register \
 
 You can now view this registered image and its measurements in the Web Dashboard.
 
-### 6. Run CoCo VM
+### 6. (Optional) Embed Launch Artifacts
 
-Launch the confidential VM on the platform using the secured disk and the signed artifacts:
+Optionally, you can embed the launch artifacts bundle into the confidential image.
+This creates a dedicated partition with the label `LAUNCH_ARTIFACTS` containing the boot
+artifacts (kernel, initrd, ID-Block, Auth-Block) in an A/B directory structure.
+
+```bash
+cargo run --bin snpguard-image embed \
+  --image ./confidential.qcow2 \
+  --in-bundle ./launch-artifacts.tar.gz
+```
+
+**What the embed command does:**
+
+1. Checks for an existing partition with the `LAUNCH_ARTIFACTS` filesystem label
+2. If missing, creates a new 512MB partition, formats it as ext4, and sets the label
+3. Wipes the partition content (idempotent operation - safe to run multiple times)
+4. Extracts the bundle contents into `/A` directory
+5. Creates `/B` directory for future updates
+6. Creates symlink `/artifacts -> A` pointing to the active artifacts
+
+The A/B structure enables atomic artifact updates: new attested artifacts are written to the inactive directory (e.g., `/B`), then the symlink is atomically switched to point to the new directory. On the next VM poweroff/poweron cycle, the new artifacts will be used.
+
+**Prerequisites:**
+
+- `libguestfs` and `qemu-img` must be installed on the system
+- The image must have been converted using `snpguard-image convert`
+- The launch artifacts bundle must have been generated using `snpguard-client manage register --out-bundle`
+
+**Notes:**
+
+- The embed command is idempotent - you can run it multiple times safely
+- The partition is identified by filesystem label, not GPT partition label (works even if GPT labels are stripped)
+- Supports both `.tar` and `.tar.gz` bundle formats
+- The A/B directory structure enables atomic artifact updates: new artifacts are written to the inactive directory, then the symlink is atomically switched. The new artifacts take effect on the next VM reboot.
+- **This step is optional** - you can still provide artifacts externally when launching the VM using the `--artifacts` parameter
+
+### 7. Run CoCo VM
+
+Launch the confidential VM on the platform using the secured disk and
+the signed artifacts:
 
 ```bash
 sudo ./scripts/launch-qemu-snp.sh \
@@ -400,6 +438,14 @@ The `keygen` command is used internally by the `convert` command to generate uns
   - `--attest-url`: Attestation URL (optional, uses config from `snpguard-client config login` if not provided)
   - `--ingestion-public-key`: Path to ingestion public key (optional, uses config if not provided)
   - `--ca-cert`: Path to CA certificate (optional, uses config if not provided)
+
+#### Embedding Launch Artifacts
+
+- `embed --image <PATH> --in-bundle <PATH>`: Embed launch artifacts bundle into QCOW2 image
+  - `--image`: Path to the QCOW2 image file (required)
+  - `--in-bundle`: Path to the tar.gz bundle containing boot artifacts (required)
+  
+  Creates or updates a dedicated partition with the `LAUNCH_ARTIFACTS` filesystem label containing the boot artifacts in an A/B directory structure. The command is idempotent and can be run multiple times safely.
 
 ### API Integration
 

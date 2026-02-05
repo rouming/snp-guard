@@ -15,7 +15,7 @@ While libraries for SNP exist (thanks to
 toolchain for bootstrapping and attestating confidential
 VMs. Currently, operators must stitch together image builders,
 measurement calculators, and key brokers manually. `snp-guard` unifies
-this into a binding workflow: `convert` -> `register` -> `boot`. It
+this into a binding workflow: `convert` -> `register` -> `boot` (with optional `embed` step). It
 is designed specifically to fill the IaaS/VM bootstrapping gap that
 heavier container-focused solutions overlook.
 
@@ -175,7 +175,34 @@ cargo run --bin snpguard-client manage register \
 You can now view this registered image and its measurements in the Web
 Dashboard.
 
-### 5. Run CoCo VM
+### 5. (Optional) Embed Launch Artifacts
+
+Optionally, you can embed the launch artifacts bundle into the confidential image.
+This creates a dedicated partition with the label `LAUNCH_ARTIFACTS` containing the boot
+artifacts (kernel, initrd, ID-Block, Auth-Block) in an A/B directory structure.
+
+```bash
+cargo run --bin snpguard-image embed \
+  --image ./confidential.qcow2 \
+  --in-bundle ./launch-artifacts.tar.gz
+```
+
+**What the embed command does:**
+
+1. Checks for an existing partition with the `LAUNCH_ARTIFACTS` filesystem label
+2. If missing, creates a new 512MB partition, formats it as ext4, and sets the label
+3. Wipes the partition content (idempotent operation)
+4. Extracts the bundle contents into `/A` directory
+5. Creates `/B` directory for future updates
+6. Creates symlink `/artifacts -> A` pointing to the active artifacts
+
+The A/B structure enables atomic artifact updates: new attested artifacts are written to the inactive directory (e.g., `/B`), then the symlink is atomically switched to point to the new directory. On the next VM poweroff/poweron cycle, the new artifacts will be used.
+
+**Note**: The embed command requires `qemu-img` and `libguestfs` to be installed,
+same as the `convert` subcommand. This step is optional - you can still provide
+artifacts externally when launching the VM.
+
+### 6. Run CoCo VM
 
 Launch the confidential VM on the platform using the secured disk and
 the signed artifacts:
@@ -197,7 +224,8 @@ key, unlock the disk, and boot the OS.
 
 * **snpguard-image:** CLI tool that leverages **libguestfs** for
   offline image manipulation. It automates the encryption of the
-  rootfs and the injection of the attestation agent into the initrd.
+  rootfs, the injection of the attestation agent into the initrd, and
+  embedding launch artifacts into dedicated partitions.
 
 * **snpguard-client:** A dual-purpose Rust binary:
   * **Host**: Used by developers to register images and download
