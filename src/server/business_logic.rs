@@ -4,6 +4,7 @@ use openssl::ec::{EcGroup, EcKey};
 use openssl::nid::Nid;
 use rand::{rngs::OsRng, RngCore};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use serde_json::json;
 use sev::firmware::guest::GuestPolicy;
 use std::fs;
 use std::io::Write;
@@ -178,6 +179,19 @@ pub async fn create_record_logic(
         policy.set_debug_allowed(req.allowed_debug);
         policy.set_migrate_ma_allowed(req.allowed_migrate_ma);
         policy.set_smt_allowed(req.allowed_smt);
+
+        let launch_config = json!({
+            "vcpu_model": req.vcpu_type,
+            "vcpu_count": req.vcpus,
+            "guest_policy": format!("0x{:x}", u64::from(policy)),
+        });
+
+        let launch_config_bytes = serde_json::to_vec_pretty(&launch_config)
+            .map_err(|e| format!("Failed to serialize launch config.: {}", e))?;
+
+        // Create launch-config.json, which can be used for correct VM launch
+        fs::write(artifact_dir.join("launch-config.json"), launch_config_bytes)
+            .map_err(|e| format!("Failed to save launch config: {}", e))?;
 
         // Generate Measurements and Blocks
         let _ = snpguest_wrapper::generate_measurement_and_block(

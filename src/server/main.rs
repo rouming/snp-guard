@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // REST API router
     let rest_router = rest_api::router(service_state.clone(), master_auth.clone());
 
-    // 4. Web UI (Management)
+    // Web UI (Management)
     let management_app = Router::new()
         .route("/", get(web::index))
         .route("/login", get(web::login_form).post(web::login_submit))

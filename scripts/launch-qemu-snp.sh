@@ -33,7 +33,7 @@ USE_VIRTIO="1"
 # SEV-SNP Defaults
 # 0x30000 = Bit 16 (SMT Allowed) | Bit 17 (Reserved, must be 1)
 # This is the fallback if no ID Block is provided.
-SEV_POLICY="0x30000"
+SNP_POLICY="0x30000"
 CBITPOS=51
 REDUCED_PHYS_BITS=5
 
@@ -47,16 +47,20 @@ if [ $(id -u) -ne 0 ]; then
     exit 1
 fi
 
-if ! command -v od &> /dev/null; then
-    err "'od' command not found. Please install coreutils."
+if ! command -v jq &> /dev/null; then
+    err "'jq' command not found. Please install."
     exit 1
 fi
 
+network_down() {
+    :
+}
+
 # Trap for cleanup
 cleanup() {
-	if [ "$NO_NET" == "0" ]; then
-		network_down
-	fi
+    if [ "$NO_NET" == "0" ]; then
+        network_down
+    fi
     if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
         rm -rf "$TEMP_DIR"
     fi
@@ -74,7 +78,7 @@ usage() {
     echo "  --artifacts <tar.gz>  Path to artifacts archive (contains kernel, bios, id-blocks, ...)"
     echo "  --mem <MB>            Guest memory in MB (default: $GUEST_SIZE_IN_MB)"
     echo "  --vcpus <n>           Number of vCPUs (default: $SMP_NCPUS)"
-    echo "  --vcpu-type <type>    CPU Model (default: $CPU_TYPE, e.g. EPYC-Genoa)"
+    echo "  --vcpu-type <type>    CPU Model (default: $CPU_TYPE)"
     echo "  --console <type>      'serial' (default) or 'qxl'"
     echo "  --vnc <display>       VNC display number (e.g., 0 for :0)"
     echo "  --nonet               Disable network"
@@ -169,6 +173,7 @@ if [ -n "$ARTIFACTS_ARCHIVE" ]; then
         find "$TEMP_DIR" -name "$1" -print -quit
     }
 
+    LAUNCH_CONFIG=$(find_artifact "launch-config.json")
     UEFI_BIOS_CODE=$(find_artifact "firmware-code.fd")
     KERNEL_FILE=$(find_artifact "vmlinuz")
     INITRD_FILE=$(find_artifact "initrd.img")
@@ -180,19 +185,12 @@ if [ -n "$ARTIFACTS_ARCHIVE" ]; then
         KERNEL_PARAMS_STR=$(cat "$KERNEL_PARAMS_FILE")
     fi
 
-    # --- AUTO-DETECT POLICY FROM ID BLOCK ---
-    if [ -f "$ID_BLOCK_FILE" ]; then
-        # Offset 0x58 (88 decimal) is the Policy field (64-bit)
-        EXTRACTED_POLICY_HEX=$(od -An -j 88 -N 8 -t x8 "$ID_BLOCK_FILE" | tr -d ' \n')
+    if [ -f "$LAUNCH_CONFIG" ]; then
+        CPU_TYPE=$(jq -r '.vcpu_model' "${LAUNCH_CONFIG}")
+        SMP_NCPUS=$(jq -r '.vcpu_count' "${LAUNCH_CONFIG}")
+        SNP_POLICY=$(jq -r '.guest_policy' "${LAUNCH_CONFIG}")
 
-        if [ -n "$EXTRACTED_POLICY_HEX" ]; then
-            SEV_POLICY="0x${EXTRACTED_POLICY_HEX}"
-            ok "ID Block found. Enforcing Policy: ${SEV_POLICY}"
-        else
-            warn "ID Block found but policy extraction failed. Using default"
-        fi
-    else
-        warn "No ID Block in artifacts. Using generic Policy: ${SEV_POLICY}"
+        ok "Launch config found. Enforcing type of vCPU: \"${CPU_TYPE}\", number of vCPUs: ${SMP_NCPUS}, policy: ${SNP_POLICY}"
     fi
 
     ok "Artifacts loaded successfully"
@@ -226,7 +224,7 @@ fi
 
 # --- SEV-SNP Configuration ---
 
-SNP_PARAMS="id=sev0,cbitpos=${CBITPOS},reduced-phys-bits=${REDUCED_PHYS_BITS},policy=${SEV_POLICY}"
+SNP_PARAMS="id=sev0,cbitpos=${CBITPOS},reduced-phys-bits=${REDUCED_PHYS_BITS},policy=${SNP_POLICY}"
 
 if [ -n "$ID_BLOCK_FILE" ]; then
     SNP_PARAMS+=",id-block=$(base64 -w0 "$ID_BLOCK_FILE")"
@@ -262,10 +260,6 @@ network_up() {
     QEMU_ARGS+=( "-netdev" "user,id=net0,hostfwd=tcp::2222-:22" )
     QEMU_ARGS+=( "-device" "virtio-net-pci,netdev=net0,romfile=" )
     info "Network enabled (User Mode). SSH mapped: localhost:2222 -> guest:22"
-}
-
-network_down() {
-    :
 }
 
 if [ -n "$NET_SCRIPT" ]; then

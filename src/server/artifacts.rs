@@ -13,7 +13,7 @@ pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf>
         let def_path = artifact_dir.join("squash.def");
         std::fs::write(
             &def_path,
-            "/ d 755 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n",
+            "/ d 755 0 0\nlaunch-config.json m 444 0 0\nfirmware-code.fd m 444 0 0\nvmlinuz m 444 0 0\ninitrd.img m 444 0 0\nkernel-params.txt m 444 0 0\nid-block.bin m 444 0 0\nid-auth.bin m 444 0 0\n",
         )
         .map_err(|e| anyhow!("Failed to write squash.def: {}", e))?;
 
@@ -27,6 +27,9 @@ pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf>
             .arg("-all-root")
             .arg("-pf")
             .arg(&def_path)
+            .arg("-wildcards")
+            .arg("-e") // exclude
+            .arg("squash.def")
             .status()
             .map_err(|e| anyhow!("Failed to create squashfs: {}", e))?;
     } else if filename.ends_with(".tar.gz") {
@@ -39,6 +42,7 @@ pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf>
             .arg("-C")
             .arg(artifact_dir)
             .arg("--transform=s|^|/|")
+            .arg("launch-config.json")
             .arg("firmware-code.fd")
             .arg("vmlinuz")
             .arg("initrd.img")
