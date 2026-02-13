@@ -206,6 +206,7 @@ Download an artifact file.
 - `file`: Filename to download
 
 **Available Files**:
+- `launch-config.json`: Launch configuration (vCPU model, count, guest policy)
 - `id-block.bin`: ID-Block binary
 - `id-auth.bin`: Auth-Block binary
 - `firmware-code.fd`: Firmware image

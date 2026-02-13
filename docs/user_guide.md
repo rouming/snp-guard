@@ -235,6 +235,8 @@ sudo ./scripts/launch-qemu-snp.sh \
   --artifacts launch-artifacts.tar.gz
 ```
 
+The launch script automatically reads the `launch-config.json` file from the artifacts bundle and enforces the correct vCPU count, vCPU model, and guest policy. These parameters must match exactly for VM to be launched.
+
 Upon boot, the VM will verify itself against the server, receive the key, unlock the disk, and boot the OS.
 
 ## Managing Attestation Records
@@ -287,6 +289,15 @@ cargo run --bin snpguard-client manage export \
 ```
 
 Formats: `tar`, `squash`, or `squashfs` (default: `tar`)
+
+**Bundle Contents:**
+- `launch-config.json`: Launch configuration (vCPU model, count, guest policy)
+- `firmware-code.fd`: Firmware binary
+- `vmlinuz`: Kernel binary
+- `initrd.img`: Initrd image
+- `kernel-params.txt`: Kernel command-line parameters
+- `id-block.bin`: ID-Block binary
+- `id-auth.bin`: Auth-Block binary
 
 ### Deleting Records
 

@@ -15,9 +15,10 @@ While libraries for SNP exist (thanks to
 toolchain for bootstrapping and attestating confidential
 VMs. Currently, operators must stitch together image builders,
 measurement calculators, and key brokers manually. `snp-guard` unifies
-this into a binding workflow: `convert` -> `register` -> `boot` (with optional `embed` step). It
-is designed specifically to fill the IaaS/VM bootstrapping gap that
-heavier container-focused solutions overlook.
+this into a binding workflow: `convert` -> `register` -> `boot` (with
+optional `embed` step). It is designed specifically to fill the
+IaaS/VM bootstrapping gap that heavier container-focused solutions
+overlook.
 
 ## The Problem
 
@@ -55,7 +56,8 @@ manage measurements.
 * **Registration & Measurement:** The extracted artifacts are
   registered with the SnpGuard Server. The server records the
   measurements and returns a `launch-artifacts.tar.gz` bundle
-  containing the kernel, initrd, and the cryptographic ID Block and
+  containing the kernel, initrd, launch configuration (vCPU count,
+  vCPU model, and guest policy), and the cryptographic ID Block and
   Authentication Block required to launch the VM.  The SnpGuard Server
   leverages launch artifacts measurement to the [`sev` Rust
   library](https://github.com/virtee/sev) and [`snpguest`
@@ -177,9 +179,10 @@ Dashboard.
 
 ### 5. (Optional) Embed Launch Artifacts
 
-Optionally, you can embed the launch artifacts bundle into the confidential image.
-This creates a dedicated partition with the label `LAUNCH_ARTIFACTS` containing the boot
-artifacts (kernel, initrd, ID-Block, Auth-Block) in an A/B directory structure.
+Optionally, you can embed the launch artifacts bundle into the
+confidential image. This creates a dedicated partition with the label
+`LAUNCH_ARTIFACTS` containing the boot artifacts (kernel, initrd,
+ID-Block, Auth-Block) in an A/B directory structure.
 
 ```bash
 cargo run --bin snpguard-image embed \
@@ -196,7 +199,10 @@ cargo run --bin snpguard-image embed \
 5. Creates `/B` directory for future updates
 6. Creates symlink `/artifacts -> A` pointing to the active artifacts
 
-The A/B structure enables atomic artifact updates: new attested artifacts are written to the inactive directory (e.g., `/B`), then the symlink is atomically switched to point to the new directory. On the next VM poweroff/poweron cycle, the new artifacts will be used.
+The A/B structure enables atomic artifact updates: new attested
+artifacts are written to the inactive directory (e.g., `/B`), then the
+symlink is atomically switched to point to the new directory. On the
+next VM poweroff/poweron cycle, the new artifacts will be used.
 
 **Note**: The embed command requires `qemu-img` and `libguestfs` to be installed,
 same as the `convert` subcommand. This step is optional - you can still provide
@@ -212,6 +218,9 @@ sudo ./scripts/launch-qemu-snp.sh \
   --hda confidential.qcow2 \
   --artifacts launch-artifacts.tar.gz
 ```
+
+**Prerequisites:** The launch script requires `jq` to be installed for
+parsing the launch configuration from the launch artifacts bundle.
 
 Upon boot, the VM will verify itself against the server, receive the
 key, unlock the disk, and boot the OS.
