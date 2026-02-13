@@ -24,14 +24,14 @@ const REQUIRED_FREE_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Round down `value` in bytes to 1MB
 fn round_down_1mb(value: u64) -> u64 {
-    const MB: u64 = 1 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
     (value / MB) * MB
 }
 
 /// Round up `value` in bytes to 1MB
 fn round_up_1mb(value: u64) -> u64 {
-    const MB: u64 = 1 * 1024 * 1024;
-    ((value + MB - 1) / MB) * MB
+    const MB: u64 = 1024 * 1024;
+    value.div_ceil(MB) * MB
 }
 
 #[derive(PartialEq)]
@@ -1501,7 +1501,7 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Failed to find QCOW image by the label"))?;
 
     let parts = g
-        .part_list(&disk)
+        .part_list(disk)
         .map_err(|e| anyhow!("Failed to get partition lists : {:?}", e))?;
 
     let mut target_partition = None;
@@ -1579,12 +1579,12 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
                 .map(|(_, disk)| disk)
                 .ok_or_else(|| anyhow::anyhow!("Failed to find QCOW image by the label"))?;
 
-            g.part_expand_gpt(&disk)
+            g.part_expand_gpt(disk)
                 .map_err(|e| anyhow!("Failed to expand GPT for target disk: {:?}", e))?;
 
             // Calculate geometry
             let parts = g
-                .part_list(&disk)
+                .part_list(disk)
                 .map_err(|e| anyhow!("Failed to get partition list: {:?}", e))?;
             let last_end = parts.last().map(|p| p.part_end).ok_or_else(|| {
                 anyhow::anyhow!("Failed to get the last partition; the disk is empty.")
@@ -1602,12 +1602,12 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
             println!("Add new partition...");
 
             // Create primary partition
-            g.part_add(&disk, "p", start_sector as i64, end_sector as i64)
+            g.part_add(disk, "p", start_sector as i64, end_sector as i64)
                 .map_err(|e| anyhow!("Failed to add partition: {:?}", e))?;
 
             // Identify new partition (it is the last one)
             let parts = g
-                .part_list(&disk)
+                .part_list(disk)
                 .map_err(|e| anyhow!("Failed to get partition list: {:?}", e))?;
             let new_part_num = parts
                 .last()
