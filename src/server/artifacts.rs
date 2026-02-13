@@ -6,6 +6,12 @@ use std::process::Command;
 /// Removes stale files before generation to ensure fresh content.
 /// Returns the path to the generated artifact file.
 pub fn generate_artifact(artifact_dir: &Path, filename: &str) -> Result<PathBuf> {
+    // Extract just the filename component to prevent path traversal
+    let filename = Path::new(filename)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .ok_or_else(|| anyhow!("Invalid filename"))?;
+
     let path = artifact_dir.join(filename);
 
     // Always regenerate archives to reflect the latest artifacts
