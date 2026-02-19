@@ -166,7 +166,7 @@ and the encrypted key, and returns the signed launch artifacts.
 
 ```bash
 cargo run --bin snpguard-client manage register \
-  --os-name Debian13-CoCo \
+  --os-name Debian13-CVM \
   --vcpus 4 --vcpu-type EPYC-Milan \
   --allowed-smt \
   --min-tcb-bootloader 0 --min-tcb-tee 0 --min-tcb-snp 0 --min-tcb-microcode 0 \
@@ -208,7 +208,7 @@ next VM poweroff/poweron cycle, the new artifacts will be used.
 same as the `convert` subcommand. This step is optional - you can still provide
 artifacts externally when launching the VM.
 
-### 6. Run CoCo VM
+### 6. Run CVM
 
 Launch the confidential VM on the platform using the secured disk and
 the signed artifacts:

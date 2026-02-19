@@ -124,7 +124,7 @@ Register the new image with the server. This uploads the measurements and the en
 
 ```bash
 cargo run --bin snpguard-client manage register \
-  --os-name Debian13-CoCo \
+  --os-name Debian13-CVM \
   --vcpus 4 --vcpu-type EPYC-Milan \
   --allowed-smt \
   --min-tcb-bootloader 0 --min-tcb-tee 0 --min-tcb-snp 0 --min-tcb-microcode 0 \
@@ -224,7 +224,7 @@ The A/B structure enables atomic artifact updates: new attested artifacts are wr
 - The A/B directory structure enables atomic artifact updates: new artifacts are written to the inactive directory, then the symlink is atomically switched. The new artifacts take effect on the next VM reboot.
 - **This step is optional** - you can still provide artifacts externally when launching the VM using the `--artifacts` parameter
 
-### 7. Run CoCo VM
+### 7. Run CVM
 
 Launch the confidential VM on the platform using the secured disk and
 the signed artifacts:
