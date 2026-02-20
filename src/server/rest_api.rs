@@ -20,8 +20,14 @@ use common::snpguard::{
     ToggleEnabledResponse,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 const PROTO_CT: &str = "application/x-protobuf";
+
+/// Validates that the string is a valid UUID (prevents path traversal via `..` in id).
+fn is_valid_record_or_token_id(id: &str) -> bool {
+    Uuid::parse_str(id).is_ok()
+}
 
 pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
     let auth_ctx = AuthCtx {
@@ -232,6 +238,9 @@ async fn list_records(State(state): State<Arc<ServiceState>>) -> Response {
 }
 
 async fn get_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     match crate::service_core::get_record_core(&state, id).await {
         Ok(opt) => proto_response(GetRecordResponse { record: opt }),
         Err(e) => proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
@@ -261,6 +270,9 @@ async fn create_record(State(state): State<Arc<ServiceState>>, body: Bytes) -> R
 }
 
 async fn delete_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     match crate::service_core::delete_record_core(&state, id).await {
         Ok(_) => proto_response(DeleteRecordResponse {
             success: true,
@@ -274,6 +286,9 @@ async fn delete_record(State(state): State<Arc<ServiceState>>, Path(id): Path<St
 }
 
 async fn enable_record(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     toggle_record(state, id, true).await
 }
 
@@ -281,14 +296,23 @@ async fn disable_record(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     toggle_record(state, id, false).await
 }
 
 async fn export_tar(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     export_artifact(&state, &id, "artifacts.tar.gz").await
 }
 
 async fn export_squash(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
     export_artifact(&state, &id, "artifacts.squashfs").await
 }
 
@@ -394,6 +418,9 @@ async fn create_token(State(state): State<Arc<ServiceState>>, body: Bytes) -> Re
 }
 
 async fn revoke_token(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid token id");
+    }
     match crate::service_core::revoke_token(&state, id).await {
         Ok(_) => proto_error(StatusCode::OK, "revoked"),
         Err(e) => proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e),

@@ -568,8 +568,22 @@ pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result
     // Remove artifacts directory if present
     let artifact_dir = state.data_paths.attestations_dir.join(&id);
     if artifact_dir.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
-            eprintln!("Warning: failed to remove artifacts for {}: {}", id, e);
+        let safe_to_remove = state
+            .data_paths
+            .attestations_dir
+            .canonicalize()
+            .ok()
+            .and_then(|base| {
+                artifact_dir
+                    .canonicalize()
+                    .ok()
+                    .map(|p| p.starts_with(&base))
+            })
+            .unwrap_or(false);
+        if safe_to_remove {
+            if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
+                eprintln!("Warning: failed to remove artifacts for {}: {}", id, e);
+            }
         }
     }
 
