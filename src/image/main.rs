@@ -106,6 +106,9 @@ enum Command {
         /// Firmware path (required)
         #[arg(long)]
         firmware: PathBuf,
+        /// Skip rootfs encryption and initrd hook installation (debug mode for testing artifact delivery without attestation)
+        #[arg(long)]
+        no_hardening: bool,
     },
     /// Embed boot artifacts into a QCOW2 image
     Embed {
@@ -623,6 +626,7 @@ fn extract_boot_data(
     supported_entries: &[grub_parser::GrubEntry],
     unsupported_entries: &[grub_parser::GrubEntry],
     boot_partition: &BootPartition,
+    no_hardening: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, String)> {
     use guestfs::UmountOptArgs;
 
@@ -641,17 +645,21 @@ fn extract_boot_data(
     match boot_partition {
         BootPartition::Rootfs => {
             // Boot is on rootfs: decrypt target rootfs and mount it as /
-            let luks_key = hex::encode(vmk);
-            g.luks_open(target_rootfs, &luks_key, "root_crypt")
-                .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
-            _guards.borrow_mut().push(Box::new(move || {
-                if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
-                    println!("WARN: Failed to close LUKS: {:?}", e);
-                }
-            }));
-
-            g.mount_ro("/dev/mapper/root_crypt", "/")
-                .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+            if !no_hardening {
+                let luks_key = hex::encode(vmk);
+                g.luks_open(target_rootfs, &luks_key, "root_crypt")
+                    .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
+                _guards.borrow_mut().push(Box::new(move || {
+                    if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+                        println!("WARN: Failed to close LUKS: {:?}", e);
+                    }
+                }));
+                g.mount_ro("/dev/mapper/root_crypt", "/")
+                    .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+            } else {
+                g.mount_ro(target_rootfs, "/")
+                    .map_err(|e| anyhow!("Failed to mount target rootfs directly: {:?}", e))?;
+            }
             _guards.borrow_mut().push(Box::new(move || {
                 if let Err(e) = g.umount("/", UmountOptArgs::default()) {
                     println!("WARN: Failed to umount /: {:?}", e);
@@ -1178,19 +1186,22 @@ fn run_convert(
     ingestion_public_key: Option<PathBuf>,
     ca_cert: Option<PathBuf>,
     firmware: PathBuf,
+    no_hardening: bool,
 ) -> Result<()> {
     // Load config if available
     let config = load_config().ok();
 
-    // Resolve attest_url
-    let _url = attest_url
-        .clone()
-        .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
-        .ok_or_else(|| {
-            anyhow!(
-                "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
-            )
-        })?;
+    // Resolve attest_url (only required when not in no_hardening mode)
+    if !no_hardening {
+        let _url = attest_url
+            .clone()
+            .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
+                )
+            })?;
+    }
 
     // Resolve ingestion public key path
     let ingestion_key_file = ingestion_public_key
@@ -1205,22 +1216,6 @@ fn run_convert(
         bail!(
             "Ingestion public key not found at {:?}. Please run 'snpguard-client config login' first or provide --ingestion-public-key",
             ingestion_key_file
-        );
-    }
-
-    // Resolve CA cert path
-    let ca_cert_file = ca_cert
-        .or_else(|| ca_cert_path().ok())
-        .ok_or_else(|| {
-            anyhow!(
-                "CA certificate not provided. Please run 'snpguard-client config login' first or provide --ca-cert"
-            )
-        })?;
-
-    if !ca_cert_file.exists() {
-        bail!(
-            "CA certificate not found at {:?}. Please run 'snpguard-client config login' first or provide --ca-cert",
-            ca_cert_file
         );
     }
 
@@ -1333,15 +1328,6 @@ fn run_convert(
     println!("Securely deleting unencrypted VMK...");
     secure_delete_file(&vmk_path)?;
 
-    // Prepare data
-    let attest_url_str = attest_url
-        .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
-        .ok_or_else(|| {
-            anyhow!(
-                "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
-            )
-        })?;
-
     println!("Copying the whole source image to target image...");
     fs::copy(in_image, out_image).with_context(|| {
         format!(
@@ -1386,31 +1372,55 @@ fn run_convert(
         unsupported_entries.len()
     );
 
-    println!("Encrypting root filesystem with LUKS2...");
-    encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
+    if !no_hardening {
+        println!("Encrypting root filesystem with LUKS2...");
+        encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
+    }
 
-    let ca_cert_path = ca_cert_file
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", ca_cert_file))?;
     let sealed_vmk_path = sealed_vmk_file
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", sealed_vmk_file))?;
 
-    println!("Install snpguard-client on target and update initrd...");
-    install_snpguard_on_target(
-        &g,
-        &source_rootfs,
-        &target_rootfs,
-        &vmk,
-        &supported_entries,
-        &boot_partition,
-        "target/x86_64-unknown-linux-musl/release/snpguard-client",
-        ca_cert_path,
-        sealed_vmk_path,
-        &attest_url_str,
-        "scripts/initramfs-tools/hook.sh",
-        "scripts/initramfs-tools/attest.sh",
-    )?;
+    if !no_hardening {
+        let ca_cert_file = ca_cert
+            .or_else(|| ca_cert_path().ok())
+            .ok_or_else(|| {
+                anyhow!(
+                    "CA certificate not provided. Please run 'snpguard-client config login' first or provide --ca-cert"
+                )
+            })?;
+        if !ca_cert_file.exists() {
+            bail!(
+                "CA certificate not found at {:?}. Please run 'snpguard-client config login' first or provide --ca-cert",
+                ca_cert_file
+            );
+        }
+        let ca_cert_path_str = ca_cert_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", ca_cert_file))?;
+        let attest_url_str = attest_url
+            .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Attestation URL not provided. Please run 'snpguard-client config login' first or provide --attest-url"
+                )
+            })?;
+        println!("Install snpguard-client on target and update initrd...");
+        install_snpguard_on_target(
+            &g,
+            &source_rootfs,
+            &target_rootfs,
+            &vmk,
+            &supported_entries,
+            &boot_partition,
+            "target/x86_64-unknown-linux-musl/release/snpguard-client",
+            ca_cert_path_str,
+            sealed_vmk_path,
+            &attest_url_str,
+            "scripts/initramfs-tools/hook.sh",
+            "scripts/initramfs-tools/attest.sh",
+        )?;
+    }
     fs::remove_file(sealed_vmk_path).context("Failed to remove sealed VMK")?;
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
@@ -1422,6 +1432,7 @@ fn run_convert(
         &supported_entries,
         &unsupported_entries,
         &boot_partition,
+        no_hardening,
     )?;
 
     // Write artifacts to staging directory
@@ -1688,6 +1699,7 @@ fn main() -> Result<()> {
             ingestion_public_key,
             ca_cert,
             firmware,
+            no_hardening,
         } => run_convert(
             &in_image,
             &out_image,
@@ -1696,6 +1708,7 @@ fn main() -> Result<()> {
             ingestion_public_key,
             ca_cert,
             firmware,
+            no_hardening,
         ),
         Command::Embed { image, in_bundle } => run_embed(&image, &in_bundle),
     }
