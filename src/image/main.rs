@@ -109,6 +109,11 @@ enum Command {
         /// Skip rootfs encryption and initrd hook installation (debug mode for testing artifact delivery without attestation)
         #[arg(long)]
         no_hardening: bool,
+        /// Prompt to manually select a kernel when multiple SEV-SNP supported kernels are found.
+        /// By default the GRUB default kernel is selected automatically, or the first entry if no
+        /// default is set.
+        #[arg(long)]
+        pick_kernel: bool,
     },
     /// Embed boot artifacts into a QCOW2 image
     Embed {
@@ -627,6 +632,7 @@ fn extract_boot_data(
     unsupported_entries: &[grub_parser::GrubEntry],
     boot_partition: &BootPartition,
     no_hardening: bool,
+    pick_kernel: bool,
 ) -> Result<(Vec<u8>, Vec<u8>, String)> {
     use guestfs::UmountOptArgs;
 
@@ -749,8 +755,29 @@ fn extract_boot_data(
         }
         println!("    Parameters: {}", entry.params);
         entry
+    } else if !pick_kernel {
+        // Multiple supported entries - auto-select GRUB default, fallback to first
+        let selected_idx = supported_entries
+            .iter()
+            .position(|e| e.is_default)
+            .unwrap_or(0);
+        let entry = &supported_entries[selected_idx];
+        let reason = if entry.is_default {
+            "GRUB default"
+        } else {
+            "first available"
+        };
+        println!("\n  Auto-selected entry {} ({}):", selected_idx, reason);
+        println!("    Kernel: {}", entry.kernel);
+        if let Some(ref initrd) = entry.initrd {
+            println!("    Initrd: {}", initrd);
+        } else {
+            println!("    Initrd: (none)");
+        }
+        println!("    Parameters: {}", entry.params);
+        entry
     } else {
-        // Multiple supported entries - ask user to select
+        // Multiple supported entries - ask user to select (--pick-kernel mode)
         print!(
             "\n  Enter entry number (0-{}): ",
             supported_entries.len() - 1
@@ -1187,6 +1214,7 @@ fn run_convert(
     ca_cert: Option<PathBuf>,
     firmware: PathBuf,
     no_hardening: bool,
+    pick_kernel: bool,
 ) -> Result<()> {
     // Load config if available
     let config = load_config().ok();
@@ -1433,6 +1461,7 @@ fn run_convert(
         &unsupported_entries,
         &boot_partition,
         no_hardening,
+        pick_kernel,
     )?;
 
     // Write artifacts to staging directory
@@ -1700,6 +1729,7 @@ fn main() -> Result<()> {
             ca_cert,
             firmware,
             no_hardening,
+            pick_kernel,
         } => run_convert(
             &in_image,
             &out_image,
@@ -1709,6 +1739,7 @@ fn main() -> Result<()> {
             ca_cert,
             firmware,
             no_hardening,
+            pick_kernel,
         ),
         Command::Embed { image, in_bundle } => run_embed(&image, &in_bundle),
     }

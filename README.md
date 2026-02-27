@@ -151,8 +151,10 @@ installed on the system for the `convert` subcommand to inspecet and
 modify the QCOW2 image.
 
 **Note 3:** The image tool lists the available kernels and initrd
-images with their kernel parameters. The user is prompted to choose
-one to be the trusted boot target.
+images with their kernel parameters. By default, the GRUB default
+kernel is selected automatically; if no default is set in the GRUB
+configuration, the first SEV-SNP supported entry is used. Pass
+`--pick-kernel` to be prompted to choose interactively instead.
 
 **Note 4:** The OVMF firmware binary must include `SNP_KERNEL_HASHES`,
 which is achieved by the special AmdSevX64 build. Refer to [this
