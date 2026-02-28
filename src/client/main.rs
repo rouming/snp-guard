@@ -15,7 +15,7 @@ use hpke::{
 use prost::Message;
 use rand::rngs::OsRng;
 use reqwest::Certificate;
-use sev::firmware::guest::Firmware;
+use sev::firmware::guest::{DerivedKey, Firmware, GuestFieldSelect};
 use sha2::{Digest, Sha256, Sha512};
 use std::fs;
 use std::io::Write;
@@ -53,6 +53,39 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigCmd,
+    },
+    /// Derive a 32-byte key from the AMD SEV-SNP hardware using the chip's VCEK (or VMRK).
+    /// Outputs the key as a hex string on stdout, suitable for use as a LUKS passphrase.
+    /// For security, always include --mix-measurement to bind the key to the launch digest.
+    DeriveKey {
+        /// Use VMRK as the root key instead of VCEK (default: VCEK, chip-specific)
+        #[arg(long, default_value_t = false)]
+        vmrk: bool,
+        /// Mix the guest policy into the derived key
+        #[arg(long, default_value_t = false)]
+        mix_policy: bool,
+        /// Mix the launch measurement (firmware+kernel+initrd digest) into the derived key.
+        /// Strongly recommended: without this, any guest on the same chip derives the same key.
+        #[arg(long, default_value_t = false)]
+        mix_measurement: bool,
+        /// Mix the image ID into the derived key
+        #[arg(long, default_value_t = false)]
+        mix_image_id: bool,
+        /// Mix the family ID into the derived key
+        #[arg(long, default_value_t = false)]
+        mix_family_id: bool,
+        /// VMPL level to mix into the derived key (must be >= current VMPL; default: 0)
+        #[arg(long, default_value_t = 0)]
+        vmpl: u32,
+        /// Guest SVN to mix into the derived key (must not exceed the SVN in the ID block; default: 0)
+        #[arg(long, default_value_t = 0)]
+        guest_svn: u32,
+        /// TCB version to bind into the derived key (must not exceed CommittedTcb; 0 = don't bind)
+        #[arg(long, default_value_t = 0u64)]
+        tcb_version: u64,
+        /// Launch mitigation vector to mix into the derived key (default: 0)
+        #[arg(long, default_value_t = 0u64)]
+        mit_vector: u64,
     },
 }
 
@@ -141,7 +174,7 @@ enum ManageCmd {
     },
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
@@ -156,6 +189,27 @@ async fn main() -> Result<()> {
             action,
         } => run_manage(url.as_deref(), ca_cert.as_deref(), action).await,
         Command::Config { action } => run_config(action),
+        Command::DeriveKey {
+            vmrk,
+            mix_policy,
+            mix_measurement,
+            mix_image_id,
+            mix_family_id,
+            vmpl,
+            guest_svn,
+            tcb_version,
+            mit_vector,
+        } => run_derive_key(
+            vmrk,
+            mix_policy,
+            mix_measurement,
+            mix_image_id,
+            mix_family_id,
+            vmpl,
+            guest_svn,
+            tcb_version,
+            mit_vector,
+        ),
     }
 }
 
@@ -341,6 +395,52 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: &Path) -> Result<()> 
     // Output VMK to stdout in hex format
     let vmk_hex = hex::encode(&vmk);
     println!("{}", vmk_hex);
+    Ok(())
+}
+
+fn run_derive_key(
+    vmrk: bool,
+    mix_policy: bool,
+    mix_measurement: bool,
+    mix_image_id: bool,
+    mix_family_id: bool,
+    vmpl: u32,
+    guest_svn: u32,
+    tcb_version: u64,
+    mit_vector: u64,
+) -> Result<()> {
+    let mut field_select = GuestFieldSelect::default();
+    if mix_policy {
+        field_select.set_guest_policy(true);
+    }
+    if mix_measurement {
+        field_select.set_measurement(true);
+    }
+    if mix_image_id {
+        field_select.set_image_id(true);
+    }
+    if mix_family_id {
+        field_select.set_family_id(true);
+    }
+
+    let (mit, version) = if mit_vector != 0 {
+        (Some(mit_vector), Some(2))
+    } else {
+        // Not all firmware supports version 2, so if the Mitigation
+        // Vector is 0, we force the version to be 1.
+        (None, Some(1))
+    };
+
+    let request = DerivedKey::new(vmrk, field_select, vmpl, guest_svn, tcb_version, mit);
+
+    let mut fw = Firmware::open().context(
+        "Failed to open SEV firmware device (/dev/sev-guest). Ensure SEV-SNP is enabled.",
+    )?;
+    let key = fw
+        .get_derived_key(version, request)
+        .context("Failed to derive key from SEV firmware")?;
+
+    println!("{}", hex::encode(key));
     Ok(())
 }
 
