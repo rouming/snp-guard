@@ -1,4 +1,24 @@
 #!/bin/sh
+# ONLINE ATTESTATION SCRIPT
+# ==========================
+# Unseals the rootfs VMK by performing a full remote attestation handshake
+# with the SnpGuard server on every boot.  Network access is required for
+# every boot when using this script.
+#
+# LUKS slot layout:
+#   Slot 0 - sealed VMK (unlocked via online attestation, snpguard service)
+#
+# Boot flow:
+#   1. Configure networking (udevadm settle + DHCP + /32 routing workaround).
+#   2. Resolve the root block device from the kernel command line.
+#   3. Perform remote attestation: the snpguard-client generates an AMD
+#      SEV-SNP attestation report, sends it to the server together with the
+#      sealed VMK blob, and receives the VMK decrypted and re-encrypted
+#      under an ephemeral session key.
+#   4. Unlock the root filesystem by passing the VMK to cryptsetup.
+#
+# For a variant that avoids network on every boot see attest-offline.sh.
+
 PREREQ="udev network"
 
 prereqs() { echo "$PREREQ"; }
@@ -18,10 +38,20 @@ panic() {
     exec sh
 }
 
-# Ensure udev settled
+# ---------------------------------------------------------------------------
+# Step 1 - Configure networking
+# ---------------------------------------------------------------------------
+# Network must be available before contacting the attestation server.
+# udevadm settle ensures all block/net devices are enumerated before
+# configure_networking (initramfs-tools built-in) runs DHCP.
+#
+# Cloud providers that assign a /32 address (single-host subnet) require an
+# explicit on-link route to the gateway because the kernel would otherwise
+# refuse to add a default route (the gateway appears off-subnet).  This
+# workaround reads the variables written by ipconfig into /run/net-$DEVICE.conf
+# and injects the missing routes when the condition is detected.
+echo "snpguard attest: setting up network..."
 udevadm settle
-
-# Set up network
 configure_networking || panic "snpguard attest: networking failed"
 
 # Check for the config file created by ipconfig
@@ -53,7 +83,12 @@ if [ -f "$NETCONF" ]; then
     fi
 fi
 
-# Determine root
+# ---------------------------------------------------------------------------
+# Step 2 - Resolve root block device
+# ---------------------------------------------------------------------------
+# The root= parameter on the kernel command line may be a device path, UUID,
+# or LABEL.  resolve_device() (from /scripts/functions) normalises it to an
+# absolute /dev path.
 if [ -z "$ROOT" ]; then
     ROOT="$(sed -n 's/.*\broot=\([^ ]*\).*/\1/p' /proc/cmdline)"
 fi
@@ -62,13 +97,19 @@ fi
 
 REAL_ROOT="$(resolve_device "$ROOT")" || panic "snpguard attest: cannot resolve root device"
 
-# Attestation
+# ---------------------------------------------------------------------------
+# Step 3 - Online attestation
+# ---------------------------------------------------------------------------
+echo "snpguard attest: performing remote attestation..."
 VMK="$(/usr/bin/snpguard-client attest \
     --url "$(cat /etc/snpguard/attest.url)" \
     --ca-cert /etc/snpguard/ca.pem \
     --sealed-blob /etc/snpguard/vmk.sealed)" || panic "snpguard attest: attestation failed"
 
-# Unlock root
+# ---------------------------------------------------------------------------
+# Step 4 - Unlock root filesystem
+# ---------------------------------------------------------------------------
+echo "snpguard attest: unlocking root filesystem..."
 echo -n "$VMK" | cryptsetup luksOpen "$REAL_ROOT" root_crypt --key-file=- \
     || panic "snpguard attest: cryptsetup failed"
 
