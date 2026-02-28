@@ -629,6 +629,7 @@ fn inspect_source_image_boot_data(
 /// Extracts kernel, initrd, and kernel parameters from target image using pre-verified GRUB entries.
 /// Returns (kernel_data, initrd_data, kernel_params)
 /// This function works on the target image and uses the pre-verified entry list from source image.
+#[allow(clippy::too_many_arguments)]
 fn extract_boot_data(
     g: &guestfs::Handle,
     scratch_rootfs: &str,
@@ -1211,6 +1212,7 @@ pub fn resize_qcow2(image_path: &Path, additional_bytes: u64) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_convert(
     in_image: &Path,
     out_image: &Path,

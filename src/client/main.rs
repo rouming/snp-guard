@@ -398,6 +398,7 @@ async fn run_attest(url: &str, ca_cert: &str, sealed_blob: &Path) -> Result<()> 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_derive_key(
     vmrk: bool,
     mix_policy: bool,
