@@ -186,9 +186,9 @@ if [ -n "$ARTIFACTS_ARCHIVE" ]; then
     fi
 
     if [ -f "$LAUNCH_CONFIG" ]; then
-        CPU_TYPE=$(jq -r '.vcpu_model' "${LAUNCH_CONFIG}")
-        SMP_NCPUS=$(jq -r '.vcpu_count' "${LAUNCH_CONFIG}")
-        SNP_POLICY=$(jq -r '.guest_policy' "${LAUNCH_CONFIG}")
+        CPU_TYPE=$(jq -r '."vcpu-model"' "${LAUNCH_CONFIG}")
+        SMP_NCPUS=$(jq -r '."vcpu-count"' "${LAUNCH_CONFIG}")
+        SNP_POLICY=$(jq -r '."guest-policy"' "${LAUNCH_CONFIG}")
 
         ok "Launch config found. Enforcing type of vCPU: \"${CPU_TYPE}\", number of vCPUs: ${SMP_NCPUS}, policy: ${SNP_POLICY}"
     fi

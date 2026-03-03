@@ -181,9 +181,9 @@ pub async fn create_record_logic(
         policy.set_smt_allowed(req.allowed_smt);
 
         let launch_config = json!({
-            "vcpu_model": req.vcpu_type,
-            "vcpu_count": req.vcpus,
-            "guest_policy": format!("0x{:x}", u64::from(policy)),
+            "vcpu-model": req.vcpu_type,
+            "vcpu-count": req.vcpus,
+            "guest-policy": format!("0x{:x}", u64::from(policy)),
         });
 
         let launch_config_bytes = serde_json::to_vec_pretty(&launch_config)
