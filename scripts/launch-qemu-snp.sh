@@ -41,33 +41,6 @@ REDUCED_PHYS_BITS=5
 ARTIFACTS_ARCHIVE=""
 TEMP_DIR=""
 
-# Checks
-if [ $(id -u) -ne 0 ]; then
-    err "This script must be run as root (for KVM/SEV access)."
-    exit 1
-fi
-
-if ! command -v jq &> /dev/null; then
-    err "'jq' command not found. Please install."
-    exit 1
-fi
-
-network_down() {
-    :
-}
-
-# Trap for cleanup
-cleanup() {
-    if [ "$NO_NET" == "0" ]; then
-        network_down
-    fi
-    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
-        rm -rf "$TEMP_DIR"
-    fi
-    stty intr ^c 2>/dev/null # Restore CTRL-C
-}
-trap cleanup EXIT
-
 # --- Helper Functions ---
 
 usage() {
@@ -146,6 +119,36 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# --- Checks ---
+
+if [ $(id -u) -ne 0 ]; then
+    err "This script must be run as root (for KVM/SEV access)."
+    exit 1
+fi
+
+if ! command -v jq &> /dev/null; then
+    err "'jq' command not found. Please install."
+    exit 1
+fi
+
+# --- Cleanup routines ---
+
+network_down() {
+    :
+}
+
+# Trap for cleanup
+cleanup() {
+    if [ "$NO_NET" == "0" ]; then
+        network_down
+    fi
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+    stty intr ^c 2>/dev/null # Restore CTRL-C
+}
+trap cleanup EXIT
 
 # --- Artifact Extraction ---
 
