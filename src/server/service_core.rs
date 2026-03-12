@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use sea_orm::{
@@ -10,7 +11,7 @@ use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
     ToggleEnabledRequest,
 };
-use entity::{token, vm};
+use entity::{token, vm, vm_registration};
 use hpke::{
     aead::AesGcm256,
     kdf::HkdfSha256,
@@ -258,8 +259,8 @@ pub async fn verify_report_core(
         };
     }
 
-    // Find attestation record by report.image_id,
-    // report.id_key_digest, report.auth_key_digest
+    // Find attestation record by report.image_id, report.id_key_digest,
+    // report.auth_key_digest
     let record = match vm::Entity::find()
         .filter(vm::Column::ImageId.eq(parsed.report.image_id.to_vec()))
         .filter(vm::Column::IdKeyDigest.eq(parsed.report.id_key_digest.to_vec()))
@@ -278,8 +279,8 @@ pub async fn verify_report_core(
         }
     };
 
-    let vm = match record.ok_or("No matching attestation record found") {
-        Ok(vm) => vm,
+    let attestation_record = match record.ok_or("No matching attestation record found") {
+        Ok(r) => r,
         Err(e) => {
             return AttestationResponse {
                 success: false,
@@ -290,8 +291,33 @@ pub async fn verify_report_core(
         }
     };
 
-    // Check if record is not disabled
-    if !vm.enabled {
+    // Load the parent registration to check enabled status and update request_count
+    let registration =
+        match vm_registration::Entity::find_by_id(&attestation_record.registration_id)
+            .one(&state.db)
+            .await
+        {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                return AttestationResponse {
+                    success: false,
+                    encapped_key: vec![],
+                    ciphertext: vec![],
+                    error_message: "Registration not found for attestation record".to_string(),
+                }
+            }
+            Err(_) => {
+                return AttestationResponse {
+                    success: false,
+                    encapped_key: vec![],
+                    ciphertext: vec![],
+                    error_message: "Database error".to_string(),
+                }
+            }
+        };
+
+    // Check if registration is not disabled
+    if !registration.enabled {
         return AttestationResponse {
             success: false,
             encapped_key: vec![],
@@ -306,47 +332,47 @@ pub async fn verify_report_core(
     let current_snp = parsed.report.current_tcb.snp;
     let current_microcode = parsed.report.current_tcb.microcode;
 
-    if current_bootloader < vm.min_tcb_bootloader as u8 {
+    if current_bootloader < attestation_record.min_tcb_bootloader as u8 {
         return AttestationResponse {
             success: false,
             encapped_key: vec![],
             ciphertext: vec![],
             error_message: format!(
                 "Bootloader TCB version {} below minimum requirement {}",
-                current_bootloader, vm.min_tcb_bootloader
+                current_bootloader, attestation_record.min_tcb_bootloader
             ),
         };
     }
-    if current_tee < vm.min_tcb_tee as u8 {
+    if current_tee < attestation_record.min_tcb_tee as u8 {
         return AttestationResponse {
             success: false,
             encapped_key: vec![],
             ciphertext: vec![],
             error_message: format!(
                 "TEE TCB version {} below minimum requirement {}",
-                current_tee, vm.min_tcb_tee
+                current_tee, attestation_record.min_tcb_tee
             ),
         };
     }
-    if current_snp < vm.min_tcb_snp as u8 {
+    if current_snp < attestation_record.min_tcb_snp as u8 {
         return AttestationResponse {
             success: false,
             encapped_key: vec![],
             ciphertext: vec![],
             error_message: format!(
                 "SNP TCB version {} below minimum requirement {}",
-                current_snp, vm.min_tcb_snp
+                current_snp, attestation_record.min_tcb_snp
             ),
         };
     }
-    if current_microcode < vm.min_tcb_microcode as u8 {
+    if current_microcode < attestation_record.min_tcb_microcode as u8 {
         return AttestationResponse {
             success: false,
             encapped_key: vec![],
             ciphertext: vec![],
             error_message: format!(
                 "Microcode TCB version {} below minimum requirement {}",
-                current_microcode, vm.min_tcb_microcode
+                current_microcode, attestation_record.min_tcb_microcode
             ),
         };
     }
@@ -399,7 +425,7 @@ pub async fn verify_report_core(
     // Decrypt unsealing private key from DB using ingestion key
     let unsealing_priv_bytes = match state
         .ingestion_keys
-        .decrypt(&vm.unsealing_private_key_encrypted)
+        .decrypt(&attestation_record.unsealing_private_key_encrypted)
     {
         Ok(decrypted) => decrypted,
         Err(e) => {
@@ -428,10 +454,11 @@ pub async fn verify_report_core(
         }
     };
 
-    // Update request count
-    let mut active: vm::ActiveModel = vm.clone().into();
-    active.request_count = Set(vm.request_count + 1);
-    let _ = active.update(&state.db).await;
+    // Increment request count on the registration
+    let new_count = registration.request_count + 1;
+    let mut reg_active: vm_registration::ActiveModel = registration.into();
+    reg_active.request_count = Set(new_count);
+    let _ = reg_active.update(&state.db).await;
 
     // Success
     AttestationResponse {
@@ -442,40 +469,59 @@ pub async fn verify_report_core(
     }
 }
 
+/// Build an AttestationRecord proto from a registration + its current attestation record.
+fn build_proto_record(reg: vm_registration::Model, rec: vm::Model) -> AttestationRecord {
+    AttestationRecord {
+        id: reg.id,
+        os_name: reg.os_name,
+        request_count: reg.request_count,
+        vcpu_type: rec.vcpu_type,
+        vcpus: rec.vcpus as u32,
+        enabled: reg.enabled,
+        created_at: reg.created_at.to_string(),
+        kernel_params: rec.kernel_params.unwrap_or_default(),
+        firmware_path: rec.firmware_path.unwrap_or_default(),
+        kernel_path: rec.kernel_path.unwrap_or_default(),
+        initrd_path: rec.initrd_path.unwrap_or_default(),
+        image_id: rec.image_id,
+        allowed_debug: rec.allowed_debug,
+        allowed_migrate_ma: rec.allowed_migrate_ma,
+        allowed_smt: rec.allowed_smt,
+        min_tcb_bootloader: rec.min_tcb_bootloader as u32,
+        min_tcb_tee: rec.min_tcb_tee as u32,
+        min_tcb_snp: rec.min_tcb_snp as u32,
+        min_tcb_microcode: rec.min_tcb_microcode as u32,
+    }
+}
+
 pub async fn list_records_core(
     state: &Arc<ServiceState>,
 ) -> Result<Vec<AttestationRecord>, String> {
-    let records = vm::Entity::find()
-        .order_by_asc(vm::Column::OsName)
+    let registrations = vm_registration::Entity::find()
+        .order_by_asc(vm_registration::Column::OsName)
         .all(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
 
-    let proto_records: Vec<AttestationRecord> = records
+    let record_ids: Vec<String> = registrations
+        .iter()
+        .map(|r| r.current_record_id.clone())
+        .collect();
+
+    let records = vm::Entity::find()
+        .filter(vm::Column::Id.is_in(record_ids))
+        .all(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    let record_map: HashMap<String, vm::Model> =
+        records.into_iter().map(|r| (r.id.clone(), r)).collect();
+
+    let proto_records = registrations
         .into_iter()
-        .map(|vm| {
-            // Never decrypt unsealing key for UI display - it's only decrypted during attestation
-            AttestationRecord {
-                id: vm.id,
-                os_name: vm.os_name,
-                request_count: vm.request_count,
-                vcpu_type: vm.vcpu_type,
-                vcpus: vm.vcpus as u32,
-                enabled: vm.enabled,
-                created_at: vm.created_at.to_string(),
-                kernel_params: vm.kernel_params,
-                firmware_path: vm.firmware_path,
-                kernel_path: vm.kernel_path,
-                initrd_path: vm.initrd_path,
-                image_id: vm.image_id,
-                allowed_debug: vm.allowed_debug,
-                allowed_migrate_ma: vm.allowed_migrate_ma,
-                allowed_smt: vm.allowed_smt,
-                min_tcb_bootloader: vm.min_tcb_bootloader as u32,
-                min_tcb_tee: vm.min_tcb_tee as u32,
-                min_tcb_snp: vm.min_tcb_snp as u32,
-                min_tcb_microcode: vm.min_tcb_microcode as u32,
-            }
+        .filter_map(|reg| {
+            let rec = record_map.get(&reg.current_record_id)?.clone();
+            Some(build_proto_record(reg, rec))
         })
         .collect();
 
@@ -486,32 +532,29 @@ pub async fn get_record_core(
     state: &Arc<ServiceState>,
     id: String,
 ) -> Result<Option<AttestationRecord>, String> {
-    let record = vm::Entity::find_by_id(id)
+    // id is the VmRegistration ID
+    let registration = vm_registration::Entity::find_by_id(&id)
         .one(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
 
-    Ok(record.map(|vm| AttestationRecord {
-        id: vm.id,
-        os_name: vm.os_name,
-        request_count: vm.request_count,
-        vcpu_type: vm.vcpu_type,
-        vcpus: vm.vcpus as u32,
-        enabled: vm.enabled,
-        created_at: vm.created_at.to_string(),
-        kernel_params: vm.kernel_params,
-        firmware_path: vm.firmware_path,
-        kernel_path: vm.kernel_path,
-        initrd_path: vm.initrd_path,
-        image_id: vm.image_id,
-        allowed_debug: vm.allowed_debug,
-        allowed_migrate_ma: vm.allowed_migrate_ma,
-        allowed_smt: vm.allowed_smt,
-        min_tcb_bootloader: vm.min_tcb_bootloader as u32,
-        min_tcb_tee: vm.min_tcb_tee as u32,
-        min_tcb_snp: vm.min_tcb_snp as u32,
-        min_tcb_microcode: vm.min_tcb_microcode as u32,
-    }))
+    let reg = match registration {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    let rec = vm::Entity::find_by_id(&reg.current_record_id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| {
+            format!(
+                "Attestation record {} not found for registration {}",
+                reg.current_record_id, id
+            )
+        })?;
+
+    Ok(Some(build_proto_record(reg, rec)))
 }
 
 pub async fn create_record_core(
@@ -548,6 +591,7 @@ pub async fn create_record_core(
         min_tcb_microcode: req.min_tcb_microcode,
     };
 
+    // Returns the VmRegistration ID
     let res = business_logic::create_record_logic(
         &state.attestation_state.db,
         &state.data_paths,
@@ -559,30 +603,56 @@ pub async fn create_record_core(
 }
 
 pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result<(), String> {
-    // Remove DB record
-    vm::Entity::delete_by_id(&id)
+    // id is the VmRegistration ID
+    let registration = vm_registration::Entity::find_by_id(&id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "Registration not found".to_string())?;
+
+    // Collect all attestation record IDs that belong to this registration
+    let mut record_ids = vec![registration.current_record_id.clone()];
+    if let Some(pending_id) = &registration.pending_record_id {
+        record_ids.push(pending_id.clone());
+    }
+
+    // Delete attestation records before the registration (FK order)
+    for record_id in &record_ids {
+        vm::Entity::delete_by_id(record_id)
+            .exec(&state.db)
+            .await
+            .map_err(|e| format!("Database error: {}", e))?;
+    }
+
+    // Delete the registration
+    vm_registration::Entity::delete_by_id(&id)
         .exec(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
 
-    // Remove artifacts directory if present
-    let artifact_dir = state.data_paths.attestations_dir.join(&id);
-    if artifact_dir.exists() {
-        let safe_to_remove = state
-            .data_paths
-            .attestations_dir
-            .canonicalize()
-            .ok()
-            .and_then(|base| {
-                artifact_dir
-                    .canonicalize()
-                    .ok()
-                    .map(|p| p.starts_with(&base))
-            })
-            .unwrap_or(false);
-        if safe_to_remove {
-            if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
-                eprintln!("Warning: failed to remove artifacts for {}: {}", id, e);
+    // Remove artifact directories (named after attestation_record IDs)
+    for record_id in &record_ids {
+        let artifact_dir = state.data_paths.attestations_dir.join(record_id);
+        if artifact_dir.exists() {
+            let safe_to_remove = state
+                .data_paths
+                .attestations_dir
+                .canonicalize()
+                .ok()
+                .and_then(|base| {
+                    artifact_dir
+                        .canonicalize()
+                        .ok()
+                        .map(|p| p.starts_with(&base))
+                })
+                .unwrap_or(false);
+            if safe_to_remove {
+                if let Err(e) = std::fs::remove_dir_all(&artifact_dir) {
+                    eprintln!(
+                        "Warning: failed to remove artifacts for {}: {}",
+                        record_id, e
+                    );
+                }
             }
         }
     }
@@ -595,21 +665,38 @@ pub async fn toggle_enabled_core(
     req: ToggleEnabledRequest,
     enabled: bool,
 ) -> Result<bool, String> {
-    let id = req.id;
-    let mut vm_model = vm::Entity::find_by_id(id.clone())
+    // req.id is the VmRegistration ID
+    let reg = vm_registration::Entity::find_by_id(req.id.clone())
         .one(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| "Record not found".to_string())?;
+        .ok_or_else(|| "Registration not found".to_string())?;
 
-    vm_model.enabled = enabled;
-    let mut active: vm::ActiveModel = vm_model.into();
+    let mut active: vm_registration::ActiveModel = reg.into();
     active.enabled = Set(enabled);
     active
         .update(&state.db)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
     Ok(enabled)
+}
+
+/// Returns the artifact directory path for the current record of a registration.
+/// Used by export and download endpoints which need the filesystem path.
+pub async fn get_current_artifact_dir(
+    state: &Arc<ServiceState>,
+    registration_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    let reg = vm_registration::Entity::find_by_id(registration_id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "Registration not found".to_string())?;
+
+    Ok(state
+        .data_paths
+        .attestations_dir
+        .join(&reg.current_record_id))
 }
 
 fn hash_token(token: &str) -> Result<String, String> {

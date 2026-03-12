@@ -320,7 +320,10 @@ async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) ->
     use axum::body::Body;
     use tokio_util::io::ReaderStream;
 
-    let artifact_dir = state.data_paths.attestations_dir.join(id);
+    let artifact_dir = match crate::service_core::get_current_artifact_dir(state, id).await {
+        Ok(p) => p,
+        Err(e) => return proto_error(StatusCode::NOT_FOUND, &e),
+    };
 
     // Generate artifact archive
     let path = match crate::artifacts::generate_artifact(&artifact_dir, filename) {

@@ -1,9 +1,9 @@
 use crate::{config::DataPaths, ingestion_key, snpguest_wrapper};
-use entity::vm;
+use entity::{vm, vm_registration};
 use openssl::ec::{EcGroup, EcKey};
 use openssl::nid::Nid;
 use rand::{rngs::OsRng, RngCore};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use serde_json::json;
 use sev::firmware::guest::GuestPolicy;
 use std::fs;
@@ -125,17 +125,23 @@ fn secure_delete_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Create a new VM registration with an associated attestation record.
+///
+/// Returns the VmRegistration ID (the stable, client-facing identifier).
+/// The AttestationRecord ID is internal and used only for artifact directory
+/// naming and attestation report matching.
 pub async fn create_record_logic(
     db: &DatabaseConnection,
     paths: &DataPaths,
     ingestion_keys: Arc<ingestion_key::IngestionKeys>,
     req: CreateRecordRequest,
 ) -> Result<String, String> {
-    let new_id = Uuid::new_v4().to_string();
-    let artifact_dir = paths.attestations_dir.join(&new_id);
+    // record_id names the artifact directory; reg_id is the client-facing ID
+    let record_id = Uuid::new_v4().to_string();
+    let reg_id = Uuid::new_v4().to_string();
+    let artifact_dir = paths.attestations_dir.join(&record_id);
 
     // Create cleanup guard to ensure directory is removed on any error
-    // The guard will be dropped when this function returns, cleaning up on error
     let mut cleanup_guard = ArtifactDirGuard::new(artifact_dir.clone());
 
     // Generate unique image_id as UUID (16 bytes)
@@ -229,10 +235,12 @@ pub async fn create_record_logic(
         secure_delete_file(&artifact_dir.join("id-auth-key.pem"))
             .map_err(|e| format!("Failed to securely delete Auth key file: {}", e))?;
 
-        // Save to DB
-        let new_vm = vm::ActiveModel {
-            id: Set(new_id.clone()),
-            os_name: Set(req.os_name),
+        let now = chrono::Utc::now().naive_utc();
+
+        // Insert attestation record first (artifact directory is named after record_id)
+        let new_record = vm::ActiveModel {
+            id: Set(record_id.clone()),
+            registration_id: Set(reg_id.clone()),
             unsealing_private_key_encrypted: Set(req.unsealing_private_key_encrypted),
             vcpus: Set(req.vcpus as i32),
             vcpu_type: Set(req.vcpu_type),
@@ -240,8 +248,7 @@ pub async fn create_record_logic(
             auth_key_digest: Set(auth_digest),
             id_key_encrypted: Set(Some(id_key_encrypted)),
             auth_key_encrypted: Set(Some(auth_key_encrypted)),
-            created_at: Set(chrono::Utc::now().naive_utc()),
-            enabled: Set(true),
+            created_at: Set(now),
             image_id: Set(image_id.as_bytes().to_vec()),
             allowed_debug: Set(req.allowed_debug),
             allowed_migrate_ma: Set(req.allowed_migrate_ma),
@@ -250,23 +257,42 @@ pub async fn create_record_logic(
             min_tcb_tee: Set(req.min_tcb_tee as i32),
             min_tcb_snp: Set(req.min_tcb_snp as i32),
             min_tcb_microcode: Set(req.min_tcb_microcode as i32),
-            kernel_params: Set(req.kernel_params),
-            request_count: Set(0),
-            firmware_path: Set("firmware-code.fd".into()),
-            kernel_path: Set("vmlinuz".into()),
-            initrd_path: Set("initrd.img".into()),
+            kernel_params: Set(Some(req.kernel_params)),
+            firmware_path: Set(Some("firmware-code.fd".into())),
+            kernel_path: Set(Some("vmlinuz".into())),
+            initrd_path: Set(Some("initrd.img".into())),
         };
 
-        new_vm
+        new_record
             .insert(db)
             .await
-            .map_err(|e| format!("Failed to save record to database: {}", e))?;
+            .map_err(|e| format!("Failed to save attestation record: {}", e))?;
 
-        Ok(new_id)
+        // Insert vm_registration pointing at the record we just created.
+        // SQLite does not enforce FK constraints by default, so insertion order
+        // does not cause a constraint violation.
+        let new_registration = vm_registration::ActiveModel {
+            id: Set(reg_id.clone()),
+            os_name: Set(req.os_name),
+            enabled: Set(true),
+            request_count: Set(0),
+            current_record_id: Set(record_id.clone()),
+            pending_record_id: Set(None),
+            created_at: Set(now),
+        };
+
+        if let Err(e) = new_registration.insert(db).await {
+            // Roll back the attestation record we already inserted so the DB
+            // does not contain an orphaned row.
+            let _ = vm::Entity::delete_by_id(&record_id).exec(db).await;
+            return Err(format!("Failed to save registration: {}", e));
+        }
+
+        Ok(reg_id.clone())
     }
     .await;
 
-    // If successful, mark guard to keep the directory; otherwise it will be cleaned up on drop
+    // If successful, keep the artifact directory; otherwise it will be cleaned up on drop
     match &result {
         Ok(_) => cleanup_guard.keep(),
         Err(_) => {

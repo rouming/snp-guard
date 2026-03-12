@@ -462,7 +462,10 @@ pub async fn download_artifact(
     if file_name.contains("..") {
         return "Invalid path".into_response();
     }
-    let artifact_dir = state.data_paths.attestations_dir.join(&id);
+    let artifact_dir = match service_core::get_current_artifact_dir(&state, &id).await {
+        Ok(p) => p,
+        Err(e) => return format!("Record not found: {}", e).into_response(),
+    };
 
     // Generate artifact archive if needed
     let path = match artifacts::generate_artifact(&artifact_dir, &file_name) {

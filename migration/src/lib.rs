@@ -1,6 +1,8 @@
 pub use sea_orm_migration::prelude::*;
+
 mod m20250101_000001_create_vm_table;
 mod m20250201_000002_create_tokens_table;
+mod m20250301_000003_create_attestation_records_table;
 
 pub struct Migrator;
 
@@ -10,6 +12,7 @@ impl MigratorTrait for Migrator {
         vec![
             Box::new(m20250101_000001_create_vm_table::Migration),
             Box::new(m20250201_000002_create_tokens_table::Migration),
+            Box::new(m20250301_000003_create_attestation_records_table::Migration),
         ]
     }
 }

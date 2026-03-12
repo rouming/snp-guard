@@ -1,51 +1,59 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// Versioned attestation artifact snapshot for a VM registration.
+///
+/// Each record captures a specific set of launch artifacts (firmware, kernel,
+/// initrd, kernel params) together with the cryptographic material generated
+/// from them (measurement, id/auth keys and digests, image_id).
+///
+/// A VmRegistration always has exactly one current record and at most one
+/// pending record (created by a renewal call).
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "attestation_records")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String, // UUID
-    pub os_name: String,
-    pub request_count: i32,
+    /// Parent VmRegistration.
+    pub registration_id: String,
     #[sea_orm(column_type = "Binary(4096)", nullable)]
     pub unsealing_private_key_encrypted: Vec<u8>,
     pub vcpus: i32,
     pub vcpu_type: String,
-    pub enabled: bool, // Enable/Disable flag
     #[sea_orm(column_type = "Binary(16)")]
-    pub image_id: Vec<u8>, // Image ID (random 16 bytes) for attestation report matching
+    pub image_id: Vec<u8>, // 16-byte random identifier embedded in the SNP report
 
-    // Policy flags
-    pub allowed_debug: bool,      // Allow debug mode
-    pub allowed_migrate_ma: bool, // Allow migration with MA
-    pub allowed_smt: bool,        // Allow Simultaneous Multithreading
+    // Guest policy flags
+    pub allowed_debug: bool,
+    pub allowed_migrate_ma: bool,
+    pub allowed_smt: bool,
 
     // TCB minimum version requirements
-    pub min_tcb_bootloader: i32, // Minimum PSP bootloader version
-    pub min_tcb_tee: i32,        // Minimum SNP firmware version
-    pub min_tcb_snp: i32,        // Minimum SNP implementation version
-    pub min_tcb_microcode: i32,  // Minimum CPU microcode version
+    pub min_tcb_bootloader: i32,
+    pub min_tcb_tee: i32,
+    pub min_tcb_snp: i32,
+    pub min_tcb_microcode: i32,
 
     #[sea_orm(column_type = "Binary(48)")]
     pub id_key_digest: Vec<u8>,
-
     #[sea_orm(column_type = "Binary(48)")]
     pub auth_key_digest: Vec<u8>,
 
     #[sea_orm(column_type = "Binary(4096)", nullable)]
-    pub id_key_encrypted: Option<Vec<u8>>, // HPKE-encrypted ID key
-
+    pub id_key_encrypted: Option<Vec<u8>>,
     #[sea_orm(column_type = "Binary(4096)", nullable)]
-    pub auth_key_encrypted: Option<Vec<u8>>, // HPKE-encrypted Auth key
+    pub auth_key_encrypted: Option<Vec<u8>>,
 
     pub created_at: DateTime,
-    pub kernel_params: String,
 
-    // Stored filenames relative to artifact dir
-    pub firmware_path: String,
-    pub kernel_path: String,
-    pub initrd_path: String,
+    // Artifact paths relative to the record's artifact directory.
+    // Nullable because a renewal may update only a subset of artifacts;
+    // absent fields are inherited from the previous current record on the
+    // server side before measurement is computed.
+    pub firmware_path: Option<String>,
+    pub kernel_path: Option<String>,
+    pub initrd_path: Option<String>,
+    pub kernel_params: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
