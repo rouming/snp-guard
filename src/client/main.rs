@@ -188,7 +188,7 @@ async fn main() -> Result<()> {
             ca_cert,
             action,
         } => run_manage(url.as_deref(), ca_cert.as_deref(), action).await,
-        Command::Config { action } => run_config(action),
+        Command::Config { action } => run_config(action).await,
         Command::DeriveKey {
             vmrk,
             mix_policy,
@@ -787,7 +787,7 @@ fn get_user_confirmation(prompt: &str) -> Result<bool> {
     Ok(answer == "yes" || answer == "y")
 }
 
-fn run_config(action: ConfigCmd) -> Result<()> {
+async fn run_config(action: ConfigCmd) -> Result<()> {
     match action {
         ConfigCmd::Login { token, url } => {
             let mut cfg = load_config()?;
@@ -802,18 +802,19 @@ fn run_config(action: ConfigCmd) -> Result<()> {
                 .build()
                 .context("Failed to create insecure HTTP client")?;
 
-            let public_info_resp = futures::executor::block_on(
-                insecure_client
-                    .get(format!("{}/v1/public/info", base))
-                    .send(),
-            )
-            .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
+            let public_info_resp = insecure_client
+                .get(format!("{}/v1/public/info", base))
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
 
             let public_info_resp = public_info_resp
                 .error_for_status()
                 .map_err(|e| anyhow!("Server returned error: {}", e))?;
 
-            let public_info_text = futures::executor::block_on(public_info_resp.text())
+            let public_info_text = public_info_resp
+                .text()
+                .await
                 .map_err(|e| anyhow!("Failed to read server response: {}", e))?;
             let public_info: serde_json::Value = serde_json::from_str(&public_info_text)
                 .map_err(|e| anyhow!("Failed to parse server response as JSON: {}", e))?;
@@ -847,13 +848,12 @@ fn run_config(action: ConfigCmd) -> Result<()> {
             // Validate token via health endpoint using received CA cert
             println!("\nValidating token with server...");
             let client = build_client_from_bytes(ca_cert.as_bytes())?;
-            let resp = futures::executor::block_on(
-                client
-                    .get(format!("{}/v1/health", base))
-                    .bearer_auth(&token)
-                    .send(),
-            )
-            .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
+            let resp = client
+                .get(format!("{}/v1/health", base))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .map_err(|e| anyhow!("Failed to contact server: {}", e))?;
 
             if !resp.status().is_success() {
                 println!("Failed to validate token: status {}", resp.status());
