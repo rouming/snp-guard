@@ -9,7 +9,7 @@ impl MigrationTrait for Migration {
         manager
             .create_table(
                 Table::create()
-                    .table(Alias::new("attestation_records"))
+                    .table(Alias::new("vm_registrations"))
                     .if_not_exists()
                     .col(
                         ColumnDef::new(Alias::new("id"))
@@ -19,33 +19,26 @@ impl MigrationTrait for Migration {
                     )
                     .col(ColumnDef::new(Alias::new("os_name")).string().not_null())
                     .col(
-                        ColumnDef::new(Alias::new("request_count"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("unsealing_private_key_encrypted"))
-                            .binary_len(4096)
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("vcpus"))
-                            .integer()
-                            .not_null()
-                            .default(4),
-                    )
-                    .col(ColumnDef::new(Alias::new("vcpu_type")).string().not_null())
-                    .col(
                         ColumnDef::new(Alias::new("enabled"))
                             .boolean()
                             .not_null()
                             .default(true),
                     )
                     .col(
-                        ColumnDef::new(Alias::new("image_id"))
-                            .binary_len(16)
+                        ColumnDef::new(Alias::new("request_count"))
+                            .integer()
+                            .not_null()
+                            .default(0),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("current_record_id"))
+                            .string()
                             .not_null(),
+                    )
+                    .col(
+                        ColumnDef::new(Alias::new("pending_record_id"))
+                            .string()
+                            .null(),
                     )
                     .col(
                         ColumnDef::new(Alias::new("id_key_digest"))
@@ -68,71 +61,16 @@ impl MigrationTrait for Migration {
                             .null(),
                     )
                     .col(
-                        ColumnDef::new(Alias::new("allowed_debug"))
-                            .boolean()
-                            .not_null()
-                            .default(false),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("allowed_migrate_ma"))
-                            .boolean()
-                            .not_null()
-                            .default(false),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("allowed_smt"))
-                            .boolean()
-                            .not_null()
-                            .default(true),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("min_tcb_bootloader"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("min_tcb_tee"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("min_tcb_snp"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("min_tcb_microcode"))
-                            .integer()
-                            .not_null()
-                            .default(0),
-                    )
-                    .col(
                         ColumnDef::new(Alias::new("created_at"))
                             .date_time()
                             .not_null(),
                     )
-                    .col(
-                        ColumnDef::new(Alias::new("firmware_path"))
-                            .string()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("kernel_path"))
-                            .string()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("initrd_path"))
-                            .string()
-                            .not_null(),
-                    )
-                    .col(
-                        ColumnDef::new(Alias::new("kernel_params"))
-                            .string()
-                            .not_null(),
+                    .index(
+                        Index::create()
+                            .name("idx_vm_registrations_digests_unique")
+                            .col(Alias::new("id_key_digest"))
+                            .col(Alias::new("auth_key_digest"))
+                            .unique(),
                     )
                     .to_owned(),
             )
@@ -143,7 +81,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
-                    .table(Alias::new("attestation_records"))
+                    .table(Alias::new("vm_registrations"))
                     .to_owned(),
             )
             .await

@@ -469,7 +469,10 @@ pub async fn download_artifact(
         None => return "Invalid filename".into_response(),
     };
 
-    let artifact_dir = state.data_paths.attestations_dir.join(&id);
+    let artifact_dir = match service_core::get_current_artifact_dir(&state, &id).await {
+        Ok(p) => p,
+        Err(e) => return format!("Record not found: {}", e).into_response(),
+    };
 
     // For archive formats (.tar.gz / .squashfs) regenerate on demand;
     // for plain files just resolve the path directly.
