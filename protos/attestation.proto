@@ -25,6 +25,47 @@ message AttestationResponse {
   string error_message = 4;         // Error message if success is false
 }
 
+// Renewal messages (guest-initiated, sent from inside the running VM)
+//
+// Binding: report_data = SHA512(payload_bytes), where payload_bytes is the
+// pre-serialized RenewRequestPayload.  The server hashes these exact bytes
+// without re-encoding, so determinism and forward compatibility are guaranteed.
+message RenewRequest {
+  bytes report_data = 1;  // SEV-SNP attestation report (binary)
+  bytes payload_bytes = 2; // pre-serialized RenewRequestPayload
+}
+
+// Serialized into RenewRequest.payload_bytes; all fields are hardware-signed.
+// Absent optional artifact fields are inherited from the current record on the server.
+message RenewRequestPayload {
+  bytes server_nonce = 1;           // Server nonce (64 bytes); proves freshness
+  bytes client_nonce = 2;           // Client nonce (64 bytes); prevents response replay
+  optional bytes firmware = 3;
+  optional bytes kernel = 4;
+  optional bytes initrd = 5;
+  optional string kernel_params = 6;
+}
+
+message RenewResponse {
+  bool success = 1;
+  optional string error_message = 2;
+  optional bytes signature = 3;    // Ed25519 over payload_bytes; verify BEFORE deserializing
+  optional bytes payload_bytes = 4; // pre-serialized RenewResponsePayload
+}
+
+// Serialized into RenewResponse.payload_bytes; covered by the Ed25519 signature.
+// Client must verify signature first, then check client_nonce matches the request.
+message RenewResponsePayload {
+  string id = 1;                    // UUID of the newly created pending record
+  bytes client_nonce = 2;           // Echoed from RenewRequestPayload
+  repeated ArtifactEntry artifacts = 3;
+}
+
+message ArtifactEntry {
+  string filename = 1;  // e.g. "id-block.bin", "id-auth.bin", "launch-config.json"
+  bytes content = 2;
+}
+
 // Management messages
 message ListRecordsRequest {
   // Empty - lists all records
