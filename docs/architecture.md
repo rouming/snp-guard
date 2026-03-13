@@ -85,7 +85,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 **Responsibilities**:
 - Generate random nonces for attestation
 - Verify attestation reports using AMD's certificate chain (via integrated `snpguest`)
-- Look up attestation records by image_id and key digests
+- Look up VM registrations by key digests and attestation records by image_id (two-step)
 - Decrypt sealed VMK using unsealing private key
 - Encrypt VMK with ephemeral session key for secure delivery
 
@@ -94,7 +94,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 2. **Certificate Fetching**: Retrieves CA and VCEK certificates from AMD KDS
 3. **Report Verification**: Validates report signatures and structure
 4. **Key Digest Extraction**: Extracts IMAGE_ID, ID_KEY_DIGEST and AUTHOR_KEY_DIGEST from reports
-5. **Record Lookup**: Finds matching attestation records by image_id and key digests
+5. **Record Lookup**: Two-step -- finds vm_registration by key digests (stable VM identity), then finds attestation_record by image_id + registration_id (specific artifact snapshot)
 6. **VMK Decryption**: Decrypts sealed VMK blob using unsealing private key (stored encrypted in DB)
 7. **Session Encryption**: Encrypts VMK with ephemeral session key using client's public key (HPKE)
 8. **Artifact Signing**: Signs artifacts delivered to guests using the server's Ed25519 identity key
@@ -173,8 +173,9 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
    │       ├─> Verify stateless nonce from report.report_data
    │       ├─> Verify hash binding (SHA512(server_nonce || client_pub_bytes))
    │       ├─> Extract image_id, id_key_digest, auth_key_digest from report
-   │       ├─> Look up record by image_id and key digests
-   │       ├─> Check if record is enabled
+   │       ├─> Step 1: look up vm_registration by id_key_digest + auth_key_digest
+   │       ├─> Check if registration is enabled
+   │       ├─> Step 2: look up attestation_record by image_id + registration_id
    │       ├─> Check TCB versions meet minimum requirements
    │       ├─> Check VMPL (must be 0)
    │       ├─> Fetch AMD certificates and verify report signature
@@ -239,13 +240,18 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
        ├─> Securely deletes key files from artifacts folder
        │   - Plaintext keys are removed after encryption
        │
-       └─> Saves record to database
-           - id, os_name, vcpu_type, image_id
+       └─> Saves to database (two rows)
+           vm_registration row:
+           - id, os_name, enabled, request_count
+           - current_record_id (FK to attestation_record)
+           - id_key_digest, auth_key_digest (stable VM identity, for lookup)
+           - id_key_encrypted, auth_key_encrypted (HPKE-encrypted, stored once)
+           attestation_record row:
+           - id, registration_id (FK to vm_registration)
+           - image_id (fresh UUID per snapshot, for attestation lookup)
            - unsealing_private_key_encrypted (HPKE-encrypted)
-           - id_key_digest, auth_key_digest (computed from plaintext keys)
-           - id_key_encrypted, auth_key_encrypted (HPKE-encrypted, stored in DB)
-           - kernel_params, enabled, request_count
-           - TCB minimums, policy flags
+           - vcpu_type, vcpus, kernel_params, policy flags, TCB minimums
+           - firmware_path, kernel_path, initrd_path
 ```
 
 ## Security Model
@@ -262,7 +268,7 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 1. **TLS with Certificate Verification**: All communication uses HTTPS with verified certificates
 2. **Nonce-based Reports**: Each report includes a fresh nonce from the server
 3. **HTTP Basic Auth**: Management UI requires authentication
-4. **Key Digest Lookup**: Only records with matching key digests can be verified
+4. **Two-Step Lookup**: VM identity (key digests on vm_registration) is verified before the artifact snapshot (image_id on attestation_record); both must match a real DB row
 5. **Enable/Disable Toggle**: Records can be disabled without deletion
 
 ### Trust Boundaries
@@ -288,33 +294,46 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 
 ## Database Schema
 
+### vm_registrations
+
+```sql
+CREATE TABLE vm_registrations (
+    id TEXT PRIMARY KEY,                     -- UUID (client-facing ID)
+    os_name TEXT NOT NULL,                   -- Descriptive name
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,   -- Enable/disable flag
+    request_count INTEGER NOT NULL DEFAULT 0, -- Number of successful attestations
+    current_record_id TEXT NOT NULL,         -- FK to active attestation_record
+    pending_record_id TEXT,                  -- FK to pending attestation_record (renewal in flight)
+    id_key_digest BLOB NOT NULL,             -- ID-Block key digest (48 bytes) -- used for lookup
+    auth_key_digest BLOB NOT NULL,           -- Auth-Block key digest (48 bytes) -- used for lookup
+    id_key_encrypted BLOB,                   -- HPKE-encrypted ID-Block key (stable, set once)
+    auth_key_encrypted BLOB,                 -- HPKE-encrypted Auth-Block key (stable, set once)
+    created_at DATETIME NOT NULL
+);
+```
+
 ### attestation_records
 
 ```sql
 CREATE TABLE attestation_records (
-    id TEXT PRIMARY KEY,                    -- UUID
-    os_name TEXT NOT NULL,                   -- Descriptive name
-    request_count INTEGER NOT NULL DEFAULT 0, -- Number of successful attestations
+    id TEXT PRIMARY KEY,                     -- UUID (internal, names the artifact directory)
+    registration_id TEXT NOT NULL,           -- FK to vm_registrations
     unsealing_private_key_encrypted BLOB NOT NULL, -- HPKE-encrypted unsealing private key
     vcpu_type TEXT NOT NULL,                 -- EPYC variant
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,   -- Enable/disable flag
-    image_id BLOB NOT NULL,                  -- Random 16-byte ASCII image ID
-    id_key_digest BLOB NOT NULL,             -- ID-Block key digest (48 bytes, computed from randomly generated key)
-    auth_key_digest BLOB NOT NULL,           -- Auth-Block key digest (48 bytes, computed from randomly generated key)
-    id_key_encrypted BLOB,                   -- HPKE-encrypted ID-Block key (randomly generated, encrypted with ingestion key)
-    auth_key_encrypted BLOB,                 -- HPKE-encrypted Auth-Block key (randomly generated, encrypted with ingestion key)
-    created_at DATETIME NOT NULL,            -- Creation timestamp
-    kernel_params TEXT NOT NULL,             -- Full kernel command line
-    firmware_path TEXT NOT NULL,             -- Relative path to firmware
-    kernel_path TEXT NOT NULL,               -- Relative path to kernel
-    initrd_path TEXT NOT NULL,               -- Relative path to initrd
-    allowed_debug BOOLEAN NOT NULL,          -- Allow debug mode
-    allowed_migrate_ma BOOLEAN NOT NULL,      -- Allow migration with MA
-    allowed_smt BOOLEAN NOT NULL,             -- Allow Simultaneous Multithreading
-    min_tcb_bootloader INTEGER NOT NULL,      -- Minimum PSP bootloader version
-    min_tcb_tee INTEGER NOT NULL,            -- Minimum SNP firmware version
-    min_tcb_snp INTEGER NOT NULL,             -- Minimum SNP implementation version
-    min_tcb_microcode INTEGER NOT NULL       -- Minimum CPU microcode version
+    vcpus INTEGER NOT NULL DEFAULT 4,
+    image_id BLOB NOT NULL,                  -- Random 16-byte ID, fresh per snapshot -- used for lookup
+    allowed_debug BOOLEAN NOT NULL,
+    allowed_migrate_ma BOOLEAN NOT NULL,
+    allowed_smt BOOLEAN NOT NULL DEFAULT TRUE,
+    min_tcb_bootloader INTEGER NOT NULL DEFAULT 0,
+    min_tcb_tee INTEGER NOT NULL DEFAULT 0,
+    min_tcb_snp INTEGER NOT NULL DEFAULT 0,
+    min_tcb_microcode INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL,
+    kernel_params TEXT,                      -- nullable: absent means inherit from previous record
+    firmware_path TEXT,
+    kernel_path TEXT,
+    initrd_path TEXT
 );
 ```
 
@@ -330,7 +349,12 @@ CREATE TABLE attestation_records (
   encrypt the unsealing private key before it is uploaded to the server. Also backs the
   `ingestion_pub_key` field of `GET /v1/public/info`.
 
-- **ID and Auth Keys**: Randomly generated secp384r1 EC private keys created once when an attestation record is created. They are encrypted with the ingestion public key (HPKE) and stored in the database (`id_key_encrypted`, `auth_key_encrypted`). The plaintext keys are securely deleted after encryption. Key digests are computed from the plaintext keys before encryption and stored for lookup purposes.
+- **ID and Auth Keys**: Randomly generated secp384r1 EC private keys created once at initial
+  registration. They are encrypted with the ingestion public key (HPKE) and stored on
+  `vm_registrations` (`id_key_encrypted`, `auth_key_encrypted`). The plaintext keys are
+  securely deleted after encryption. Key digests are stored alongside and used as the first
+  step of attestation lookup (find vm_registration by digest pair). Renewals reuse the same
+  keypair -- no new keys are generated.
 
 - **VMK (Volume Master Key)**: Not stored in the database. Instead:
   - The VMK is sealed (encrypted) with the unsealing public key during image conversion

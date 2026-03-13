@@ -122,8 +122,10 @@ message AttestationResponse {
 2. Parse report with sev call from bytes
 3. Verify the stateless nonce from the report.report_data - ensure it is signed by , signed with an ephemeral secret, and has not expired within 60 seconds.
 4. Verify hash binding - SHA512(server_nonce || client_pub_bytes) must match report.report_data (64 bytes)
-5. Find attestation record by report.image_id, report.id_key_digest, report.auth_key_digest
-6. Check if record is not disabled
+5. Two-step record lookup:
+   a. Find vm_registration by report.id_key_digest + report.auth_key_digest (stable VM identity)
+   b. Find attestation_record by report.image_id + registration_id (specific artifact snapshot)
+6. Check if registration is not disabled
 7. Check TCB (bootloader, TEE, SNP, microcode versions meet minimum requirements)
 8. Check VMPL (must be 0 for kernel level)
 9. Verify report certs (verify report signature using integrated `snpguest` which fetches AMD certificates from KDS)
