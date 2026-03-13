@@ -132,6 +132,13 @@ enum ManageCmd {
         format: String,
         #[arg(long, value_name = "PATH")]
         out_bundle: PathBuf,
+        /// Export the pending renewal artifacts instead of the current ones
+        #[arg(long, default_value_t = false)]
+        pending: bool,
+    },
+    /// Discard a pending renewal for a registration
+    DiscardPending {
+        id: String,
     },
     Register {
         #[arg(long)]
@@ -531,20 +538,38 @@ async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd)
             id,
             format,
             out_bundle,
+            pending,
         } => {
             let endpoint = match format.as_str() {
                 "tar" => "export/tar",
                 "squash" | "squashfs" => "export/squash",
                 _ => unreachable!(),
             };
-            let resp = client
-                .get(format!("{}/v1/records/{}/{}", base, id, endpoint))
-                .bearer_auth(&token)
-                .send()
-                .await?;
+            let mut url = format!("{}/v1/records/{}/{}", base, id, endpoint);
+            if pending {
+                url.push_str("?pending=true");
+            }
+            let resp = client.get(url).bearer_auth(&token).send().await?;
             let resp = ensure_success(resp, "export").await?;
             let bytes = resp.bytes().await?;
             fs::write(&out_bundle, &bytes)?;
+        }
+        ManageCmd::DiscardPending { id } => {
+            let resp = client
+                .post(format!("{}/v1/records/{}/discard-pending", base, id))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            let resp = ensure_success(resp, "discard-pending").await?;
+            let bytes = resp.bytes().await?;
+            let r = common::snpguard::DeleteRecordResponse::decode(&bytes[..])?;
+            if !r.success {
+                bail!(
+                    "discard-pending failed: {}",
+                    r.error_message.unwrap_or_default()
+                );
+            }
+            println!("pending renewal discarded");
         }
         ManageCmd::Register {
             os_name,
