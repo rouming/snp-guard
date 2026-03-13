@@ -785,6 +785,25 @@ pub async fn get_current_artifact_dir(
         .join(&reg.current_record_id))
 }
 
+/// Returns the artifact directory path for the pending record of a registration.
+/// Returns an error if there is no pending renewal.
+pub async fn get_pending_artifact_dir(
+    state: &Arc<ServiceState>,
+    registration_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    let reg = vm_registration::Entity::find_by_id(registration_id)
+        .one(&state.db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "Registration not found".to_string())?;
+
+    let pending_id = reg
+        .pending_record_id
+        .ok_or_else(|| "No pending renewal for this registration".to_string())?;
+
+    Ok(state.data_paths.attestations_dir.join(&pending_id))
+}
+
 fn hash_token(token: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut rand::thread_rng());
     Argon2::default()

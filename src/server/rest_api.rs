@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{auth, MAX_BODY_BYTES};
 use axum::{
     body::{Body, Bytes},
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -349,30 +349,55 @@ async fn disable_record(
     toggle_record(state, id, false).await
 }
 
-async fn export_tar(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+#[derive(serde::Deserialize, Default)]
+struct ExportParams {
+    #[serde(default)]
+    pending: bool,
+}
+
+async fn export_tar(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<ExportParams>,
+) -> Response {
     if !is_valid_record_or_token_id(&id) {
         return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
     }
-    export_artifact(&state, &id, "artifacts.tar.gz").await
+    export_artifact(&state, &id, "artifacts.tar.gz", params.pending).await
 }
 
-async fn export_squash(State(state): State<Arc<ServiceState>>, Path(id): Path<String>) -> Response {
+async fn export_squash(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Query(params): Query<ExportParams>,
+) -> Response {
     if !is_valid_record_or_token_id(&id) {
         return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
     }
-    export_artifact(&state, &id, "artifacts.squashfs").await
+    export_artifact(&state, &id, "artifacts.squashfs", params.pending).await
 }
 
-async fn export_artifact(state: &Arc<ServiceState>, id: &str, filename: &str) -> Response {
+async fn export_artifact(
+    state: &Arc<ServiceState>,
+    id: &str,
+    filename: &str,
+    pending: bool,
+) -> Response {
     use axum::body::Body;
     use tokio_util::io::ReaderStream;
 
-    let artifact_dir = match crate::service_core::get_current_artifact_dir(state, id).await {
-        Ok(p) => p,
-        Err(e) => return proto_error(StatusCode::NOT_FOUND, &e),
+    let artifact_dir = if pending {
+        match crate::service_core::get_pending_artifact_dir(state, id).await {
+            Ok(p) => p,
+            Err(e) => return proto_error(StatusCode::NOT_FOUND, &e),
+        }
+    } else {
+        match crate::service_core::get_current_artifact_dir(state, id).await {
+            Ok(p) => p,
+            Err(e) => return proto_error(StatusCode::NOT_FOUND, &e),
+        }
     };
 
-    // Generate artifact archive
     let path = match crate::artifacts::generate_artifact(&artifact_dir, filename) {
         Ok(p) => p,
         Err(e) => return proto_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
