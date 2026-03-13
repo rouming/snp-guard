@@ -91,6 +91,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         identity_key: identity_key.clone(),
     });
 
+    // Startup GC: remove artifact directories that have no matching DB row.
+    business_logic::gc_orphaned_artifacts(&conn, &data_paths).await;
+
     // Master password (web management)
     let master_auth = Arc::new(master_password::load_or_create_master_password(
         &data_paths.master_password_hash,

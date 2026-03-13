@@ -700,3 +700,53 @@ pub async fn renew_record_logic(
 
     result
 }
+
+/// Scan the attestations directory for subdirectories that no longer correspond to any
+/// attestation_record row and remove them.  This handles leftovers from crashes, failed
+/// transactions, or manual DB edits.  Called once at server startup; errors are logged
+/// but never fatal.
+pub async fn gc_orphaned_artifacts(db: &DatabaseConnection, paths: &DataPaths) {
+    let dir = &paths.attestations_dir;
+
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            eprintln!("GC: could not read attestations dir {:?}: {}", dir, e);
+            return;
+        }
+    };
+
+    // Collect only the record IDs that are actually referenced by a registration
+    // (current_record_id or pending_record_id).  Rows that exist in vm but are
+    // not pointed to by any registration are unreachable leftovers.
+    let reachable_ids: std::collections::HashSet<String> =
+        match vm_registration::Entity::find().all(db).await {
+            Ok(regs) => regs
+                .into_iter()
+                .flat_map(|r| std::iter::once(r.current_record_id).chain(r.pending_record_id))
+                .collect(),
+            Err(e) => {
+                eprintln!("GC: could not query vm_registrations: {}", e);
+                return;
+            }
+        };
+
+    for entry in read_dir.flatten() {
+        let entry_path = entry.path();
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let dir_name = match entry_path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if reachable_ids.contains(&dir_name) {
+            continue;
+        }
+        eprintln!(
+            "GC: removing orphaned artifact directory {:?} (not in DB)",
+            entry_path
+        );
+        remove_artifact_dir(dir, &entry_path);
+    }
+}
