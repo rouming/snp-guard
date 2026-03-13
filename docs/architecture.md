@@ -196,7 +196,8 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 
 Note: if the attested image_id matches the registration's pending_record_id (i.e. the VM
 booted with a renewed artifact set), the server automatically promotes the pending record to
-current and deletes the old one after the VMK is delivered.
+current and deletes the old one after the VMK is delivered.  A pending renewal can be
+cancelled before relaunch via POST /v1/records/{id}/discard-pending (management auth required).
 
 ### Record Creation Flow
 

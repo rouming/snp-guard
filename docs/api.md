@@ -151,12 +151,14 @@ Endpoints (protobuf payloads, `application/x-protobuf`):
 - `GET/POST /v1/records` (list/create)
 - `GET/DELETE /v1/records/{id}` (view/delete)
 - `POST /v1/records/{id}/enable`, `/disable`
+- `POST /v1/records/{id}/discard-pending`
 - `GET/POST /v1/tokens`, `POST /v1/tokens/{id}/revoke`
 
 **Renewal**: A running VM can update its kernel, initrd, firmware, or kernel parameters without
 re-registering.  Use `POST /v1/attest/renew` (public endpoint, authenticated via SNP report).
 The server creates a pending attestation record; the pending record is promoted to current
-automatically on the next successful attestation using the new image_id.
+automatically on the next successful attestation using the new image_id.  To cancel a pending
+renewal before the VM is relaunched, use `POST /v1/records/{id}/discard-pending`.
 
 **Note**: Management records are immutable via the management API. Use the renewal flow for
 in-place artifact updates on running VMs.
