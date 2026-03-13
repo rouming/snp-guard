@@ -265,7 +265,13 @@ pub async fn create_record_logic(
 
         let now = chrono::Utc::now().naive_utc();
 
-        // Insert attestation record first (artifact directory is named after record_id)
+        // Insert both the attestation record and the vm_registration in one transaction.
+        // Artifact directory is named after record_id; reg_id is the client-facing ID.
+        let txn = db
+            .begin()
+            .await
+            .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
         let new_record = vm::ActiveModel {
             id: Set(record_id.clone()),
             registration_id: Set(reg_id.clone()),
@@ -288,7 +294,7 @@ pub async fn create_record_logic(
         };
 
         new_record
-            .insert(db)
+            .insert(&txn)
             .await
             .map_err(|e| format!("Failed to save attestation record: {}", e))?;
 
@@ -310,12 +316,14 @@ pub async fn create_record_logic(
             created_at: Set(now),
         };
 
-        if let Err(e) = new_registration.insert(db).await {
-            // Roll back the attestation record we already inserted so the DB
-            // does not contain an orphaned row.
-            let _ = vm::Entity::delete_by_id(&record_id).exec(db).await;
-            return Err(format!("Failed to save registration: {}", e));
-        }
+        new_registration
+            .insert(&txn)
+            .await
+            .map_err(|e| format!("Failed to save registration: {}", e))?;
+
+        txn.commit()
+            .await
+            .map_err(|e| format!("Failed to commit record creation: {}", e))?;
 
         Ok(reg_id.clone())
     }

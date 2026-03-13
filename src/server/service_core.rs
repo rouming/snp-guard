@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
 };
 
 use crate::config::DataPaths;
@@ -662,17 +663,27 @@ pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result
         record_ids.push(pending_id.clone());
     }
 
-    // Delete attestation records before the registration (FK order)
+    // Delete attestation records and the registration in one transaction (FK order:
+    // records first, then registration).
+    let txn = state
+        .db
+        .begin()
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
     for record_id in &record_ids {
         vm::Entity::delete_by_id(record_id)
-            .exec(&state.db)
+            .exec(&txn)
             .await
             .map_err(|e| format!("Database error: {}", e))?;
     }
 
-    // Delete the registration
     vm_registration::Entity::delete_by_id(&id)
-        .exec(&state.db)
+        .exec(&txn)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    txn.commit()
         .await
         .map_err(|e| format!("Database error: {}", e))?;
 
