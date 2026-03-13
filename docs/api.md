@@ -90,6 +90,43 @@ message NonceResponse {
 - `400 Bad Request`: Invalid protobuf message
 - `500 Internal Server Error`: Server error generating nonce
 
+#### POST `/v1/attest/renew`
+
+Request a renewal of the current attestation record from inside a running VM.  The VM provides
+its SNP attestation report (binding the renewal request payload) and any artifacts it wants to
+update.  Fields not provided are inherited from the current record on the server.
+
+**Request**:
+```protobuf
+message RenewRequest {
+  bytes report_data = 1;        // SEV-SNP attestation report (binary)
+  bytes server_nonce = 2;       // Server nonce (64 bytes) used for binding
+  optional bytes firmware = 3;  // New firmware (omit to inherit current)
+  optional bytes kernel = 4;    // New kernel (omit to inherit current)
+  optional bytes initrd = 5;    // New initrd (omit to inherit current)
+  optional string kernel_params = 6; // New kernel parameters (omit to inherit current)
+}
+```
+
+**Binding protocol**: `report_data` must equal `SHA512(server_nonce || commitment_bytes)` where
+`commitment_bytes` is the `RenewRequest` serialized with `report_data` and `server_nonce` cleared.
+
+**Response** (200 OK):
+```protobuf
+message RenewResponse {
+  bool success = 1;
+  optional string error_message = 2;
+}
+```
+
+On success the server creates a pending attestation record with a fresh `image_id` and sets
+`vm_registration.pending_record_id`.  The pending record is promoted to current automatically
+on the next successful attestation that presents the new `image_id`.
+
+**Error Responses**:
+- `400 Bad Request`: Invalid protobuf message
+- `500 Internal Server Error`: Server error
+
 #### POST `/v1/attest/report`
 
 Verify an attestation report, unseal VMK from sealed blob, and return session-encrypted VMK if successful.
@@ -202,9 +239,13 @@ View an attestation record (read-only).
 **Parameters**:
 - `id`: UUID of the attestation record
 
-**Response**: HTML page displaying record details (read-only)
+**Response**: HTML page displaying record details.  When a renewal is in flight the page shows
+an amber banner with the pending-since timestamp, a pending artifacts section with download
+links, and a Discard Pending button.
 
-**Note**: Attestation records are immutable. To make changes, delete this record and create a new one.
+**Note**: Boot artifacts (kernel, initrd, firmware, kernel parameters) are updated via the
+renewal flow (`snpguard-client attest renew` from inside the running VM), not by editing records
+directly.  To replace a record entirely, delete it and create a new one.
 
 #### POST `/toggle/:id`
 
@@ -226,6 +267,10 @@ Download an artifact file.
 - `id`: UUID of the attestation record
 - `file`: Filename to download
 
+**Query parameters**:
+- `pending=true`: Serve the file from the pending renewal artifact directory instead of the
+  current one.  Returns an error if no renewal is in flight for this record.
+
 **Available Files**:
 - `launch-config.json`: Launch configuration (vCPU model, count, guest policy)
 - `id-block.bin`: ID-Block binary
@@ -234,8 +279,8 @@ Download an artifact file.
 - `vmlinuz`: Kernel binary
 - `initrd.img`: Initrd image
 - `kernel-params.txt`: Kernel parameters
-- `artifacts.tar.gz`: Tarball with all files
-- `artifacts.squashfs`: SquashFS image with all files
+- `artifacts.tar.gz`: Tarball with all files (regenerated on every request)
+- `artifacts.squashfs`: SquashFS image with all files (regenerated on every request)
 
 **Response**: Binary file download
 

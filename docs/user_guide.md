@@ -367,7 +367,9 @@ cargo run --bin snpguard-client manage delete <record-id>
 
 This permanently removes the record and all associated artifacts.
 
-**Note**: Attestation records are **immutable**. To make changes, delete the old record and create a new one with updated values.
+**Note**: To update boot artifacts (kernel, initrd, firmware, kernel parameters) on a running VM,
+use the renewal flow (`snpguard-client attest renew`) instead of deleting and re-creating the record.
+Deletion is permanent and removes all associated artifacts.
 
 ## Using the Client
 
@@ -392,12 +394,13 @@ This permanently removes the record and all associated artifacts.
 
 ### Management Commands
 
-- `manage list [--json]`: List all attestation records
-- `manage show <id> [--json]`: Show details of a specific attestation record
+- `manage list [--json]`: List all attestation records (RENEWAL column shows pending status)
+- `manage show <id> [--json]`: Show details of a specific attestation record (prints pending-since when a renewal is in flight)
 - `manage enable <id>`: Enable an attestation record
 - `manage disable <id>`: Disable an attestation record
-- `manage delete <id>`: Delete an attestation record
-- `manage export --id <id> --format <tar|squash|squashfs> --out-bundle <PATH>`: Export artifacts bundle
+- `manage delete <id>`: Delete an attestation record and all associated artifacts
+- `manage discard-pending <id>`: Cancel a pending renewal (clears the pending record)
+- `manage export --id <id> --format <tar|squash|squashfs> --out-bundle <PATH>`: Export current artifacts bundle
 - `manage register`: Register a new attestation record (see section 5 above for details)
 
 All management commands use stored config by default (from `config login`), or provide `--url` and `--ca-cert` to override.
