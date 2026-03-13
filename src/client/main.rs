@@ -970,7 +970,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             min_tcb_tee: u32,
             min_tcb_snp: u32,
             min_tcb_microcode: u32,
-            image_id: String,
             created_at: &'a str,
         }
         let jr = JsonRecord {
@@ -991,7 +990,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
             min_tcb_tee: r.min_tcb_tee,
             min_tcb_snp: r.min_tcb_snp,
             min_tcb_microcode: r.min_tcb_microcode,
-            image_id: hex::encode(&r.image_id),
             created_at: &r.created_at,
         };
         let val = serde_json::to_string_pretty(&jr)?;
@@ -1014,7 +1012,6 @@ fn print_record(r: &common::snpguard::AttestationRecord, json: bool) -> Result<(
         print_kv("Min TCB TEE", &r.min_tcb_tee.to_string());
         print_kv("Min TCB SNP", &r.min_tcb_snp.to_string());
         print_kv("Min TCB Microcode", &r.min_tcb_microcode.to_string());
-        print_kv("Image ID", &hex::encode(&r.image_id));
         print_kv("Created At", &r.created_at);
     }
     Ok(())

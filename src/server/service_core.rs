@@ -434,7 +434,6 @@ fn build_proto_record(reg: vm_registration::Model, rec: vm::Model) -> Attestatio
         firmware_path: rec.firmware_path.unwrap_or_default(),
         kernel_path: rec.kernel_path.unwrap_or_default(),
         initrd_path: rec.initrd_path.unwrap_or_default(),
-        image_id: rec.image_id,
         allowed_debug: rec.allowed_debug,
         allowed_migrate_ma: rec.allowed_migrate_ma,
         allowed_smt: rec.allowed_smt,
