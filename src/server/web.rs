@@ -459,9 +459,16 @@ pub async fn download_artifact(
     Extension(state): Extension<Arc<ServiceState>>,
     Path((id, file_name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    if file_name.contains("..") {
-        return "Invalid path".into_response();
-    }
+    // Strip to bare filename to block both relative (../../) and absolute (/etc/)
+    // path traversal.  Path::new().file_name() returns None for "." and "..".
+    let file_name = match std::path::Path::new(&file_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+    {
+        Some(n) => n.to_string(),
+        None => return "Invalid filename".into_response(),
+    };
+
     let artifact_dir = state.data_paths.attestations_dir.join(&id);
 
     // For archive formats (.tar.gz / .squashfs) regenerate on demand;
