@@ -717,6 +717,10 @@ pub async fn delete_record_core(state: &Arc<ServiceState>, id: String) -> Result
     Ok(())
 }
 
+pub async fn discard_pending_core(state: &Arc<ServiceState>, id: String) -> Result<(), String> {
+    business_logic::discard_pending_logic(&state.db, &state.data_paths, &id).await
+}
+
 pub async fn toggle_enabled_core(
     state: &Arc<ServiceState>,
     req: ToggleEnabledRequest,

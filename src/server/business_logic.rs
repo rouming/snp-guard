@@ -395,6 +395,58 @@ pub async fn promote_pending_to_current(
     Ok(updated)
 }
 
+/// Discard a pending attestation record, cancelling an in-flight renewal.
+///
+/// Clears vm_registration.pending_record_id and deletes the pending
+/// attestation_record row in a single transaction, then removes the
+/// pending artifact directory from disk.
+pub async fn discard_pending_logic(
+    db: &DatabaseConnection,
+    paths: &DataPaths,
+    registration_id: &str,
+) -> Result<(), String> {
+    let registration = vm_registration::Entity::find_by_id(registration_id)
+        .one(db)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "Registration not found".to_string())?;
+
+    let pending_id = registration
+        .pending_record_id
+        .clone()
+        .ok_or_else(|| "No pending record to discard".to_string())?;
+
+    // Clear pending_record_id and delete the pending record in one transaction
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
+    let mut active: vm_registration::ActiveModel = registration.into();
+    active.pending_record_id = Set(None);
+    active
+        .update(&txn)
+        .await
+        .map_err(|e| format!("Failed to clear pending record id: {}", e))?;
+
+    vm::Entity::delete_by_id(&pending_id)
+        .exec(&txn)
+        .await
+        .map_err(|e| format!("Failed to delete pending record: {}", e))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| format!("Failed to commit discard: {}", e))?;
+
+    // Remove the pending artifact directory
+    remove_artifact_dir(
+        &paths.attestations_dir,
+        &paths.attestations_dir.join(&pending_id),
+    );
+
+    Ok(())
+}
+
 /// Artifact files included in a RenewResponse.
 ///
 /// Kernel, initrd, and kernel-params are excluded: the guest supplied them

@@ -47,6 +47,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
         .route("/records/:id", get(get_record).delete(delete_record))
         .route("/records/:id/enable", post(enable_record))
         .route("/records/:id/disable", post(disable_record))
+        .route("/records/:id/discard-pending", post(discard_pending))
         .route("/records/:id/export/tar", get(export_tar))
         .route("/records/:id/export/squash", get(export_squash))
         .route("/tokens", get(list_tokens).post(create_token))
@@ -301,6 +302,25 @@ async fn delete_record(State(state): State<Arc<ServiceState>>, Path(id): Path<St
         return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
     }
     match crate::service_core::delete_record_core(&state, id).await {
+        Ok(_) => proto_response(DeleteRecordResponse {
+            success: true,
+            error_message: None,
+        }),
+        Err(e) => proto_response(DeleteRecordResponse {
+            success: false,
+            error_message: Some(e),
+        }),
+    }
+}
+
+async fn discard_pending(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Response {
+    if !is_valid_record_or_token_id(&id) {
+        return proto_error(StatusCode::BAD_REQUEST, "Invalid record id");
+    }
+    match crate::service_core::discard_pending_core(&state, id).await {
         Ok(_) => proto_response(DeleteRecordResponse {
             success: true,
             error_message: None,
