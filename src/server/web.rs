@@ -464,10 +464,15 @@ pub async fn download_artifact(
     }
     let artifact_dir = state.data_paths.attestations_dir.join(&id);
 
-    // Generate artifact archive if needed
-    let path = match artifacts::generate_artifact(&artifact_dir, &file_name) {
-        Ok(p) => p,
-        Err(e) => return format!("Failed to generate artifact: {}", e).into_response(),
+    // For archive formats (.tar.gz / .squashfs) regenerate on demand;
+    // for plain files just resolve the path directly.
+    let path = if file_name.ends_with(".tar.gz") || file_name.ends_with(".squashfs") {
+        match artifacts::generate_artifact(&artifact_dir, &file_name) {
+            Ok(p) => p,
+            Err(e) => return format!("Failed to generate artifact: {}", e).into_response(),
+        }
+    } else {
+        artifact_dir.join(&file_name)
     };
 
     match tokio::fs::File::open(path).await {
