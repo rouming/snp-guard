@@ -333,6 +333,60 @@ pub async fn create_record_logic(
     result
 }
 
+/// Promote a pending attestation record to current after successful attestation.
+///
+/// Called when the VM attests using the image_id of its pending record, proving
+/// the new artifact set is healthy.  The promotion is:
+///   - vm_registration.current_record_id  <- pending_record_id
+///   - vm_registration.pending_record_id  <- None
+///   - old current attestation_record deleted from DB
+///   - old artifact directory removed from disk
+///
+/// Returns the updated vm_registration model so the caller can continue using it
+/// (e.g. to increment request_count in the same transaction).
+pub async fn promote_pending_to_current(
+    db: &DatabaseConnection,
+    paths: &DataPaths,
+    registration: vm_registration::Model,
+) -> Result<vm_registration::Model, String> {
+    let old_record_id = registration.current_record_id.clone();
+    let new_current_id = registration
+        .pending_record_id
+        .clone()
+        .ok_or_else(|| "promote called with no pending record on registration".to_string())?;
+
+    // Update registration and delete old record in one transaction
+    let txn = db
+        .begin()
+        .await
+        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
+    let mut active: vm_registration::ActiveModel = registration.into();
+    active.current_record_id = Set(new_current_id);
+    active.pending_record_id = Set(None);
+    let updated = active
+        .update(&txn)
+        .await
+        .map_err(|e| format!("Failed to promote pending record: {}", e))?;
+
+    vm::Entity::delete_by_id(&old_record_id)
+        .exec(&txn)
+        .await
+        .map_err(|e| format!("Failed to delete old attestation record: {}", e))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| format!("Failed to commit promotion: {}", e))?;
+
+    // Remove the old artifact directory (path safety check prevents escaping the base dir)
+    remove_artifact_dir(
+        &paths.attestations_dir,
+        &paths.attestations_dir.join(&old_record_id),
+    );
+
+    Ok(updated)
+}
+
 /// Artifact files included in a RenewResponse.
 ///
 /// Kernel, initrd, and kernel-params are excluded: the guest supplied them

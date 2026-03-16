@@ -380,6 +380,31 @@ pub async fn verify_report_core(
         Err(e) => fail!(e),
     };
 
+    // If the VM attested using the pending record's image_id, promote it to
+    // current: swap current_record_id, clear pending_record_id, delete the
+    // old current record and its artifact directory.
+    let registration = if registration.pending_record_id.as_deref() == Some(&attestation_record.id)
+    {
+        match business_logic::promote_pending_to_current(&state.db, &state.data_paths, registration)
+            .await
+        {
+            Ok(updated) => updated,
+            Err(e) => {
+                eprintln!("Warning: failed to promote pending record: {}", e);
+                // VMK was already re-encrypted successfully; return success but
+                // log the promotion failure so it can be retried on next boot.
+                return AttestationResponse {
+                    success: true,
+                    encapped_key,
+                    ciphertext,
+                    error_message: String::new(),
+                };
+            }
+        }
+    } else {
+        registration
+    };
+
     // Increment request count on the registration
     let new_count = registration.request_count + 1;
     let mut reg_active: vm_registration::ActiveModel = registration.into();
