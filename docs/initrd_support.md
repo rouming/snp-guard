@@ -25,7 +25,7 @@ The image conversion installs two files:
 1. **Hook Script** (`scripts/initramfs-tools/hook.sh`):
    - Installed at: `/etc/initramfs-tools/hooks/snpguard`
    - Purpose: Runs during initrd generation to include the SnpGuard client binary and configuration files
-   - Includes: `snpguard-client` binary, CA certificate, attestation URL, sealed VMK blob
+   - Includes: `snpguard-client` binary, CA certificate, identity public key, attestation URL, sealed VMK blob
 
 2. **Attestation Script** (`scripts/initramfs-tools/attest.sh`):
    - Installed at: `/etc/initramfs-tools/scripts/local-top/snpguard-attest`
@@ -116,6 +116,7 @@ ls -la staging/initrd.img
 The initrd contains:
 - `/usr/bin/snpguard-client` (client binary)
 - `/etc/snpguard/ca.pem` (CA certificate)
+- `/etc/snpguard/identity.pub` (server Ed25519 identity public key, used to verify renewal responses)
 - `/etc/snpguard/attest.url` (attestation URL)
 - `/etc/snpguard/vmk.sealed` (sealed VMK blob)
 - The attestation script in `scripts/local-top/snpguard-attest`

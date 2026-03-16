@@ -91,7 +91,7 @@ cargo run --bin snpguard-image convert \
 1. Encrypts (seals) the VMK with the unsealing public key
 1. Uploads the sealed VMK into the guest image
 1. Installs `cryptsetup-initramfs` in the guest image
-1. Installs the SnpGuard client binary and configuration files
+1. Installs the SnpGuard client binary and configuration files (CA cert, identity public key, attestation URL, sealed VMK)
 1. Installs initramfs-tools hooks (`hook.sh` and `attest-online.sh`)
 1. Regenerates the initrd with hooks included
 1. Extracts boot artifacts (kernel, initrd, kernel parameters, firmware) to the staging directory
@@ -109,7 +109,7 @@ cargo run --bin snpguard-image convert \
 - The image tool requires `qemu-img` and `libguestfs` to be installed on the system for the `convert` subcommand to inspecet and modify the QCOW2 image.
 - The image tool lists the available kernels and initrd images with their kernel parameters. By default, the GRUB default kernel is selected automatically; if no default is set in the GRUB configuration, the first SEV-SNP supported entry is used. Pass `--pick-kernel` to be prompted to choose interactively instead.
 - The OVMF firmware binary must include `SNP_KERNEL_HASHES`, which is achieved by the special AmdSevX64 build. Refer to [this guide](https://rouming.github.io/2025/04/01/coco-with-amd-sev.html#guest-ovmf-firmware) to build OVMF with `SNP_KERNEL_HASHES` enabled.
-- For the image `convert` tool, if you've run `snpguard-client config login`, the attestation URL, ingestion public key, and CA certificate will be read from the stored configuration. Otherwise, you must provide them via `--attest-url`, `--ingestion-public-key`, and `--ca-cert` options.
+- For the image `convert` tool, if you've run `snpguard-client config login`, the attestation URL, ingestion public key, CA certificate, and identity public key will be read from the stored configuration. Otherwise, you must provide them via `--attest-url`, `--ingestion-public-key`, `--ca-cert`, and `--identity-pub` options.
 
 **Offline Attestation Mode (`--offline-attestation`)**
 
@@ -501,7 +501,7 @@ The `keygen` command is used internally by the `convert` command to generate uns
 
 #### Image Conversion
 
-- `convert --in-image <PATH> --out-image <PATH> --out-staging <PATH> --firmware <PATH> [--attest-url <URL>] [--ingestion-public-key <PATH>] [--ca-cert <PATH>]`: Convert QCOW2 image to confidential-ready image
+- `convert --in-image <PATH> --out-image <PATH> --out-staging <PATH> --firmware <PATH> [--attest-url <URL>] [--ingestion-public-key <PATH>] [--ca-cert <PATH>] [--identity-pub <PATH>]`: Convert QCOW2 image to confidential-ready image
   - `--in-image`: Input QCOW2 image path (required)
   - `--out-image`: Output QCOW2 image path (required)
   - `--out-staging`: Staging directory for temporary files (required)
@@ -509,6 +509,7 @@ The `keygen` command is used internally by the `convert` command to generate uns
   - `--attest-url`: Attestation URL (optional, uses config from `snpguard-client config login` if not provided)
   - `--ingestion-public-key`: Path to ingestion public key (optional, uses config if not provided)
   - `--ca-cert`: Path to CA certificate (optional, uses config if not provided)
+  - `--identity-pub`: Path to server Ed25519 identity public key (optional, uses config if not provided); baked into the initrd as `/etc/snpguard/identity.pub` so the guest can verify renewal responses
 
 #### Embedding Launch Artifacts
 
