@@ -103,6 +103,11 @@ enum Command {
         /// Optional: Override CA certificate path (uses config if not provided)
         #[arg(long)]
         ca_cert: Option<PathBuf>,
+        /// Optional: Override identity public key path (uses config if not provided).
+        /// This Ed25519 public key is baked into the initrd as /etc/snpguard/identity.pub
+        /// so the guest can verify renewal responses from the attestation server.
+        #[arg(long)]
+        identity_pub: Option<PathBuf>,
         /// Firmware path (required)
         #[arg(long)]
         firmware: PathBuf,
@@ -150,6 +155,11 @@ fn ca_cert_path() -> Result<PathBuf> {
 fn ingestion_key_path() -> Result<PathBuf> {
     let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
     Ok(base.join("snpguard").join("ingestion.pub"))
+}
+
+fn identity_pub_path() -> Result<PathBuf> {
+    let base = config_dir().ok_or_else(|| anyhow!("Cannot determine config dir"))?;
+    Ok(base.join("snpguard").join("identity.pub"))
 }
 
 fn load_config() -> Result<StoredConfig> {
@@ -983,10 +993,12 @@ fn encrypt_and_copy_rootfs(
 }
 
 /// Upload snpguard files and scripts into a guest image rootfs
+#[allow(clippy::too_many_arguments)]
 pub fn upload_snpguard_files(
     g: &guestfs::Handle,
     snpguard_client_path: &str,
     ca_pem_path: &str,
+    identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
     hook_path: &str,
@@ -1005,6 +1017,8 @@ pub fn upload_snpguard_files(
     // Upload config files
     g.upload(ca_pem_path, "/etc/snpguard/ca.pem")
         .map_err(|e| anyhow!("Failed to upload /etc/snpguard/ca.pem: {:?}", e))?;
+    g.upload(identity_pub_path, "/etc/snpguard/identity.pub")
+        .map_err(|e| anyhow!("Failed to upload /etc/snpguard/identity.pub: {:?}", e))?;
     g.upload(vmk_sealed_path, "/etc/snpguard/vmk.sealed")
         .map_err(|e| anyhow!("Failed to upload /etc/snpguard/vmk.sealed: {:?}", e))?;
     g.write("/etc/snpguard/attest.url", attest_url.as_bytes())
@@ -1062,6 +1076,7 @@ fn install_snpguard_on_target(
     boot_partition: &BootPartition,
     snpguard_client_path: &str,
     ca_pem_path: &str,
+    identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
     hook_path: &str,
@@ -1159,6 +1174,7 @@ fn install_snpguard_on_target(
         g,
         snpguard_client_path,
         ca_pem_path,
+        identity_pub_path,
         vmk_sealed_path,
         attest_url,
         hook_path,
@@ -1220,6 +1236,7 @@ fn run_convert(
     attest_url: Option<String>,
     ingestion_public_key: Option<PathBuf>,
     ca_cert: Option<PathBuf>,
+    identity_pub: Option<PathBuf>,
     firmware: PathBuf,
     no_hardening: bool,
     pick_kernel: bool,
@@ -1445,6 +1462,22 @@ fn run_convert(
         let ca_cert_path_str = ca_cert_file
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", ca_cert_file))?;
+        let identity_pub_file = identity_pub
+            .or_else(|| identity_pub_path().ok())
+            .ok_or_else(|| {
+                anyhow!(
+                    "Identity public key not provided. Please run 'snpguard-client config login' first or provide --identity-pub"
+                )
+            })?;
+        if !identity_pub_file.exists() {
+            bail!(
+                "Identity public key not found at {:?}. Please run 'snpguard-client config login' first or provide --identity-pub",
+                identity_pub_file
+            );
+        }
+        let identity_pub_path_str = identity_pub_file
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", identity_pub_file))?;
         let attest_url_str = attest_url
             .or_else(|| config.as_ref().and_then(|c| c.url.clone()))
             .ok_or_else(|| {
@@ -1462,6 +1495,7 @@ fn run_convert(
             &boot_partition,
             musl_client_path,
             ca_cert_path_str,
+            identity_pub_path_str,
             sealed_vmk_path,
             &attest_url_str,
             "scripts/initramfs-tools/hook.sh",
@@ -1750,6 +1784,7 @@ fn main() -> Result<()> {
             attest_url,
             ingestion_public_key,
             ca_cert,
+            identity_pub,
             firmware,
             no_hardening,
             pick_kernel,
@@ -1761,6 +1796,7 @@ fn main() -> Result<()> {
             attest_url,
             ingestion_public_key,
             ca_cert,
+            identity_pub,
             firmware,
             no_hardening,
             pick_kernel,
