@@ -65,6 +65,7 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 struct PublicInfo {
     ca_cert: String,
     ingestion_pub_key: String,
+    identity_pub_key: String,
 }
 
 async fn get_public_info(State(state): State<Arc<ServiceState>>) -> Response {
@@ -98,9 +99,25 @@ async fn get_public_info(State(state): State<Arc<ServiceState>>) -> Response {
         }
     };
 
+    // Get identity public key (Ed25519; to be baked into guest initrd)
+    let identity_pub_key = match state.identity_key.get_public_key_pem() {
+        Ok(pem) => pem,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"error":"Failed to get identity public key: {}"}}"#,
+                    e
+                )))
+                .unwrap();
+        }
+    };
+
     let info = PublicInfo {
         ca_cert,
         ingestion_pub_key,
+        identity_pub_key,
     };
 
     match serde_json::to_string(&info) {

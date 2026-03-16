@@ -5,6 +5,7 @@ use sea_orm::{
 };
 
 use crate::config::DataPaths;
+use crate::identity_key::IdentityKey;
 use crate::ingestion_key::IngestionKeys;
 use common::snpguard::{
     AttestationRecord, AttestationRequest, AttestationResponse, CreateRecordRequest,
@@ -37,6 +38,7 @@ pub struct ServiceState {
     pub attestation_state: Arc<AttestationState>,
     pub data_paths: Arc<DataPaths>,
     pub ingestion_keys: Arc<IngestionKeys>,
+    pub identity_key: Arc<IdentityKey>,
 }
 
 #[derive(Clone)]

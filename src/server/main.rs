@@ -21,6 +21,7 @@ mod artifacts;
 mod auth;
 mod business_logic;
 mod config;
+mod identity_key;
 mod ingestion_key;
 mod master_password;
 mod nonce;
@@ -71,6 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &paths.ingestion_pub,
     )?);
 
+    // Identity key (Ed25519 signing keypair; public key baked into guest initrd)
+    let identity_key = Arc::new(identity_key::IdentityKey::load_or_create(
+        &paths.identity_key,
+        &paths.identity_pub,
+    )?);
+
     // 4. Service core state (shared)
     let data_paths = Arc::new(paths);
     let service_state = Arc::new(service_core::ServiceState {
@@ -78,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         attestation_state: attestation_state.clone(),
         data_paths: data_paths.clone(),
         ingestion_keys: ingestion_keys.clone(),
+        identity_key: identity_key.clone(),
     });
 
     // Master password (web management)
