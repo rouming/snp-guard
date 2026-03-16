@@ -383,27 +383,43 @@ Deletion is permanent and removes all associated artifacts.
 
 - `config logout`: Remove all stored configuration files (token, URL, CA cert, ingestion public key, identity public key)
 
-### Attestation Command
+### Attestation Commands
 
-- `attest --url <URL> [--ca-cert <PATH>] [--sealed-blob <PATH>]`: Perform attestation and output decrypted VMK in hex format to stdout
-  - `--url`: Attestation server URL (required)
-  - `--ca-cert`: Path to CA certificate (optional, defaults to `/etc/snpguard/ca.pem`)
-  - `--sealed-blob`: Path to sealed VMK blob (optional, if not provided reads from `/etc/snpguard/vmk.sealed`)
+Both subcommands accept `--url <URL>` (default: contents of `/etc/snpguard/attest.url`) and
+`--ca-cert <PATH>` (default: `/etc/snpguard/ca.pem`).
 
 - `attest report --sealed-blob <PATH>`: Perform online attestation and output the decrypted VMK
   in hex format to stdout.  Used by the initrd hook during boot.
   - `--sealed-blob`: Path to sealed VMK blob (default: `/etc/snpguard/vmk.sealed`)
 
 - `attest renew [--grub-cfg <PATH>] [--interactive] [--out-bundle <PATH>] [--firmware <PATH>] [--kernel <PATH>] [--initrd <PATH>] [--kernel-params <STRING>]`:
-  Request an artifact renewal from inside the running VM.  The command reads the boot kernel
-  and initrd from `--grub-cfg` (default: `/boot/grub/grub.cfg`); pass `--interactive` to
-  choose among multiple SEV-SNP capable entries instead of auto-selecting the GRUB default.
-  The SNP report binds the submitted artifacts and nonces.  On success the server creates a
-  pending attestation record; if `--out-bundle` is given the client writes a tar.gz bundle
-  containing the local artifacts followed by the server-returned artifacts (id-block, auth-block,
-  launch-config).  Omitted per-artifact overrides are inherited from the current record on the
-  server.  The VM must be relaunched with the new artifacts for the pending record to be promoted
-  to current.
+  Request an artifact renewal from inside the running VM.  Must be run as root.
+
+  **Kernel discovery**: The command parses `--grub-cfg` (default: `/boot/grub/grub.cfg`) and
+  checks each entry for SEV-SNP support (`CONFIG_SEV_GUEST` in the kernel config).  With a
+  single supported entry it is auto-selected; with multiple entries the GRUB default is chosen
+  automatically, or pass `--interactive` to pick manually.  Individual `--kernel`, `--initrd`,
+  and `--kernel-params` flags override the grub-discovered values; if all three are provided
+  grub scanning is skipped entirely.
+
+  **Protocol**: The SNP report binds `SHA512(payload_bytes)` where `payload_bytes` is a
+  pre-serialized `RenewRequestPayload` containing both nonces and the submitted artifacts.
+  The server response is Ed25519-signed; the client verifies the signature and checks the
+  echoed `client_nonce` before trusting any content.
+
+  **Output -- `--out-bundle <PATH>`**: Writes a gzip-compressed tar archive containing local
+  artifacts (vmlinuz, initrd.img, kernel-params.txt, firmware-code.fd if provided) followed
+  by server-returned artifacts (id-block.bin, id-auth.bin, launch-config.json).
+
+  **Output -- default (LAUNCH_ARTIFACTS partition)**: Mounts the block device behind
+  `/dev/disk/by-label/LAUNCH_ARTIFACTS` (ext4), reads the `/artifacts` symlink to determine
+  the currently active slot (A or B), writes all artifacts into the other slot with per-file
+  fsync, atomically replaces the `/artifacts` symlink via a temp-name rename, fsyncs the
+  partition root, then unmounts.  On next boot the bootloader follows the updated symlink and
+  loads the new artifacts.
+
+  Omitted per-artifact overrides are inherited from the current record on the server.  The VM
+  must be relaunched with the new artifacts for the pending record to be promoted to current.
 
 **Note**: Both subcommands are intended for use inside the guest VM (initrd or running OS), not from the management host.
 
@@ -415,7 +431,7 @@ Deletion is permanent and removes all associated artifacts.
 - `manage disable <id>`: Disable an attestation record
 - `manage delete <id>`: Delete an attestation record and all associated artifacts
 - `manage discard-pending <id>`: Cancel a pending renewal (clears the pending record)
-- `manage export --id <id> --format <tar|squash|squashfs> --out-bundle <PATH>`: Export current artifacts bundle
+- `manage export --id <id> --format <tar|squash|squashfs> --out-bundle <PATH> [--pending]`: Export artifacts bundle; `--pending` exports the in-flight renewal artifacts instead of the current ones
 - `manage register`: Register a new attestation record (see section 5 above for details)
 
 All management commands use stored config by default (from `config login`), or provide `--url` and `--ca-cert` to override.

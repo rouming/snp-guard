@@ -241,12 +241,14 @@ key, unlock the disk, and boot the OS.
 
 * **snpguard-client:** A dual-purpose Rust binary:
   * **Host**: Used by developers to register images and download
-    launch bundles.
+    launch bundles (`manage` subcommand).
   * **Guest**: A lightweight, static binary (built against the `musl`
     C standard library for a smaller footprint, and built as static to
-    avoid any external dependencies) embedded in the VM's initrd that
-    performs the hardware attestation handshake and unlocks the
-    rootfs.
+    avoid any external dependencies) embedded in the VM's initrd.
+    Provides two attestation subcommands: `attest report` (VMK release
+    for LUKS unlock during boot) and `attest renew` (artifact renewal
+    from inside the running VM, producing a pending record on the
+    server).
 
 ## Docker
 

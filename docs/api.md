@@ -99,29 +99,59 @@ update.  Fields not provided are inherited from the current record on the server
 **Request**:
 ```protobuf
 message RenewRequest {
-  bytes report_data = 1;        // SEV-SNP attestation report (binary)
-  bytes server_nonce = 2;       // Server nonce (64 bytes) used for binding
-  optional bytes firmware = 3;  // New firmware (omit to inherit current)
-  optional bytes kernel = 4;    // New kernel (omit to inherit current)
-  optional bytes initrd = 5;    // New initrd (omit to inherit current)
+  bytes report_data = 1;   // SEV-SNP attestation report (binary)
+  bytes payload_bytes = 2; // Pre-serialized RenewRequestPayload (see below)
+}
+
+// Serialized into RenewRequest.payload_bytes; all fields are hardware-signed.
+message RenewRequestPayload {
+  bytes server_nonce = 1;           // Server nonce (64 bytes); proves freshness
+  bytes client_nonce = 2;           // Client nonce (64 bytes); prevents response replay
+  optional bytes firmware = 3;      // New firmware (omit to inherit current)
+  optional bytes kernel = 4;        // New kernel (omit to inherit current)
+  optional bytes initrd = 5;        // New initrd (omit to inherit current)
   optional string kernel_params = 6; // New kernel parameters (omit to inherit current)
 }
 ```
 
-**Binding protocol**: `report_data` must equal `SHA512(server_nonce || commitment_bytes)` where
-`commitment_bytes` is the `RenewRequest` serialized with `report_data` and `server_nonce` cleared.
+**Binding protocol**: `report_data` must equal `SHA512(payload_bytes)` where `payload_bytes` is
+the pre-serialized `RenewRequestPayload`.  All fields -- nonces and optional artifacts -- are
+covered by the SNP hardware signature.
 
 **Response** (200 OK):
 ```protobuf
 message RenewResponse {
   bool success = 1;
   optional string error_message = 2;
+  optional bytes signature = 3;    // Ed25519 over payload_bytes; verify BEFORE deserializing
+  optional bytes payload_bytes = 4; // Pre-serialized RenewResponsePayload
+}
+
+// Serialized into RenewResponse.payload_bytes; covered by the Ed25519 signature.
+message RenewResponsePayload {
+  string id = 1;                    // UUID of the newly created pending record
+  bytes client_nonce = 2;           // Echoed from RenewRequestPayload
+  repeated ArtifactEntry artifacts = 3; // Server-generated artifacts (id-block, auth-block, etc.)
 }
 ```
 
-On success the server creates a pending attestation record with a fresh `image_id` and sets
-`vm_registration.pending_record_id`.  The pending record is promoted to current automatically
-on the next successful attestation that presents the new `image_id`.
+On success the server creates a pending attestation record with a fresh `image_id`, sets
+`vm_registration.pending_record_id`, signs the response payload with the server Ed25519 identity
+key, and returns the pending record UUID and the server-generated artifacts.
+
+The pending record is promoted to current automatically on the next successful attestation
+that presents the new `image_id`.
+
+**Validation** (in order):
+1. Validate `server_nonce` length (64 bytes) in `RenewRequestPayload`
+2. Parse SNP report
+3. Verify nonce freshness (60-second window)
+4. Verify binding hash: `SHA512(payload_bytes) == report_data`
+5. Verify VMPL == 0
+6. Two-step record lookup (same as `/v1/attest/report`)
+7. Check registration is enabled and has no existing pending record
+8. Verify report signature
+9. Create pending record, sign response payload with Ed25519, return `id` + `artifacts`
 
 **Error Responses**:
 - `400 Bad Request`: Invalid protobuf message
@@ -188,7 +218,9 @@ Endpoints (protobuf payloads, `application/x-protobuf`):
 - `GET/POST /v1/records` (list/create)
 - `GET/DELETE /v1/records/{id}` (view/delete)
 - `POST /v1/records/{id}/enable`, `/disable`
-- `POST /v1/records/{id}/discard-pending`
+- `POST /v1/records/{id}/discard-pending` -- cancel a pending renewal before the VM is relaunched
+- `GET /v1/records/{id}/export/tar[?pending=true]` -- download artifacts as tar.gz (pending flag serves the in-flight renewal artifacts)
+- `GET /v1/records/{id}/export/squash[?pending=true]` -- download artifacts as squashfs
 - `GET/POST /v1/tokens`, `POST /v1/tokens/{id}/revoke`
 
 **Renewal**: A running VM can update its kernel, initrd, firmware, or kernel parameters without

@@ -40,10 +40,11 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Attestation Service                                      │  │
 │  │  - /v1/attest/nonce                                       │  │
-│  │  - /v1/attest/report                                      │  │
+│  │  - /v1/attest/report  (VMK release)                       │  │
+│  │  - /v1/attest/renew   (artifact renewal from running VM)  │  │
 │  │  - Verifies AMD certificate chain                         │  │
 │  │  - Validates attestation reports                          │  │
-│  │  - Releases secrets                                       │  │
+│  │  - Releases secrets / pending artifacts                   │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Management Service                                       │  │
@@ -86,8 +87,8 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 - Generate random nonces for attestation
 - Verify attestation reports using AMD's certificate chain (via integrated `snpguest`)
 - Look up VM registrations by key digests and attestation records by image_id (two-step)
-- Decrypt sealed VMK using unsealing private key
-- Encrypt VMK with ephemeral session key for secure delivery
+- Decrypt sealed VMK using unsealing private key and re-encrypt for client session (report flow)
+- Accept renewal requests from running VMs and create pending artifact records (renew flow)
 
 **Key Functions**:
 1. **Nonce Generation**: Creates cryptographically secure 64-byte nonces
@@ -102,12 +103,12 @@ SnpGuard is a SEV-SNP attestation service that verifies the integrity of guest V
 ### Attestation Client
 
 **Responsibilities**:
-- Request nonce from attestation service
-- Generate ephemeral session keypair (X25519)
-- Generate attestation report using `sev` library directly (with binding hash)
-- Send report with sealed VMK blob for verification
-- Receive session-encrypted VMK and decrypt it
-- Output decrypted VMK (for LUKS disk decryption)
+- `attest report`: request nonce, generate ephemeral session keypair, produce SNP report bound to
+  the session key, send sealed VMK blob for verification, decrypt the returned VMK, output it for
+  LUKS disk decryption
+- `attest renew`: request nonce, generate ephemeral session keypair, produce SNP report bound to
+  the session key and the submitted artifacts, send RenewRequest with optional updated artifacts,
+  decrypt the returned HPKE-sealed artifact archive using the session private key
 
 **Key Features**:
 - Static binary (no glibc dependencies)
