@@ -2,6 +2,7 @@ mod local_ops;
 
 use anyhow::{anyhow, bail, Context, Result};
 use boot::grub::{self, GrubEntry};
+use boot::sev::{kernel_version_from_path, sev_support_from_config, SevGuestSupport};
 use clap::{Parser, Subcommand};
 use dirs::config_dir;
 use hpke::{
@@ -388,15 +389,10 @@ fn create_guestfs_context(
     Ok((g, scratch_rootfs.to_string(), source_rootfs, target_rootfs))
 }
 
-enum SEVGuestSupport {
-    Supported,
-    SupportedButNoModule,
-    NotSupported,
-}
-
-/// Checks if a specific kernel version supports SEV-SNP by examining its config and modules
-fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Result<SEVGuestSupport> {
-    // Check kernel config file
+/// Checks if a specific kernel version supports SEV-SNP by examining its
+/// config and modules via a guestfs handle.  Prints diagnostic messages to
+/// stdout as it goes, matching the existing image-convert output style.
+fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Result<SevGuestSupport> {
     let config_path = format!("/boot/config-{}", version);
     if !g
         .exists(&config_path)
@@ -409,66 +405,51 @@ fn check_kernel_version_sev_support(g: &guestfs::Handle, version: &str) -> Resul
         .cat(&config_path)
         .map_err(|e| anyhow!("Failed to read config: {:?}", e))?;
 
-    // Check if SEV-Guest is built into kernel
-    if config_str.contains("CONFIG_SEV_GUEST=y") {
-        println!("  [+] Found: SEV-Guest is built into the kernel binary.");
-        return Ok(SEVGuestSupport::Supported);
-    }
+    let modules_dir = format!("/usr/lib/modules/{}", version);
 
-    // Check if SEV-Guest is configured as module
-    if config_str.contains("CONFIG_SEV_GUEST=m") {
+    let support = sev_support_from_config(&config_str, || -> Result<bool> {
         println!("  [*] Configured as module: Searching for sev-guest.ko...");
 
-        // Search for sev-guest.ko module in /usr/lib/modules/<version>/
-        let modules_dir = format!("/usr/lib/modules/{}", version);
-        if !g
+        let dir_exists = g
             .exists(&modules_dir)
-            .map_err(|e| anyhow!("Failed to check if modules dir exists: {:?}", e))?
-        {
+            .map_err(|e| anyhow!("Failed to check if modules dir exists: {:?}", e))?;
+        if !dir_exists {
             println!("  [!] ERROR: CONFIG_SEV_GUEST=m but modules directory not found!");
-            return Ok(SEVGuestSupport::SupportedButNoModule);
+            return Ok(false);
         }
 
-        // Search recursively for sev-guest.ko (matches sev-guest.ko, sev-guest.ko.zst, etc.)
-        let all_files = g
+        let files = g
             .find(&modules_dir)
             .map_err(|e| anyhow!("Failed to find files: {:?}", e))?;
-
-        for file in all_files {
-            if file.contains("sev-guest.ko") {
-                println!("  [+] Found module file: {}{}", modules_dir, file);
-                return Ok(SEVGuestSupport::Supported);
-            }
+        if let Some(f) = files.iter().find(|f| f.contains("sev-guest.ko")) {
+            println!("  [+] Found module file: {}{}", modules_dir, f);
+            Ok(true)
+        } else {
+            println!("  [!] ERROR: CONFIG_SEV_GUEST=m but no .ko file exists on disk!");
+            Ok(false)
         }
+    })?;
 
-        println!("  [!] ERROR: CONFIG_SEV_GUEST=m but no .ko file exists on disk!");
-        return Ok(SEVGuestSupport::SupportedButNoModule);
+    match support {
+        SevGuestSupport::SupportedBuiltIn => {
+            println!("  [+] Found: SEV-Guest is built into the kernel binary.");
+        }
+        SevGuestSupport::SupportedModule => {
+            // =m with module found; the closure already printed the module path
+        }
+        SevGuestSupport::NotSupported => {
+            println!("  [-] SEV-Guest support is disabled in this kernel's config.");
+        }
+        SevGuestSupport::SupportedButNoModule => {}
     }
 
-    // SEV-Guest support is disabled
-    println!("  [-] SEV-Guest support is disabled in this kernel's config.");
-    Ok(SEVGuestSupport::NotSupported)
+    Ok(support)
 }
 
-fn kernel_version_from_kernel_path(kernel_path: &str) -> Result<&str> {
-    // Extract kernel version from path (e.g., /boot/vmlinuz-5.10.0-123)
-    let kernel_name = Path::new(kernel_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow!("Invalid kernel path: {}", kernel_path))?;
-
-    // Try to extract version from kernel name
-    // Common patterns: vmlinuz-5.10.0-123, vmlinuz-5.10.0-123-generic, etc.
-    if let Some(version) = kernel_name.strip_prefix("vmlinuz-") {
-        return Ok(version);
-    }
-
-    bail!("Can't determine version for the kernel {}", kernel_name)
-}
-
-/// Verifies if a kernel supports SEV-SNP by checking kernel config and modules
-fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<SEVGuestSupport> {
-    let version = kernel_version_from_kernel_path(kernel_path)?;
+/// Verifies if a kernel supports SEV-SNP by checking kernel config and modules.
+fn verify_sev_guest_support(g: &guestfs::Handle, kernel_path: &str) -> Result<SevGuestSupport> {
+    let version = kernel_version_from_path(kernel_path)
+        .map_err(|e| anyhow!("Failed to extract kernel version: {}", e))?;
     check_kernel_version_sev_support(g, version)
 }
 
@@ -604,11 +585,11 @@ fn inspect_source_image_boot_data(
         println!("\n  Checking SEV-SNP support for kernel: {}", entry.kernel);
 
         match verify_sev_guest_support(g, &entry.kernel) {
-            Ok(SEVGuestSupport::Supported) => {
+            Ok(SevGuestSupport::SupportedBuiltIn | SevGuestSupport::SupportedModule) => {
                 println!("  [+] Kernel supports SEV-SNP");
                 supported.push(entry);
             }
-            Ok(SEVGuestSupport::SupportedButNoModule) => {
+            Ok(SevGuestSupport::SupportedButNoModule) => {
                 if dist_family == DistroFamily::Ubuntu {
                     println!("  [+] Kernel supports SEV-SNP, but no module is found. Since the guest is Ubuntu, the next step will be to try to install 'linux-modules-extra'");
                     supported.push(entry);
@@ -617,7 +598,7 @@ fn inspect_source_image_boot_data(
                     unsupported.push(entry);
                 }
             }
-            Ok(SEVGuestSupport::NotSupported) => {
+            Ok(SevGuestSupport::NotSupported) => {
                 println!("  [-] Kernel does NOT support SEV-SNP");
                 unsupported.push(entry);
             }
@@ -1123,7 +1104,8 @@ fn install_snpguard_on_target(
             let extra_modules_pkg = if dist_family == DistroFamily::Ubuntu {
                 let mut seen = HashSet::new();
                 for entry in supported_entries {
-                    let version = kernel_version_from_kernel_path(&entry.kernel)?;
+                    let version = kernel_version_from_path(&entry.kernel)
+                        .map_err(|e| anyhow!("Failed to extract kernel version: {}", e))?;
                     seen.insert(version);
                 }
                 seen.iter()
