@@ -90,6 +90,27 @@ if [ -f "$NETCONF" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Record boot slot on LAUNCH_ARTIFACTS
+# ---------------------------------------------------------------------------
+# Write /.booted on LAUNCH_ARTIFACTS so that "attest renew" always
+# overwrites the inactive slot, making repeated calls idempotent.
+# Skipped silently if the partition is absent.
+if [ -e /dev/disk/by-label/LAUNCH_ARTIFACTS ]; then
+    LA_DEV="$(readlink -f /dev/disk/by-label/LAUNCH_ARTIFACTS)"
+    LA_MNT="$(mktemp -d)"
+    if mount -t ext4 "$LA_DEV" "$LA_MNT" 2>/dev/null; then
+        if [ -L "$LA_MNT/artifacts" ]; then
+            SLOT="$(readlink "$LA_MNT/artifacts")"
+            rm -f "$LA_MNT/.booted"
+            ln -s "$SLOT" "$LA_MNT/.booted"
+            sync
+        fi
+        umount "$LA_MNT" 2>/dev/null || true
+    fi
+    rmdir "$LA_MNT" 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # Step 2 - Resolve root block device
 # ---------------------------------------------------------------------------
 # The root= parameter on the kernel command line may be a device path, UUID,

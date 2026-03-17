@@ -68,6 +68,34 @@ echo "  snpguard: OFFLINE attestation starting"
 echo "================================================================"
 echo
 
+# Ensure udev has finished processing all block device events so that
+# /dev/disk/by-label/ symlinks are available before we access them.
+# Additionally, 'udevadm settle' ensures all block/net devices are
+# enumerated before 'configure_networking' (a built-in in
+# initramfs-tools) runs DHCP in the code below.
+udevadm settle
+
+# ---------------------------------------------------------------------------
+# Record boot slot on LAUNCH_ARTIFACTS
+# ---------------------------------------------------------------------------
+# Write /.booted on LAUNCH_ARTIFACTS so that "attest renew" always
+# overwrites the inactive slot, making repeated calls idempotent.
+# Skipped silently if the partition is absent.
+if [ -e /dev/disk/by-label/LAUNCH_ARTIFACTS ]; then
+    LA_DEV="$(readlink -f /dev/disk/by-label/LAUNCH_ARTIFACTS)"
+    LA_MNT="$(mktemp -d)"
+    if mount -t ext4 "$LA_DEV" "$LA_MNT" 2>/dev/null; then
+        if [ -L "$LA_MNT/artifacts" ]; then
+            SLOT="$(readlink "$LA_MNT/artifacts")"
+            rm -f "$LA_MNT/.booted"
+            ln -s "$SLOT" "$LA_MNT/.booted"
+            sync
+        fi
+        umount "$LA_MNT" 2>/dev/null || true
+    fi
+    rmdir "$LA_MNT" 2>/dev/null || true
+fi
+
 # Determine root device
 if [ -z "$ROOT" ]; then
     ROOT="$(sed -n 's/.*\broot=\([^ ]*\).*/\1/p' /proc/cmdline)"
@@ -122,8 +150,6 @@ fi
 # Step 3 - Configure networking
 # ---------------------------------------------------------------------------
 # Network must be available before contacting the attestation server.
-# udevadm settle ensures all block/net devices are enumerated before
-# configure_networking (initramfs-tools built-in) runs DHCP.
 #
 # Cloud providers that assign a /32 address (single-host subnet) require an
 # explicit on-link route to the gateway because the kernel would otherwise
@@ -131,7 +157,6 @@ fi
 # workaround reads the variables written by ipconfig into /run/net-$DEVICE.conf
 # and injects the missing routes when the condition is detected.
 echo "snpguard attest: setting up network for online attestation..."
-udevadm settle
 configure_networking || panic "snpguard attest: networking failed"
 
 # Check for the config file created by ipconfig

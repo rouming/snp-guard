@@ -946,17 +946,28 @@ fn write_artifacts_ab(
 ) -> Result<()> {
     use std::os::unix::fs::symlink;
 
+    // /.booted is written by the initrd attestation script at boot time
+    // and always points to the slot the running system was loaded from.
+    // Using it (rather than /artifacts) makes multiple attest renew calls
+    // idempotent: the pending slot is always overwritten, never the booted one.
+    // Fall back to /artifacts on images that predate this feature.
+    let booted_link = root.join(".booted");
     let artifacts_link = root.join("artifacts");
-    let current = fs::read_link(&artifacts_link)
-        .context("Failed to read /artifacts symlink on LAUNCH_ARTIFACTS")?;
-    let current_str = current
+    let booted = if booted_link.exists() {
+        fs::read_link(&booted_link)
+            .context("Failed to read /.booted symlink on LAUNCH_ARTIFACTS")?
+    } else {
+        fs::read_link(&artifacts_link)
+            .context("Failed to read /artifacts symlink on LAUNCH_ARTIFACTS")?
+    };
+    let booted_str = booted
         .to_str()
-        .ok_or_else(|| anyhow!("Non-UTF8 /artifacts symlink target"))?;
+        .ok_or_else(|| anyhow!("Non-UTF8 slot symlink target"))?;
 
-    let next_slot = match current_str {
+    let next_slot = match booted_str {
         "A" => "B",
         "B" => "A",
-        other => bail!("Unexpected /artifacts slot value: {}", other),
+        other => bail!("Unexpected slot value: {}", other),
     };
 
     let slot_dir = root.join(next_slot);
@@ -996,7 +1007,7 @@ fn write_artifacts_ab(
 
     println!(
         "Artifacts written to LAUNCH_ARTIFACTS slot {} (was {}).",
-        next_slot, current_str
+        next_slot, booted_str
     );
     Ok(())
 }
