@@ -685,6 +685,19 @@ async fn run_attest_renew(
         bail!("attest renew must be run as root");
     }
 
+    // If no --out-bundle is provided, artifacts are written to the LAUNCH_ARTIFACTS
+    // partition.  Verify it is reachable before doing any expensive work.
+    if out_bundle.is_none() {
+        let label = Path::new("/dev/disk/by-label/LAUNCH_ARTIFACTS");
+        if !label.exists() {
+            bail!(
+                "/dev/disk/by-label/LAUNCH_ARTIFACTS not found.\n\
+                 Ensure the LAUNCH_ARTIFACTS partition is attached, \
+                 or pass --out-bundle <PATH> to write a local archive instead."
+            );
+        }
+    }
+
     let client = build_client(ca_cert)?;
     let base = normalize_https(url)?;
 
