@@ -1596,7 +1596,7 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
     // Try to find device by FS LABEL
     let (g, target_partition) = match target_partition {
         Some(dev) => {
-            println!("Found a previously created `LAUNCH_ARTIFACTS` partition, wiping it...");
+            println!("Found a previously created LAUNCH_ARTIFACTS partition, wiping it...");
 
             // Wipefs partition
             g.wipefs(&dev)
@@ -1694,7 +1694,7 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
         }
     };
 
-    println!("Format `LAUNCH_ARTIFACTS` partition as ext4...");
+    println!("Format LAUNCH_ARTIFACTS partition as ext4...");
 
     // Population
     g.mkfs("ext4", &target_partition, MkfsOptArgs::default())
@@ -1704,7 +1704,7 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
     g.mount(&target_partition, "/")
         .map_err(|e| anyhow!("Failed to mount partition: {:?}", e))?;
 
-    println!("Populate the `LAUNCH_ARTIFACTS` partition with files from the bundle...");
+    println!("Populate the LAUNCH_ARTIFACTS partition with files from the bundle...");
 
     // Setup structure
     g.mkdir("/A")
