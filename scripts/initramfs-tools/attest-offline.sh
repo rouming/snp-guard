@@ -132,7 +132,7 @@ DERIVE_KEY="$(/usr/bin/snpguard-client derive-key \
 if [ -n "$DERIVE_KEY" ]; then
     echo "snpguard attest: trying offline key (LUKS slot 1)..."
     if printf '%s' "$DERIVE_KEY" | \
-            cryptsetup luksOpen --key-slot 1 "$REAL_ROOT" root_crypt --key-file=- 2>/dev/null; then
+            cryptsetup luksOpen --key-slot 1 "$REAL_ROOT" cryptroot --key-file=- 2>/dev/null; then
         echo "snpguard attest: offline attestation successful"
         unset DERIVE_KEY
         echo
@@ -140,7 +140,7 @@ if [ -n "$DERIVE_KEY" ]; then
         echo "  snpguard: OFFLINE attestation done"
         echo "================================================================"
         echo
-        echo "ROOT=/dev/mapper/root_crypt" >> /conf/param.conf
+        echo "ROOT=/dev/mapper/cryptroot" >> /conf/param.conf
         exit 0
     fi
     echo "snpguard attest: offline key did not match - first boot or chip migration detected"
@@ -199,7 +199,7 @@ VMK="$(/usr/bin/snpguard-client attest \
     --sealed-blob /etc/snpguard/vmk.sealed)" \
     || panic "snpguard attest: online attestation failed"
 
-printf '%s' "$VMK" | cryptsetup luksOpen "$REAL_ROOT" root_crypt --key-file=- \
+printf '%s' "$VMK" | cryptsetup luksOpen "$REAL_ROOT" cryptroot --key-file=- \
     || panic "snpguard attest: cryptsetup failed with online VMK"
 
 echo "snpguard attest: online attestation successful"
@@ -237,4 +237,4 @@ echo "================================================================"
 echo
 
 # Ensure the ROOT variable is overridden
-echo "ROOT=/dev/mapper/root_crypt" >> /conf/param.conf
+echo "ROOT=/dev/mapper/cryptroot" >> /conf/param.conf

@@ -138,7 +138,7 @@ VMK="$(/usr/bin/snpguard-client attest \
 # Step 4 - Unlock root filesystem
 # ---------------------------------------------------------------------------
 echo "snpguard attest: unlocking root filesystem..."
-echo -n "$VMK" | cryptsetup luksOpen "$REAL_ROOT" root_crypt --key-file=- \
+echo -n "$VMK" | cryptsetup luksOpen "$REAL_ROOT" cryptroot --key-file=- \
     || panic "snpguard attest: cryptsetup failed"
 
 unset VMK
@@ -152,4 +152,4 @@ echo "================================================================"
 echo
 
 # Ensure the ROOT variable is overridden
-echo "ROOT=/dev/mapper/root_crypt" >> /conf/param.conf
+echo "ROOT=/dev/mapper/cryptroot" >> /conf/param.conf

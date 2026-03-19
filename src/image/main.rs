@@ -646,15 +646,15 @@ fn extract_boot_data(
             // Boot is on rootfs: decrypt target rootfs and mount it as /
             if !no_hardening {
                 let luks_key = hex::encode(vmk);
-                g.luks_open(target_rootfs, &luks_key, "root_crypt")
+                g.luks_open(target_rootfs, &luks_key, "cryptroot")
                     .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
                 _guards.borrow_mut().push(Box::new(move || {
-                    if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+                    if let Err(e) = g.luks_close("/dev/mapper/cryptroot") {
                         println!("WARN: Failed to close LUKS: {:?}", e);
                     }
                 }));
-                g.mount_ro("/dev/mapper/root_crypt", "/")
-                    .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+                g.mount_ro("/dev/mapper/cryptroot", "/")
+                    .map_err(|e| anyhow!("Failed to mount /dev/mapper/cryptroot: {:?}", e))?;
             } else {
                 g.mount_ro(target_rootfs, "/")
                     .map_err(|e| anyhow!("Failed to mount target rootfs directly: {:?}", e))?;
@@ -934,20 +934,20 @@ fn encrypt_and_copy_rootfs(
     g.luks_format(target_rootfs, &luks_key, 0)
         .map_err(|e| anyhow!("Failed to format LUKS: {:?}", e))?;
 
-    g.luks_open(target_rootfs, &luks_key, "root_crypt")
+    g.luks_open(target_rootfs, &luks_key, "cryptroot")
         .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
     defer! {
-        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+        if let Err(e) = g.luks_close("/dev/mapper/cryptroot") {
             println!("WARN: Failed to close LUKS: {:?}", e);
         }
     }
 
     // Format the inner filesystem
-    g.mkfs("ext4", "/dev/mapper/root_crypt", MkfsOptArgs::default())
+    g.mkfs("ext4", "/dev/mapper/cryptroot", MkfsOptArgs::default())
         .map_err(|e| anyhow!("Failed to mkfs ext4: {:?}", e))?;
 
-    g.mount("/dev/mapper/root_crypt", target_dir)
-        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+    g.mount("/dev/mapper/cryptroot", target_dir)
+        .map_err(|e| anyhow!("Failed to mount /dev/mapper/cryptroot: {:?}", e))?;
     defer! {
         if let Err(e) = g.umount(target_dir, UmountOptArgs::default()) {
             println!("WARN: Failed to umount {}: {:?}", target_dir, e);
@@ -1061,10 +1061,10 @@ fn install_snpguard_on_target(
     // Convert VMK to string for LUKS
     let luks_key = hex::encode(vmk);
 
-    g.luks_open(target_rootfs, &luks_key, "root_crypt")
+    g.luks_open(target_rootfs, &luks_key, "cryptroot")
         .map_err(|e| anyhow!("Failed to open LUKS: {:?}", e))?;
     defer! {
-        if let Err(e) = g.luks_close("/dev/mapper/root_crypt") {
+        if let Err(e) = g.luks_close("/dev/mapper/cryptroot") {
             println!("WARN: Failed to close LUKS: {:?}", e);
         }
     }
@@ -1073,8 +1073,8 @@ fn install_snpguard_on_target(
     let dist_family = get_dist_family(g, target_rootfs)?;
 
     // Mount target as /
-    g.mount("/dev/mapper/root_crypt", "/")
-        .map_err(|e| anyhow!("Failed to mount /dev/mapper/root_crypt: {:?}", e))?;
+    g.mount("/dev/mapper/cryptroot", "/")
+        .map_err(|e| anyhow!("Failed to mount /dev/mapper/cryptroot: {:?}", e))?;
     defer! {
         if let Err(e) = g.umount_all() {
             println!("WARN: Failed to umount all: {:?}", e);
