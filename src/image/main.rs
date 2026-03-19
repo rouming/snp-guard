@@ -1413,16 +1413,14 @@ fn run_convert(
         unsupported_entries.len()
     );
 
-    if !no_hardening {
-        println!("Encrypting root filesystem with LUKS2...");
-        encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
-    }
-
     let sealed_vmk_path = sealed_vmk_file
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", sealed_vmk_file))?;
 
     if !no_hardening {
+        println!("Encrypting root filesystem with LUKS2...");
+        encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
+
         let ca_cert_file = ca_cert
             .or_else(|| ca_cert_path().ok())
             .ok_or_else(|| {
