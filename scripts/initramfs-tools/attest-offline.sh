@@ -96,14 +96,9 @@ if [ -e /dev/disk/by-label/LAUNCH_ARTIFACTS ]; then
     rmdir "$LA_MNT" 2>/dev/null || true
 fi
 
-# Determine root device
-if [ -z "$ROOT" ]; then
-    ROOT="$(sed -n 's/.*\broot=\([^ ]*\).*/\1/p' /proc/cmdline)"
-fi
-
-[ -n "$ROOT" ] || panic "snpguard attest: no root= specified"
-
-REAL_ROOT="$(resolve_device "$ROOT")" || panic "snpguard attest: cannot resolve root device"
+# Resolve root block device by LUKS label
+REAL_ROOT="$(readlink -f /dev/disk/by-label/snpguard-luks)" \
+    || panic "snpguard attest: LUKS device with label snpguard-luks not found"
 
 # ---------------------------------------------------------------------------
 # Step 1 - Derive hardware-bound key from the SEV-SNP chip

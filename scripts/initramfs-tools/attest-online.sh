@@ -10,7 +10,7 @@
 #
 # Boot flow:
 #   1. Configure networking (udevadm settle + DHCP + /32 routing workaround).
-#   2. Resolve the root block device from the kernel command line.
+#   2. Resolve the root block device by LUKS label (snpguard-luks).
 #   3. Perform remote attestation: the snpguard-client generates an AMD
 #      SEV-SNP attestation report, sends it to the server together with the
 #      sealed VMK blob, and receives the VMK decrypted and re-encrypted
@@ -111,18 +111,10 @@ if [ -e /dev/disk/by-label/LAUNCH_ARTIFACTS ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2 - Resolve root block device
+# Step 2 - Resolve root block device by LUKS label
 # ---------------------------------------------------------------------------
-# The root= parameter on the kernel command line may be a device path, UUID,
-# or LABEL.  resolve_device() (from /scripts/functions) normalises it to an
-# absolute /dev path.
-if [ -z "$ROOT" ]; then
-    ROOT="$(sed -n 's/.*\broot=\([^ ]*\).*/\1/p' /proc/cmdline)"
-fi
-
-[ -n "$ROOT" ] || panic "snpguard attest: no root= specified"
-
-REAL_ROOT="$(resolve_device "$ROOT")" || panic "snpguard attest: cannot resolve root device"
+REAL_ROOT="$(readlink -f /dev/disk/by-label/snpguard-luks)" \
+    || panic "snpguard attest: LUKS device with label snpguard-luks not found"
 
 # ---------------------------------------------------------------------------
 # Step 3 - Online attestation
