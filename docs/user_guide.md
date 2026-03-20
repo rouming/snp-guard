@@ -60,10 +60,17 @@ cargo run --bin snpguard-client config login \
   --token ${TOKEN}
 ```
 
-This implements TOFU (Trust On First Use) - fetches server's public identity (CA cert, ingestion
-public key, and identity public key) from `/v1/public/info`, displays CA cert hash for user
-verification, validates token via `/v1/health` with the received CA cert, then stores URL/token, CA
-cert, ingestion public key, and identity public key to `~/.config/snpguard/`.
+This implements TOFU (Trust On First Use).  The client makes a raw TLS connection to the server
+and captures the certificate chain from the handshake.  It then checks whether the chain is trusted
+by the built-in Mozilla/webpki root bundle:
+
+- **Public CA** (e.g. fly.io, Let's Encrypt): no CA is pinned.  Subsequent connections use the
+  built-in root bundle.  Only `ingestion.pub` and `identity.pub` are stored.
+- **Self-signed / private CA**: the CA cert is pinned and stored as `ca.pem`.  Subsequent
+  connections verify against it.
+
+In both cases fingerprints are displayed for out-of-band verification, the token is validated via
+`/v1/health`, and URL/token/keys are stored to `~/.config/snpguard/`.
 
 ### 4. Image Conversion (Prepare Guest VM)
 
@@ -379,10 +386,13 @@ Deletion is permanent and removes all associated artifacts.
 ### Configuration Commands
 
 - `config login --url <URL> --token <TOKEN>`: Store management token (TOFU - Trust On First Use)
-  - Fetches server's public identity (CA cert, ingestion public key, identity public key) from `/v1/public/info`
-  - Displays CA cert hash for user verification
-  - Validates token via `/v1/health` with the received CA cert
-  - Stores URL/token, CA cert, ingestion public key, and identity public key to `~/.config/snpguard/`
+  - Captures TLS certificate chain from the server's TLS handshake
+  - Checks chain against built-in Mozilla root bundle to determine trust mode
+  - Public CA: no CA pinning; system roots used for all connections; no `ca.pem` stored
+  - Self-signed / private CA: CA cert pinned and stored as `ca.pem`
+  - Fetches ingestion and identity public keys from `/v1/public/info`
+  - Displays fingerprints for out-of-band verification; validates token via `/v1/health`
+  - Stores URL/token, ingestion.pub, identity.pub (and ca.pem if self-signed) to `~/.config/snpguard/`
 
 - `config logout`: Remove all stored configuration files (token, URL, CA cert, ingestion public key, identity public key)
 

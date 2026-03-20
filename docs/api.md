@@ -28,9 +28,13 @@ Content-Type: application/x-protobuf
 
 #### GET `/v1/public/info`
 
-Get the server's public identity for TOFU (Trust On First Use) authentication and image conversion.
-Returns the TLS CA certificate, the HPKE ingestion public key used to encrypt the unsealing private
-key, and the Ed25519 identity public key used to sign artifacts delivered to guests.
+Get the server's public keys for image conversion and TOFU (Trust On First Use) authentication.
+Returns the HPKE ingestion public key used to encrypt the unsealing private key, and the Ed25519
+identity public key used to sign artifacts delivered to guests.
+
+**Note**: The TLS CA certificate is no longer part of this response.  During `config login` the
+client captures the server's TLS certificate chain directly from the TLS handshake (TOFU), so the
+CA does not need to travel over an unauthenticated REST call.
 
 **Request**: No body required
 
@@ -39,35 +43,28 @@ key, and the Ed25519 identity public key used to sign artifacts delivered to gue
 - Body: JSON object with:
   ```json
   {
-    "ca_cert": "-----BEGIN CERTIFICATE-----\n...",
     "ingestion_pub_key": "-----BEGIN PUBLIC KEY-----\n...",
     "identity_pub_key": "-----BEGIN PUBLIC KEY-----\n..."
   }
   ```
-  - `ca_cert`: TLS CA certificate (PEM). Used by clients to verify the server's TLS certificate.
   - `ingestion_pub_key`: X25519 HPKE public key (raw 32 bytes, non-standard PEM). Used to encrypt
     the unsealing private key before uploading it to the server during image registration.
   - `identity_pub_key`: Ed25519 public key (raw 32 bytes, non-standard PEM). Stable server signing
     key; to be baked into the guest initrd so the guest can verify artifacts received from the server
     without a separate network round-trip.
 
-**Note**: This endpoint is public (no authentication required) and is used for TOFU during client
-configuration. The CA certificate hash should be verified by the user before proceeding with
-authentication.
+**Authentication**: Not required.
 
 **Error Responses**:
 - `500 Internal Server Error`: Server error retrieving public information
 
 **Example** (using curl):
 ```bash
-# For self-signed certificates (development), use -k flag:
-curl -k -X GET https://localhost:3000/v1/public/info --output public_info.json
+# Self-signed CA (ca.pem stored by config login):
+curl --cacert ~/.config/snpguard/ca.pem -X GET https://localhost:3000/v1/public/info
 
-# For production with valid certificates:
-curl -X GET https://attest.example.com/v1/public/info --output public_info.json
-
-# Or with a specific CA certificate:
-curl --cacert ca.pem -X GET https://attest.example.com/v1/public/info --output public_info.json
+# Public CA (platform TLS, e.g. fly.io -- no ca.pem needed):
+curl -X GET https://my-server.fly.dev/v1/public/info
 ```
 
 #### POST `/v1/attest/nonce`
@@ -347,11 +344,18 @@ Currently, there is no rate limiting implemented. Consider adding rate limiting 
 
 6. **Server Identity Key**: The server generates a stable Ed25519 signing keypair on first start and persists it at `/data/auth/identity.key` (private, PKCS#8 DER in PEM, mode 0400) and `/data/auth/identity.pub` (public, raw 32 bytes in PEM). The private key is used to sign artifacts sent to guests in RenewResponse messages. The public key is exposed via `GET /v1/public/info` and is meant to be baked into the guest initrd during image conversion, so the guest can verify artifact authenticity without trusting the network. Back up `identity.key` alongside `ingestion.key` - regenerating it would invalidate all previously prepared guest images.
 
-5. **TOFU (Trust On First Use)**: Client configuration uses TOFU for secure server identity
-   verification. During `config login`, the client fetches all three public values from
-   `/v1/public/info` (CA cert, ingestion public key, identity public key), displays the CA
-   certificate hash for user verification, and only proceeds after user confirmation. All three
-   values are written to `~/.config/snpguard/` (ca.pem, ingestion.pub, identity.pub) and removed
-   on `config logout`. This eliminates the need to manually provide CA certificates or public keys.
+5. **TOFU (Trust On First Use)**: During `config login`, the client makes a raw TLS connection to
+   the server and captures the certificate chain from the handshake.  A second connection verifies
+   the chain against the built-in Mozilla/webpki root bundle to determine the trust mode:
+
+   - **Public CA** (platform-managed TLS, e.g. fly.io with Let's Encrypt): no CA is pinned or
+     stored.  All connections use the built-in root bundle.  Only `ingestion.pub` and `identity.pub`
+     are written to `~/.config/snpguard/`.
+   - **Self-signed / private CA**: the CA portion of the chain is pinned and written as `ca.pem`.
+     All connections verify against this file.  `ca.pem`, `ingestion.pub`, and `identity.pub` are
+     written to `~/.config/snpguard/`.
+
+   In both cases the user is shown fingerprints to verify out-of-band before confirmation.  All
+   stored values are removed on `config logout`.
 
 5. **Key Format**: All X25519 keys (unsealing and ingestion) use a non-standard PEM format (raw 32-byte keys wrapped in PEM). This is NOT standard PKCS#8 format. Standard tools like `openssl` may not recognize this format, but it works correctly with SnpGuard.
