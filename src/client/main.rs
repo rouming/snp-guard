@@ -89,10 +89,11 @@ enum Command {
         #[arg(
             long,
             value_name = "PATH",
-            default_value = "/etc/snpguard/ca.pem",
-            help = "Path to the CA certificate used to verify the attestation service TLS certificate"
+            help = "Path to the pinned CA certificate for TLS verification. \
+                    Defaults to /etc/snpguard/ca.pem when that file exists; \
+                    falls back to the built-in public root CA bundle otherwise."
         )]
-        ca_cert: String,
+        ca_cert: Option<String>,
         #[command(subcommand)]
         action: AttestCmd,
     },
@@ -272,6 +273,9 @@ enum ManageCmd {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    // Install ring as the rustls crypto provider before any TLS operations.
+    // Required for the raw TLS connection used during TOFU cert capture.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     match cli.cmd {
         Command::Attest {
@@ -286,10 +290,20 @@ async fn main() -> Result<()> {
                     .context("--url not given and /etc/snpguard/attest.url not found")?;
                 normalize_https(raw.trim())?
             };
-            let ca_path = ca_cert;
+            // Resolve CA cert path: explicit flag > initramfs default > system roots.
+            // The initramfs default (/etc/snpguard/ca.pem) is only used when the file
+            // actually exists; otherwise fall through to the built-in root CA bundle.
+            let ca_path: Option<String> = ca_cert.or_else(|| {
+                let default = "/etc/snpguard/ca.pem";
+                if std::path::Path::new(default).exists() {
+                    Some(default.to_string())
+                } else {
+                    None
+                }
+            });
             match action {
                 AttestCmd::Report { sealed_blob } => {
-                    run_attest_report(&base, &ca_path, &sealed_blob).await
+                    run_attest_report(&base, ca_path.as_deref(), &sealed_blob).await
                 }
                 AttestCmd::Renew {
                     identity_pub,
@@ -303,7 +317,7 @@ async fn main() -> Result<()> {
                 } => {
                     run_attest_renew(
                         &base,
-                        &ca_path,
+                        ca_path.as_deref(),
                         &identity_pub,
                         &grub_cfg,
                         interactive,
@@ -371,7 +385,9 @@ fn identity_key_dest_path() -> Result<PathBuf> {
 struct StoredConfig {
     token: Option<String>,
     url: Option<String>,
-    ca_cert: Option<String>, // stored filename under config dir (e.g., ca.pem)
+    // Stored filename under config dir (e.g. "ca.pem") for self-signed / private CA.
+    // None means the server uses a public CA; built-in webpki roots are used instead.
+    ca_cert: Option<String>,
 }
 
 fn load_config() -> Result<StoredConfig> {
@@ -426,27 +442,214 @@ fn delete_config() -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// TLS certificate capture (TOFU)
+// ---------------------------------------------------------------------------
+// On first login, the client makes a raw TLS connection to the server and
+// captures the certificate chain presented during the handshake.
+//
+// A second connection verifies the chain against the built-in Mozilla/webpki
+// root CA bundle to decide how to treat it:
+//
+//   Public CA (e.g. Let's Encrypt / platform-managed TLS):
+//     No CA pinning.  Subsequent connections use the built-in root bundle.
+//     Nothing from the captured chain is stored on disk.
+//
+//   Self-signed / private CA:
+//     The CA portion of the chain is stored as ca.pem and used to pin all
+//     subsequent connections (SSH known_hosts style).
+//     Chain selection for pinning:
+//       - Single cert: the cert is both leaf and CA -- store it.
+//       - Multi-cert: drop the leaf (index 0), store the intermediates.
+//         The leaf rotates on renewal; intermediates are stable.
+//
+// In both cases the chain is converted to PEM for the fingerprint display
+// shown to the user.
+
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName as TlsServerName, UnixTime};
+use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
+use std::sync::{Arc as StdArc, Mutex};
+use tokio_rustls::TlsConnector;
+
+#[derive(Debug)]
+struct CertCapture {
+    chain: StdArc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl ServerCertVerifier for CertCapture {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _server_name: &TlsServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, TlsError> {
+        let mut chain = self.chain.lock().unwrap();
+        chain.push(end_entity.to_vec());
+        for cert in intermediates {
+            chain.push(cert.to_vec());
+        }
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+async fn fetch_tls_cert_chain(host: &str, port: u16) -> Result<Vec<Vec<u8>>> {
+    use tokio::net::TcpStream;
+
+    let captured: StdArc<Mutex<Vec<Vec<u8>>>> = StdArc::new(Mutex::new(Vec::new()));
+    let verifier = CertCapture {
+        chain: captured.clone(),
+    };
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(StdArc::new(verifier))
+        .with_no_client_auth();
+    let connector = TlsConnector::from(StdArc::new(config));
+    let stream = TcpStream::connect((host, port))
+        .await
+        .with_context(|| format!("Failed to connect to {}:{}", host, port))?;
+    let server_name = TlsServerName::try_from(host.to_string())
+        .map_err(|e| anyhow!("Invalid server name '{}': {}", host, e))?;
+    let _ = connector
+        .connect(server_name, stream)
+        .await
+        .with_context(|| format!("TLS handshake failed with {}:{}", host, port))?;
+    let chain = captured.lock().unwrap().clone();
+    if chain.is_empty() {
+        bail!("No certificates received from server");
+    }
+    Ok(chain)
+}
+
+/// Encode the CA portion of a captured chain as PEM bytes.
+/// For a single-cert chain (self-signed) that cert is stored as-is.
+/// For multi-cert chains the leaf (index 0) is dropped; the remaining
+/// intermediates are stored so that leaf renewals do not break pinning.
+fn chain_to_ca_pem(chain: &[Vec<u8>]) -> Vec<u8> {
+    let certs = if chain.len() == 1 { chain } else { &chain[1..] };
+    let mut out = Vec::new();
+    for der in certs {
+        let p = pem::Pem::new("CERTIFICATE", der.as_slice());
+        out.extend_from_slice(pem::encode(&p).as_bytes());
+    }
+    out
+}
+
+/// Check whether the server's TLS certificate is trusted by the public Mozilla root CA bundle.
+///
+/// Returns true if the certificate chain is verifiable by a well-known public CA (e.g.
+/// Let's Encrypt, DigiCert, platform-managed certs on fly.io / Railway / Render).
+/// Returns false if the cert is self-signed or issued by a private CA.
+///
+/// This check is advisory: it helps the user understand how thoroughly to verify
+/// the displayed fingerprints, but does not block login in either case.
+async fn check_publicly_trusted(host: &str, port: u16) -> bool {
+    let url = format!("https://{}:{}/v1/health", host, port);
+    let Ok(client) = reqwest::Client::builder()
+        .danger_accept_invalid_certs(false)
+        .tls_built_in_root_certs(true)
+        .timeout(Duration::from_secs(5))
+        .build()
+    else {
+        return false;
+    };
+    // Any HTTP response (even 4xx/5xx) means TLS verification succeeded.
+    // A connect-phase error means TLS verification failed (self-signed / private CA).
+    match client.head(&url).send().await {
+        Ok(_) => true,
+        Err(e) if e.is_connect() => false,
+        Err(_) => true,
+    }
+}
+
+/// Parse host and port from a normalised https:// URL.
+fn parse_https_host_port(base: &str) -> Result<(String, u16)> {
+    let rest = base
+        .strip_prefix("https://")
+        .ok_or_else(|| anyhow!("Expected https:// URL, got: {}", base))?;
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if let Some(colon) = authority.rfind(':') {
+        let host = authority[..colon].to_string();
+        let port: u16 = authority[colon + 1..]
+            .parse()
+            .with_context(|| format!("Invalid port in URL: {}", base))?;
+        Ok((host, port))
+    } else {
+        Ok((authority.to_string(), 443))
+    }
+}
+
+/// Build a client that trusts only a specific pinned CA (PEM file on disk).
 fn build_client(ca_cert_path: &str) -> Result<reqwest::Client> {
     let ca_pem = fs::read(ca_cert_path)
         .with_context(|| format!("Failed to read pinned CA certificate at {}", ca_cert_path))?;
     build_client_from_bytes(&ca_pem)
 }
 
-fn build_client_from_bytes(ca_pem: &[u8]) -> Result<reqwest::Client> {
-    let ca_cert =
-        Certificate::from_pem(ca_pem).context("Pinned CA certificate is not valid PEM")?;
-    let client = reqwest::Client::builder()
+/// Build a client that trusts the embedded Mozilla/webpki root CA bundle.
+/// Used when the server's TLS certificate is issued by a public CA and no
+/// pinned ca.pem was stored during login.
+fn build_client_system_roots() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
         .danger_accept_invalid_certs(false)
-        .tls_built_in_root_certs(false)
-        .add_root_certificate(ca_cert)
+        .tls_built_in_root_certs(true)
         .timeout(Duration::from_secs(TIMEOUT_SECS))
         .build()
-        .context("Failed to create HTTP client with pinned CA")?;
-    Ok(client)
+        .context("Failed to create HTTP client with system root CAs")
 }
 
-async fn run_attest_report(url: &str, ca_cert: &str, sealed_blob: &Path) -> Result<()> {
-    let client = build_client(ca_cert)?;
+/// Build a client using a pinned CA file when one is provided, or fall back
+/// to the system root CA bundle when `ca_cert_path` is None.
+fn build_client_maybe_pinned(ca_cert_path: Option<&str>) -> Result<reqwest::Client> {
+    match ca_cert_path {
+        Some(path) => build_client(path),
+        None => build_client_system_roots(),
+    }
+}
+
+fn build_client_from_bytes(ca_pem: &[u8]) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .danger_accept_invalid_certs(false)
+        .tls_built_in_root_certs(false)
+        .timeout(Duration::from_secs(TIMEOUT_SECS));
+    for item in pem::parse_many(ca_pem).map_err(|e| anyhow!("Failed to parse CA PEM: {}", e))? {
+        let cert = Certificate::from_der(item.contents())
+            .context("Failed to create certificate from DER")?;
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+        .build()
+        .context("Failed to create HTTP client with pinned CA")
+}
+
+async fn run_attest_report(url: &str, ca_cert: Option<&str>, sealed_blob: &Path) -> Result<()> {
+    let client = build_client_maybe_pinned(ca_cert)?;
     let base = normalize_https(url)?;
     let mut rng = OsRng;
 
@@ -670,7 +873,7 @@ fn discover_boot_artifacts(
 #[allow(clippy::too_many_arguments)]
 async fn run_attest_renew(
     url: &str,
-    ca_cert: &str,
+    ca_cert: Option<&str>,
     identity_pub: &str,
     grub_cfg: &Path,
     interactive: bool,
@@ -698,7 +901,7 @@ async fn run_attest_renew(
         }
     }
 
-    let client = build_client(ca_cert)?;
+    let client = build_client_maybe_pinned(ca_cert)?;
     let base = normalize_https(url)?;
 
     let mut firmware_data: Option<Vec<u8>> = None;
@@ -1074,20 +1277,19 @@ async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd)
         bail!("URL not provided and not stored; pass --url or run config login")
     };
 
-    let ca_path = if let Some(ca_path) = ca_cert {
-        ca_path.to_string()
-    } else if let Some(stored) = cfg.ca_cert {
-        config_dir()
-            .unwrap_or_default()
-            .join("snpguard")
-            .join(stored)
-            .to_string_lossy()
-            .to_string()
-    } else {
-        bail!("ca_cert not provided and not stored; pass --ca-cert or run config login")
-    };
+    // Resolve CA cert: explicit flag > stored path > None (use system roots for public CA login).
+    let ca_path: Option<String> = ca_cert.map(|p| p.to_string()).or_else(|| {
+        cfg.ca_cert.map(|stored| {
+            config_dir()
+                .unwrap_or_default()
+                .join("snpguard")
+                .join(stored)
+                .to_string_lossy()
+                .to_string()
+        })
+    });
 
-    let client = build_client(&ca_path)?;
+    let client = build_client_maybe_pinned(ca_path.as_deref())?;
     match action {
         ManageCmd::List { json } => {
             let resp = client
@@ -1428,15 +1630,28 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
             let ingestion_key_dest = ingestion_key_dest_path()?;
             let identity_key_dest = identity_key_dest_path()?;
 
-            // Request public info (without TLS verification - TOFU)
-            println!("Requesting server public information...");
-            let insecure_client = reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
-                .timeout(Duration::from_secs(TIMEOUT_SECS))
-                .build()
-                .context("Failed to create insecure HTTP client")?;
+            // TOFU: capture the TLS certificate chain from the server's TLS handshake.
+            // The CA portion (everything except the leaf cert) is stored and used to pin
+            // subsequent connections. The server no longer needs to serve its own CA via REST.
+            println!("Capturing server TLS certificate (TOFU)...");
+            let (host, port) = parse_https_host_port(&base)?;
+            let chain = fetch_tls_cert_chain(&host, port).await?;
+            let ca_pem = chain_to_ca_pem(&chain);
 
-            let public_info_resp = insecure_client
+            // Check whether the cert is issued by a known public CA (advisory only).
+            let publicly_trusted = check_publicly_trusted(&host, port).await;
+
+            // For public CA use the system root bundle throughout (no pinning at all).
+            // For self-signed / private CA pin to the captured chain.
+            let client = if publicly_trusted {
+                build_client_system_roots()?
+            } else {
+                build_client_from_bytes(&ca_pem)?
+            };
+
+            // Fetch ingestion and identity keys using the pinned client.
+            println!("Requesting server public information...");
+            let public_info_resp = client
                 .get(format!("{}/v1/public/info", base))
                 .send()
                 .await
@@ -1453,10 +1668,6 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
             let public_info: serde_json::Value = serde_json::from_str(&public_info_text)
                 .map_err(|e| anyhow!("Failed to parse server response as JSON: {}", e))?;
 
-            let ca_cert = public_info
-                .get("ca_cert")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Server response missing 'ca_cert' field"))?;
             let ingestion_pub_key = public_info
                 .get("ingestion_pub_key")
                 .and_then(|v| v.as_str())
@@ -1466,10 +1677,21 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Server response missing 'identity_pub_key' field"))?;
 
-            // Compute fingerprints for all three public values.
-            // CA cert: SHA256 of the PEM bytes (matches `openssl x509 -fingerprint` convention).
+            // Compute fingerprints.
+            // CA cert: SHA256 of the DER bytes (canonical, PEM-encoder-independent).
+            // Matches the server's print_key_fingerprints which also hashes DER.
             // Public keys: SHA256 of the raw 32-byte key material extracted from the PEM.
-            let ca_fp = hex::encode(Sha256::digest(ca_cert.as_bytes()));
+            let ca_fp = {
+                let ca_certs = if chain.len() == 1 {
+                    &chain[..]
+                } else {
+                    &chain[1..]
+                };
+                match ca_certs.first() {
+                    Some(der) => hex::encode(Sha256::digest(der.as_slice())),
+                    None => "N/A".to_string(),
+                }
+            };
 
             let ingestion_fp = {
                 let parsed = pem::parse(ingestion_pub_key)
@@ -1484,23 +1706,41 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
             };
 
             println!("\n=== Server Identity Verification (SHA256) ===");
-            println!("CA Certificate  : {}", ca_fp);
+            if publicly_trusted {
+                println!("CA Certificate  : {} [public CA]", ca_fp);
+            } else {
+                println!("CA Certificate  : {} [self-signed / private CA]", ca_fp);
+            }
             println!("Ingestion Key   : {}", ingestion_fp);
             println!("Identity Key    : {}", identity_fp);
             println!();
-            println!("Verify these fingerprints against the server before proceeding.");
-            println!("Obtain them from the server administrator or from the server's");
-            println!("/data/auth/ directory (ingestion.pub, identity.pub) and TLS cert.\n");
+            if publicly_trusted {
+                println!("The TLS certificate was issued by a recognized public CA.");
+                println!("Verify the Ingestion Key and Identity Key fingerprints with the");
+                println!(
+                    "server administrator or from /data/auth/ (ingestion.pub, identity.pub).\n"
+                );
+            } else {
+                println!("WARNING: The TLS certificate is self-signed or issued by a private CA.");
+                println!("Verify ALL three fingerprints carefully out-of-band with the server");
+                println!(
+                    "administrator (CA cert, ingestion.pub, identity.pub from /data/auth/).\n"
+                );
+            }
 
             // Get user confirmation
-            if !get_user_confirmation("Do all three fingerprints match the server?")? {
+            let prompt = if publicly_trusted {
+                "Do both key fingerprints match the server?"
+            } else {
+                "Do all three fingerprints match the server?"
+            };
+            if !get_user_confirmation(prompt)? {
                 println!("Aborted. Fingerprint verification failed.");
                 std::process::exit(1);
             }
 
-            // Validate token via health endpoint using received CA cert
+            // Validate token via health endpoint using the pinned client
             println!("\nValidating token with server...");
-            let client = build_client_from_bytes(ca_cert.as_bytes())?;
             let resp = client
                 .get(format!("{}/v1/health", base))
                 .bearer_auth(&token)
@@ -1513,8 +1753,8 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
                 std::process::exit(1);
             }
 
-            // Save CA cert and ingestion key to config dir
-            let config_parent = ca_dest
+            // Create config directory
+            let config_parent = ingestion_key_dest
                 .parent()
                 .ok_or_else(|| anyhow!("Cannot determine config directory"))?;
             fs::create_dir_all(config_parent)?;
@@ -1524,12 +1764,18 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
                 fs::set_permissions(config_parent, fs::Permissions::from_mode(0o700))?;
             }
 
-            // Save CA cert
-            fs::write(&ca_dest, ca_cert.as_bytes())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
+            // Save CA cert only for self-signed / private CA.
+            // For publicly-trusted certs the built-in root bundle is used; no file needed.
+            if publicly_trusted {
+                // Remove any stale ca.pem from a previous self-signed login.
+                let _ = fs::remove_file(&ca_dest);
+            } else {
+                fs::write(&ca_dest, &ca_pem)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&ca_dest, fs::Permissions::from_mode(0o600))?;
+                }
             }
 
             // Save ingestion public key
@@ -1548,10 +1794,14 @@ async fn run_config(action: ConfigCmd) -> Result<()> {
                 fs::set_permissions(&identity_key_dest, fs::Permissions::from_mode(0o600))?;
             }
 
-            // Save config
+            // Save config: ca_cert is None for public CA (use system roots), Some("ca.pem") for pinned.
             cfg.token = Some(token);
             cfg.url = Some(base);
-            cfg.ca_cert = Some("ca.pem".to_string());
+            cfg.ca_cert = if publicly_trusted {
+                None
+            } else {
+                Some("ca.pem".to_string())
+            };
             save_config(&cfg)?;
             println!("Successfully logged in, config stored");
         }

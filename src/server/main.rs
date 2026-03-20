@@ -5,6 +5,7 @@ use axum::{
     Extension, Router,
 };
 use axum_server::tls_rustls::RustlsConfig;
+use clap::Parser;
 use rand::RngCore;
 use rustls::crypto::ring::default_provider as ring_crypto_provider;
 use sea_orm::Database;
@@ -15,6 +16,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
+
+#[derive(Parser)]
+#[command(name = "snpguard-server")]
+struct Args {
+    /// Run in plain HTTP mode (no TLS). Intended for deployments where TLS
+    /// is terminated by the platform (e.g. Fly.io, Railway, Render). The
+    /// listening port is read from the PORT environment variable (default: 3000).
+    #[arg(long)]
+    no_tls: bool,
+}
 
 pub const MAX_BODY_BYTES: usize = 300 * 1024 * 1024;
 
@@ -33,6 +44,8 @@ mod web;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
     // Ensure rustls has a crypto provider (ring) installed
     ring_crypto_provider()
         .install_default()
@@ -42,11 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let paths = config::DataPaths::new(&data_dir)?;
     paths.ensure()?;
 
-    // TLS setup: use existing cert/key or generate self-signed for dev
-    let tls_cert = paths.tls_cert.clone();
-    let tls_key = paths.tls_key.clone();
-    if !tls_cert.exists() || !tls_key.exists() {
-        generate_self_signed_cert(&tls_cert, &tls_key, &paths.ca_cert)?;
+    // TLS setup: only in TLS mode. In --no-tls mode the platform terminates
+    // TLS in front of the server so no cert is needed here.
+    if !args.no_tls {
+        let tls_cert = paths.tls_cert.clone();
+        let tls_key = paths.tls_key.clone();
+        if !tls_cert.exists() || !tls_key.exists() {
+            generate_self_signed_cert(&tls_cert, &tls_key, &paths.ca_cert)?;
+        }
     }
 
     // Database URL derived from DATA_DIR
@@ -79,7 +95,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &paths.identity_pub,
     )?);
 
-    print_key_fingerprints(&paths.ca_cert, &ingestion_keys, &identity_key);
+    let ca_cert_opt = if args.no_tls {
+        None
+    } else {
+        Some(&paths.ca_cert)
+    };
+    print_key_fingerprints(ca_cert_opt, &ingestion_keys, &identity_key);
 
     // 4. Service core state (shared)
     let data_paths = Arc::new(paths);
@@ -128,28 +149,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/v1", rest_router)
         .layer(Extension(master_auth.clone()));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    println!("Management UI listening on https://{}", addr);
-    println!("REST API listening on https://{}/v1", addr);
-
-    let config = RustlsConfig::from_pem_file(tls_cert, tls_key).await?;
-    axum_server::bind_rustls(addr, config)
-        .serve(app.into_make_service())
-        .await?;
+    if args.no_tls {
+        println!("Management UI listening on http://{}", addr);
+        println!("REST API listening on http://{}/v1", addr);
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app.into_make_service()).await?;
+    } else {
+        println!("Management UI listening on https://{}", addr);
+        println!("REST API listening on https://{}/v1", addr);
+        let config = RustlsConfig::from_pem_file(&data_paths.tls_cert, &data_paths.tls_key).await?;
+        axum_server::bind_rustls(addr, config)
+            .serve(app.into_make_service())
+            .await?;
+    }
 
     Ok(())
 }
 
 fn print_key_fingerprints(
-    ca_cert_path: &PathBuf,
+    ca_cert_path: Option<&PathBuf>,
     ingestion_keys: &ingestion_key::IngestionKeys,
     identity_key: &identity_key::IdentityKey,
 ) {
-    // CA cert: SHA256 of PEM bytes (matches `openssl x509 -fingerprint` convention)
-    let ca_fp = match fs::read(ca_cert_path) {
-        Ok(pem_bytes) => hex::encode(Sha256::digest(&pem_bytes)),
-        Err(e) => format!("<error reading CA cert: {}>", e),
+    // CA cert: SHA256 of the DER bytes (canonical form, PEM-encoder-independent).
+    // Omitted in --no-tls mode (platform handles TLS).
+    let ca_fp = match ca_cert_path {
+        Some(path) => match fs::read(path) {
+            Ok(pem_bytes) => match pem::parse(&pem_bytes) {
+                Ok(parsed) => hex::encode(Sha256::digest(parsed.contents())),
+                Err(e) => format!("<error parsing CA PEM: {}>", e),
+            },
+            Err(e) => format!("<error reading CA cert: {}>", e),
+        },
+        None => "not applicable (platform TLS mode)".to_string(),
     };
 
     // Public keys: SHA256 of raw 32-byte key material

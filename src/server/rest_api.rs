@@ -65,27 +65,11 @@ pub fn router(state: Arc<ServiceState>, master: Arc<MasterAuth>) -> Router {
 
 #[derive(Serialize, Deserialize)]
 struct PublicInfo {
-    ca_cert: String,
     ingestion_pub_key: String,
     identity_pub_key: String,
 }
 
 async fn get_public_info(State(state): State<Arc<ServiceState>>) -> Response {
-    // Read CA certificate
-    let ca_cert = match std::fs::read_to_string(&state.data_paths.ca_cert) {
-        Ok(cert) => cert,
-        Err(e) => {
-            return Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header("Content-Type", "application/json")
-                .body(Body::from(format!(
-                    r#"{{"error":"Failed to read CA certificate: {}"}}"#,
-                    e
-                )))
-                .unwrap();
-        }
-    };
-
     // Get ingestion public key
     let ingestion_pub_key = match state.ingestion_keys.get_public_key_pem() {
         Ok(pem) => pem,
@@ -117,7 +101,6 @@ async fn get_public_info(State(state): State<Arc<ServiceState>>) -> Response {
     };
 
     let info = PublicInfo {
-        ca_cert,
         ingestion_pub_key,
         identity_pub_key,
     };

@@ -1045,7 +1045,7 @@ fn encrypt_and_copy_rootfs(
 pub fn upload_snpguard_files(
     g: &guestfs::Handle,
     snpguard_client_path: &str,
-    ca_pem_path: &str,
+    ca_pem_path: Option<&str>,
     identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
@@ -1062,9 +1062,14 @@ pub fn upload_snpguard_files(
     g.chmod(0o755, "/usr/bin/snpguard-client")
         .map_err(|e| anyhow!("Failed to chmod /usr/bin/snpguard-client: {:?}", e))?;
 
-    // Upload config files
-    g.upload(ca_pem_path, "/etc/snpguard/ca.pem")
-        .map_err(|e| anyhow!("Failed to upload /etc/snpguard/ca.pem: {:?}", e))?;
+    // Upload config files.
+    // ca.pem is only present for self-signed / private CA deployments.
+    // For public CA (platform TLS) the initramfs client uses its built-in
+    // webpki root bundle when /etc/snpguard/ca.pem is absent.
+    if let Some(path) = ca_pem_path {
+        g.upload(path, "/etc/snpguard/ca.pem")
+            .map_err(|e| anyhow!("Failed to upload /etc/snpguard/ca.pem: {:?}", e))?;
+    }
     g.upload(identity_pub_path, "/etc/snpguard/identity.pub")
         .map_err(|e| anyhow!("Failed to upload /etc/snpguard/identity.pub: {:?}", e))?;
     g.upload(vmk_sealed_path, "/etc/snpguard/vmk.sealed")
@@ -1204,7 +1209,7 @@ fn install_snpguard_on_target(
     supported_kernels: &[String],
     boot_partition: &BootPartition,
     snpguard_client_path: &str,
-    ca_pem_path: &str,
+    ca_pem_path: Option<&str>,
     identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
@@ -1567,22 +1572,26 @@ fn run_convert(
         println!("Encrypting root filesystem with LUKS2...");
         encrypt_and_copy_rootfs(&g, &scratch_rootfs, &source_rootfs, &target_rootfs, &vmk)?;
 
-        let ca_cert_file = ca_cert
-            .or_else(|| ca_cert_path().ok())
-            .ok_or_else(|| {
-                anyhow!(
-                    "CA certificate not provided. Please run 'snpguard-client config login' first or provide --ca-cert"
-                )
-            })?;
-        if !ca_cert_file.exists() {
-            bail!(
-                "CA certificate not found at {:?}. Please run 'snpguard-client config login' first or provide --ca-cert",
-                ca_cert_file
-            );
-        }
-        let ca_cert_path_str = ca_cert_file
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", ca_cert_file))?;
+        // Resolve CA cert path.  ca.pem only exists when the server uses a self-signed
+        // or private CA; for public CA deployments (platform TLS) it is intentionally
+        // absent and the initramfs client falls back to its built-in webpki root bundle.
+        // If --ca-cert is given explicitly the file must exist; otherwise treat a missing
+        // default path as None (public CA case).
+        let ca_cert_file: Option<PathBuf> = if let Some(explicit) = ca_cert {
+            if !explicit.exists() {
+                bail!("CA certificate not found at {:?}", explicit);
+            }
+            Some(explicit)
+        } else {
+            ca_cert_path().ok().filter(|p| p.exists())
+        };
+        let ca_cert_path_str: Option<&str> = match &ca_cert_file {
+            Some(p) => Some(
+                p.to_str()
+                    .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {:?}", p))?,
+            ),
+            None => None,
+        };
         let identity_pub_file = identity_pub
             .or_else(|| identity_pub_path().ok())
             .ok_or_else(|| {
