@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     protobuf-compiler \
     pkg-config \
     libssl-dev \
+    musl-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy all source files
@@ -22,8 +23,8 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Build the server binary
 RUN cargo build --release --bin snpguard-server
 
-# Build snpguest tool (dynamic linking for now)
-RUN cd snpguest && cargo build --release
+# Build snpguest tool (static, MUSL - matches Makefile)
+RUN cd snpguest && cargo build --release --target x86_64-unknown-linux-musl
 
 # Build migration tool
 RUN cargo build --release -p migration
@@ -38,7 +39,7 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=builder /usr/src/snp-guard/target/release/snpguard-server /usr/local/bin/
 
 # Copy snpguest binary
-COPY --from=builder /usr/src/snp-guard/snpguest/target/release/snpguest /usr/local/bin/
+COPY --from=builder /usr/src/snp-guard/snpguest/target/x86_64-unknown-linux-musl/release/snpguest /usr/local/bin/
 
 # Copy migration binary
 COPY --from=builder /usr/src/snp-guard/target/release/migration /usr/local/bin/

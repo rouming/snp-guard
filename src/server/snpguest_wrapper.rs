@@ -1,8 +1,29 @@
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use openssl::ec::EcKey;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Locate the snpguest binary.
+///
+/// In Docker/installed deployments snpguest is placed alongside the server
+/// binary (e.g. both in /usr/local/bin/).  In local dev builds it lives in
+/// the snpguest workspace member output directory.
+fn find_snpguest() -> Result<PathBuf> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
+        .to_path_buf();
+
+    // Installed/Docker: snpguest is a sibling of the server binary.
+    let sibling = exe_dir.join("snpguest");
+    if sibling.exists() {
+        return Ok(sibling);
+    }
+
+    // Local dev: snpguest is built with MUSL target (matches Makefile build-snpguest).
+    Ok(exe_dir.join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest"))
+}
 
 /// Wraps 'snpguest generate measurement' then 'snpguest generate id-block'
 #[allow(clippy::too_many_arguments)]
@@ -23,10 +44,7 @@ pub fn generate_measurement_and_block(
     validate_ec_key(auth_key)?;
 
     // Calculate Measurement
-    let snpguest_path = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
-        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+    let snpguest_path = find_snpguest()?;
 
     let output = Command::new(&snpguest_path)
         .arg("generate")
@@ -105,10 +123,7 @@ fn decode_base64_file(path: &Path) -> Result<()> {
 pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
     validate_ec_key(key_path)?;
 
-    let snpguest_path = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
-        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+    let snpguest_path = find_snpguest()?;
 
     let output = Command::new(&snpguest_path)
         .arg("generate")
@@ -148,10 +163,7 @@ fn validate_ec_key(path: &Path) -> Result<()> {
 }
 
 pub fn verify_report_signature(report_path: &Path) -> Result<()> {
-    let snpguest_path = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
-        .join("../../snpguest/target/x86_64-unknown-linux-musl/release/snpguest");
+    let snpguest_path = find_snpguest()?;
 
     // Create temporary directory for certificates
     let temp_dir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
