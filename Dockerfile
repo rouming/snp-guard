@@ -45,7 +45,6 @@ COPY --from=builder /usr/src/snp-guard/target/release/migration /usr/local/bin/
 
 # Copy UI templates and static files to the working directory structure expected by the server
 COPY --from=builder /usr/src/snp-guard/src/server/templates /app/templates
-COPY --from=builder /usr/src/snp-guard/ui/static /app/ui/static
 
 # Set working directory to match expected paths
 WORKDIR /app
@@ -69,7 +68,7 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost:3000/ || exit 1
+  CMD curl -f http://localhost:3000/v1/health || exit 1
 
 # Run migration first, then start the server.
 # Pass --no-tls when NO_TLS is non-empty (the default for PaaS deployments).

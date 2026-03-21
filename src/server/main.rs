@@ -14,7 +14,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 #[derive(Parser)]
@@ -136,7 +135,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/discard-pending/:id", post(web::discard_pending))
         .route("/tokens", get(web::tokens_page).post(web::create_token))
         .route("/tokens/:id/revoke", post(web::revoke_token))
-        .nest_service("/static", ServeDir::new("ui/static"))
         .layer(Extension(service_state.clone()))
         .layer(Extension(master_auth.clone()))
         .layer(middleware::from_fn(auth::master_auth_middleware))
