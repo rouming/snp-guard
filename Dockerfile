@@ -1,5 +1,5 @@
 # build stage
-FROM --platform=$BUILDPLATFORM rust:latest AS builder
+FROM rust:latest AS builder
 
 WORKDIR /usr/src/snp-guard
 
@@ -23,8 +23,10 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Build the server binary
 RUN cargo build --release --bin snpguard-server
 
-# Build snpguest tool (static, MUSL - matches Makefile)
-RUN cd snpguest && cargo build --release --target x86_64-unknown-linux-musl
+# Build snpguest (MUSL static)
+RUN cargo build --release \
+    --target x86_64-unknown-linux-musl \
+    --manifest-path snpguest/Cargo.toml
 
 # Build migration tool
 RUN cargo build --release -p migration
