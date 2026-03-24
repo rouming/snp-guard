@@ -66,9 +66,6 @@ ENV NO_TLS=1
 # Create data directory
 RUN mkdir -p /data
 
-# persistent volume mount point
-VOLUME /data
-
 # Run database migration on startup, then start the server
 EXPOSE 3000
 
