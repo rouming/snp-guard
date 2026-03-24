@@ -23,10 +23,13 @@ RUN rustup target add x86_64-unknown-linux-musl
 # Build the server binary
 RUN cargo build --release --bin snpguard-server
 
-# Build snpguest (MUSL static)
-RUN cargo build --release \
-    --target x86_64-unknown-linux-musl \
-    --manifest-path snpguest/Cargo.toml
+# Build and install snpguest (static, MUSL)
+# Fetched directly from git at the pinned commit so the build works whether
+# or not the git submodule was initialised
+RUN cargo install --git https://github.com/virtee/snpguest.git \
+    --rev 19fc1af1a6673015a0e70eeb88b6a796196ade93 \
+    --root /usr/local \
+    snpguest
 
 # Build migration tool
 RUN cargo build --release -p migration
@@ -41,7 +44,7 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=builder /usr/src/snp-guard/target/release/snpguard-server /usr/local/bin/
 
 # Copy snpguest binary
-COPY --from=builder /usr/src/snp-guard/snpguest/target/x86_64-unknown-linux-musl/release/snpguest /usr/local/bin/
+COPY --from=builder /usr/local/bin/snpguest /usr/local/bin/
 
 # Copy migration binary
 COPY --from=builder /usr/src/snp-guard/target/release/migration /usr/local/bin/
