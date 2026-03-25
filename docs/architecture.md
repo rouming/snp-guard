@@ -269,6 +269,7 @@ cancelled before relaunch via POST /v1/records/{id}/discard-pending (management 
 2. Replay attacks using old attestation reports
 3. Unauthorized access to management UI
 4. Database compromise exposing encrypted keys
+5. DNS substitution to a co-tenant app on a shared PaaS platform
 
 **Mitigations**:
 1. **TLS with Certificate Verification**: All communication uses HTTPS with verified certificates
@@ -276,6 +277,19 @@ cancelled before relaunch via POST /v1/records/{id}/discard-pending (management 
 3. **HTTP Basic Auth**: Management UI requires authentication
 4. **Two-Step Lookup**: VM identity (key digests on vm_registration) is verified before the artifact snapshot (image_id on attestation_record); both must match a real DB row
 5. **Enable/Disable Toggle**: Records can be disabled without deletion
+
+**Known limitation -- shared-platform wildcard certificates**: PaaS providers commonly issue
+wildcard TLS certificates (e.g. `*.koyeb.app`) that cover all customer subdomains on the same
+platform.  If DNS is substituted to point a server hostname at a malicious co-tenant app, TLS
+hostname verification still succeeds because the wildcard cert is valid for both subdomains.
+Application-layer security (HPKE-wrapped VMK, Ed25519-signed launch artifacts) is unaffected
+because those operations depend on private key material the attacker does not hold.  However, the
+management API token sent in the `Authorization: Bearer` header is exposed, allowing the attacker
+to perform management operations (register, delete, list records) against the real server.
+
+Recommended mitigation: deploy the server with a private CA certificate and enable TLS inside the
+container (`NO_TLS=` unset).  The client pins the CA cert at `config login`, binding all
+subsequent connections to that exact certificate and eliminating the wildcard ambiguity.
 
 ### Trust Boundaries
 

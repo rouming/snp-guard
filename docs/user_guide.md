@@ -72,6 +72,20 @@ by the built-in Mozilla/webpki root bundle:
 In both cases fingerprints are displayed for out-of-band verification, the token is validated via
 `/v1/health`, and URL/token/keys are stored to `~/.config/snpguard/`.
 
+**Security note -- public CA on shared platforms**: Many PaaS providers (Koyeb, Render, Railway,
+fly.io) issue wildcard TLS certificates (e.g. `*.koyeb.app`) shared across all customer apps.
+TLS hostname verification succeeds for any app on the same platform, so a DNS-substitution attack
+that redirects your server hostname to a malicious app on the same platform still passes TLS
+checks.  In this scenario the management API token sent in the `Authorization` header is exposed
+to the attacker.  The VMK release and artifact signatures are still protected by application-layer
+cryptography (HPKE ingestion key, Ed25519 identity key), but management operations (register,
+delete, list) authorized by the token alone are at risk.
+
+Mitigation: run the server with a private CA certificate (use
+`./scripts/generate-tls-certs.sh`) even on a PaaS platform, terminate TLS inside the container,
+and pin the CA cert at `config login`.  This binds connections to the exact certificate rather
+than a shared platform wildcard.
+
 ### 4. Image Conversion (Prepare Guest VM)
 
 Download a standard cloud image and convert it to a confidential-ready image. This process uses **qemu-img** and **libguestfs** to perform surgical, offline manipulation of the QCOW2 image, including root filesystem encryption (LUKS), partition management, and injecting the attestation agent into the initrd.
