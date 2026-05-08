@@ -142,12 +142,17 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
         ));
     }
 
-    let stdout = String::from_utf8(output.stdout)?.trim().to_string();
-    // Try to extract the first hex-looking token
+    let stdout = String::from_utf8(output.stdout)?;
     let hex_token = stdout
         .split_whitespace()
-        .find(|tok| tok.chars().all(|c| c.is_ascii_hexdigit()))
-        .ok_or_else(|| anyhow!("Failed to parse key digest from output: {}", stdout))?;
+        .map(|t| t.strip_prefix("0x").unwrap_or(t))
+        .find(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| {
+            anyhow!(
+                "Failed to parse key digest from output: {}",
+                stdout.trim()
+            )
+        })?;
 
     let bytes = hex::decode(hex_token)
         .map_err(|e| anyhow!("Failed to decode key digest '{}': {}", hex_token, e))?;
