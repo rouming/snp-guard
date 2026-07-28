@@ -227,8 +227,8 @@ enum ManageCmd {
         /// Number of virtual CPUs
         #[arg(long, default_value = "4")]
         vcpus: u32,
-        /// vCPU model (EPYC, EPYC-Milan, EPYC-Rome, EPYC-Genoa)
-        #[arg(long, default_value = "EPYC")]
+        /// vCPU model (EPYC-Milan, EPYC-Genoa, EPYC-Turin)
+        #[arg(long, default_value = "EPYC-Turin")]
         vcpu_type: String,
         /// Allow the guest policy debug flag
         #[arg(long, default_value_t = false)]

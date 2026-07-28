@@ -250,7 +250,7 @@ cargo run --bin snpguard-client manage register \
   --kernel ./staging/vmlinuz \
   --initrd ./staging/initrd.img \
   --kernel-params "$(cat ./staging/kernel-params.txt)" \
-  --vcpus 4 --vcpu-type EPYC \
+  --vcpus 4 --vcpu-type EPYC-Turin \
   --out-bundle ./launch-artifacts.tar.gz
 ```
 
@@ -261,7 +261,7 @@ cargo run --bin snpguard-client manage register \
 - `--enc-unsealing-private-key <PATH>`: Encrypted unsealing private key (required if not using staging directory)
 - `--firmware <PATH>`, `--kernel <PATH>`, `--initrd <PATH>`, `--kernel-params <STRING>`: Override individual files from staging directory
 - `--vcpus <N>`: Number of virtual CPUs (default: `4`)
-- `--vcpu-type <TYPE>`: EPYC variant: `EPYC`, `EPYC-Milan`, `EPYC-Genoa`, or `EPYC-Turin` (default: `EPYC`)
+- `--vcpu-type <TYPE>`: EPYC variant: `EPYC-Milan`, `EPYC-Genoa`, or `EPYC-Turin` (default: `EPYC-Turin`)
 - `--allowed-debug`: Allow debug mode (default: `false`)
 - `--allowed-migrate-ma`: Allow migration with MA (default: `false`)
 - `--allowed-smt`: Allow Simultaneous Multithreading (default: `false`)
