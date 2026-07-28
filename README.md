@@ -197,7 +197,7 @@ and the encrypted key, and returns the signed launch artifacts.
 ```bash
 cargo run --bin snpguard-client manage register \
   --os-name Debian13-CVM \
-  --vcpus 4 --vcpu-type EPYC-Milan \
+  --vcpus 4 --vcpu-type EPYC-Turin \
   --allowed-smt \
   --min-tcb-bootloader 0 --min-tcb-tee 0 --min-tcb-snp 0 --min-tcb-microcode 0 \
   --staging-dir ./staging \

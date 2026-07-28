@@ -209,7 +209,7 @@ Register the new image with the server. This uploads the measurements and the en
 ```bash
 cargo run --bin snpguard-client manage register \
   --os-name Debian13-CVM \
-  --vcpus 4 --vcpu-type EPYC-Milan \
+  --vcpus 4 --vcpu-type EPYC-Turin \
   --allowed-smt \
   --min-tcb-bootloader 0 --min-tcb-tee 0 --min-tcb-snp 0 --min-tcb-microcode 0 \
   --staging-dir ./staging \
@@ -261,7 +261,7 @@ cargo run --bin snpguard-client manage register \
 - `--enc-unsealing-private-key <PATH>`: Encrypted unsealing private key (required if not using staging directory)
 - `--firmware <PATH>`, `--kernel <PATH>`, `--initrd <PATH>`, `--kernel-params <STRING>`: Override individual files from staging directory
 - `--vcpus <N>`: Number of virtual CPUs (default: `4`)
-- `--vcpu-type <TYPE>`: EPYC variant: `EPYC`, `EPYC-Milan`, `EPYC-Rome`, or `EPYC-Genoa` (default: `EPYC`)
+- `--vcpu-type <TYPE>`: EPYC variant: `EPYC`, `EPYC-Milan`, `EPYC-Genoa`, or `EPYC-Turin` (default: `EPYC`)
 - `--allowed-debug`: Allow debug mode (default: `false`)
 - `--allowed-migrate-ma`: Allow migration with MA (default: `false`)
 - `--allowed-smt`: Allow Simultaneous Multithreading (default: `false`)
