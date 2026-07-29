@@ -1,0 +1,71 @@
+name: Release Tools
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build and publish tools image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version tag
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build tools image
+        run: |
+          docker build \
+            -f Dockerfile.tools \
+            -t ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }} \
+            -t ghcr.io/${{ github.repository_owner }}/snpguard-tools:latest \
+            .
+
+      - name: Push tools image
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }}
+          docker push ghcr.io/${{ github.repository_owner }}/snpguard-tools:latest
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ## Tools
+
+            All tools are shipped as a single Docker image.
+
+            ### Pull the image
+
+            ```
+            docker pull ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }}
+            ```
+
+            ### Usage
+
+            All tools share the same invocation pattern:
+            ```
+            docker run --rm -it --privileged \
+                -v $PWD:/work \
+                -v $HOME/.config:/root/.config \
+                ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }} \
+                <snpguard-image|snpguard-client> ...
+            ```
+
+            - `--privileged` gives the container access to `/dev/kvm`, which libguestfs uses to accelerate its internal QEMU appliance; without it libguestfs falls back to software emulation (TCG) and runs significantly slower
+            - `-v $PWD:/work` makes local image files accessible inside the container
+            - `-v $HOME/.config:/root/.config` persists `snpguard-client` config across runs
