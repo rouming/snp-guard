@@ -10,9 +10,9 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use clap::Parser;
+use migration::{Migrator, MigratorTrait};
 use rand::RngCore;
 use rustls::crypto::ring::default_provider as ring_crypto_provider;
-use migration::{Migrator, MigratorTrait};
 use sea_orm::Database;
 use sha2::{Digest, Sha256};
 use std::fs;

@@ -1300,14 +1300,19 @@ fn install_snpguard_on_target(
     }
 
     if !extra_modules_pkg.is_empty() {
-        g.sh(&format!("apt-get install --dry-run -y {}", extra_modules_pkg))
-            .map_err(|_| anyhow!(
+        g.sh(&format!(
+            "apt-get install --dry-run -y {}",
+            extra_modules_pkg
+        ))
+        .map_err(|_| {
+            anyhow!(
                 "{} is not available in apt. \
                  The kernel in this image is likely outdated: its extra-modules \
                  package is no longer in the repository. \
                  Please provide a newer base image.",
                 extra_modules_pkg
-            ))?;
+            )
+        })?;
         g.sh(&format!("apt install -y {}", extra_modules_pkg))
             .map_err(|e| anyhow!("Failed to install {}: {:?}", extra_modules_pkg, e))?;
     }

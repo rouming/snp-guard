@@ -147,12 +147,7 @@ pub fn get_key_digest(key_path: &Path) -> Result<Vec<u8>> {
         .split_whitespace()
         .map(|t| t.strip_prefix("0x").unwrap_or(t))
         .find(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_hexdigit()))
-        .ok_or_else(|| {
-            anyhow!(
-                "Failed to parse key digest from output: {}",
-                stdout.trim()
-            )
-        })?;
+        .ok_or_else(|| anyhow!("Failed to parse key digest from output: {}", stdout.trim()))?;
 
     let bytes = hex::decode(hex_token)
         .map_err(|e| anyhow!("Failed to decode key digest '{}': {}", hex_token, e))?;
