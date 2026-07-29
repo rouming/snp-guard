@@ -1,32 +1,70 @@
 # SnpGuard User Guide
 
-## Quick Start
+## Getting the Tools
 
-### 0. Clone Repository and Initialize Submodules
+### Option A: Pre-built Docker image (recommended)
+
+The easiest way to get `snpguard-image` and `snpguard-client` is to pull the
+pre-built tools image from the GitHub Container Registry:
 
 ```bash
-# Clone the repository
+docker pull ghcr.io/<owner>/snpguard-tools:latest
+```
+
+All tools share the same invocation pattern:
+
+```bash
+docker run --rm -it --privileged \
+    -v $PWD:/work \
+    -v $HOME/.config:/root/.config \
+    ghcr.io/<owner>/snpguard-tools:latest \
+    <snpguard-image|snpguard-client> ...
+```
+
+- `--privileged` gives the container access to `/dev/kvm`, which libguestfs uses to accelerate its internal QEMU appliance; without it libguestfs falls back to software emulation (TCG) and runs significantly slower
+- `-v $PWD:/work` makes local image files accessible inside the container
+- `-v $HOME/.config:/root/.config` persists `snpguard-client` config across runs
+
+
+### Option B: Build from source
+
+Install Rust via [rustup](https://rustup.rs):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then install the required system packages (Debian/Ubuntu):
+
+```bash
+apt-get install -y \
+    build-essential pkg-config libssl-dev \
+    protobuf-compiler \
+    musl-tools musl-dev \
+    libguestfs-dev libguestfs-tools linux-image-amd64 \
+    qemu-utils
+```
+
+Add the MUSL cross-compilation target:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+```
+
+Then clone and build:
+
+```bash
 git clone <repository-url>
 cd snp-guard
-
-# Initialize and update git submodules (required for snpguest)
 git submodule update --init --recursive
-```
-
-**Note**: The `snpguest` tool is included as a git submodule and must be initialized before building.
-
-### 1. Build the Project
-
-```bash
-# Build everything (server, client, snpguest)
 make build
-
-# Or build separately
-make build-server
-make build-client
-make build-image
-make build-snpguest
 ```
+
+## Quick Start
+
+### 1. Build or obtain the tools
+
+See [Getting the Tools](#getting-the-tools) above.
 
 ### 2. Attestation Server & Web Dashboard
 

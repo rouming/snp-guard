@@ -284,9 +284,21 @@ key, unlock the disk, and boot the OS.
     from inside the running VM, producing a pending record on the
     server).
 
-## Docker
+## Tools
 
-Build and run the container:
+A pre-built Docker image with `snpguard-image` and `snpguard-client` is available
+without building Rust locally:
+
+```bash
+docker pull ghcr.io/<owner>/snpguard-tools:latest
+```
+
+See the [User Guide](docs/user_guide.md#getting-the-tools) for full details,
+including how to build from source.
+
+## Server Docker
+
+Build and run the attestation server container:
 
 ```bash
 # Build the image
