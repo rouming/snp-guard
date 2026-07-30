@@ -302,22 +302,20 @@ including how to build from source.
 
 ## Server Docker
 
-Build and run the attestation server container:
+Pull and run the attestation server container:
 
 ```bash
-# Build the image
-docker build -t snp-guard .
+docker pull ghcr.io/<owner>/snpguard-server:latest
 
-# Run the container
 docker run -d \
   --name snp-guard \
   -p 3000:3000 \
   -v "$(pwd)/data:/data" \
   -e DATA_DIR=/data \
   --restart unless-stopped \
-  snp-guard
+  ghcr.io/<owner>/snpguard-server:latest
 
-# Get master password from stdout if started for the first time
+# Get master password from logs on first start
 docker container logs snp-guard
 ```
 

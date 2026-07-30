@@ -40,24 +40,33 @@ jobs:
           docker push ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }}
           docker push ghcr.io/${{ github.repository_owner }}/snpguard-tools:latest
 
+      - name: Build server image
+        run: |
+          docker build \
+            -t ghcr.io/${{ github.repository_owner }}/snpguard-server:${{ steps.tag.outputs.version }} \
+            -t ghcr.io/${{ github.repository_owner }}/snpguard-server:latest \
+            .
+
+      - name: Push server image
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/snpguard-server:${{ steps.tag.outputs.version }}
+          docker push ghcr.io/${{ github.repository_owner }}/snpguard-server:latest
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           body: |
-            ## Tools
+            ## Images
 
-            All tools are shipped as a single Docker image.
+            ### snpguard-tools
 
-            ### Pull the image
+            Client and image-conversion tools:
 
             ```
             docker pull ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }}
             ```
 
-            ### Usage
-
-            All tools share the same invocation pattern:
             ```
             docker run --rm -it --privileged \
                 -v $PWD:/work \
@@ -69,3 +78,27 @@ jobs:
             - `--privileged` gives the container access to `/dev/kvm`, which libguestfs uses to accelerate its internal QEMU appliance; without it libguestfs falls back to software emulation (TCG) and runs significantly slower
             - `-v $PWD:/work` makes local image files accessible inside the container
             - `-v $HOME/.config:/root/.config` persists `snpguard-client` config across runs
+
+            ### snpguard-server
+
+            Attestation server:
+
+            ```
+            docker pull ghcr.io/${{ github.repository_owner }}/snpguard-server:${{ steps.tag.outputs.version }}
+            ```
+
+            ```
+            docker run -d \
+                --name snp-guard \
+                -p 3000:3000 \
+                -v "$(pwd)/data:/data" \
+                -e DATA_DIR=/data \
+                --restart unless-stopped \
+                ghcr.io/${{ github.repository_owner }}/snpguard-server:${{ steps.tag.outputs.version }}
+            ```
+
+            Retrieve the master password printed on first start:
+
+            ```
+            docker logs snp-guard
+            ```
