@@ -15,6 +15,7 @@ All tools share the same invocation pattern:
 
 ```bash
 docker run --rm -it --privileged \
+    --network host \
     -v $PWD:/work \
     -v $HOME/.config:/root/.config \
     ghcr.io/<owner>/snpguard-tools:latest \
@@ -22,6 +23,7 @@ docker run --rm -it --privileged \
 ```
 
 - `--privileged` gives the container access to `/dev/kvm`, which libguestfs uses to accelerate its internal QEMU appliance; without it libguestfs falls back to software emulation (TCG) and runs significantly slower
+- `--network host` lets the container reach services on the host (e.g. the attestation server at `localhost:3000`)
 - `-v $PWD:/work` makes local image files accessible inside the container
 - `-v $HOME/.config:/root/.config` persists `snpguard-client` config across runs
 
@@ -86,6 +88,7 @@ docker run -d \
   -p 3000:3000 \
   -v "$(pwd)/data:/data" \
   -e DATA_DIR=/data \
+  -e NO_TLS= \
   --restart unless-stopped \
   ghcr.io/<owner>/snpguard-server:latest
 ```

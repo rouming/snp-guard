@@ -65,6 +65,7 @@ jobs:
 
             ```
             docker run --rm -it --privileged \
+                --network host \
                 -v $PWD:/work \
                 -v $HOME/.config:/root/.config \
                 ghcr.io/${{ github.repository_owner }}/snpguard-tools:${{ steps.tag.outputs.version }} \

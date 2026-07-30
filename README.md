@@ -307,11 +307,15 @@ Pull and run the attestation server container:
 ```bash
 docker pull ghcr.io/<owner>/snpguard-server:latest
 
+# Generate TLS certificates once before first start
+./scripts/generate-tls-certs.sh --output data/tls --ip ${IP}
+
 docker run -d \
   --name snp-guard \
   -p 3000:3000 \
   -v "$(pwd)/data:/data" \
   -e DATA_DIR=/data \
+  -e NO_TLS= \
   --restart unless-stopped \
   ghcr.io/<owner>/snpguard-server:latest
 
