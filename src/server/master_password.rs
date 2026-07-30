@@ -38,6 +38,11 @@ pub fn load_or_create_master_password(
         if hash.is_empty() {
             return Err("Existing master password hash file is empty".into());
         }
+        println!("Master password loaded from existing hash -- cannot be shown.");
+        println!(
+            "If you forgot it, delete {} and restart the server to generate a new one.",
+            path.display()
+        );
         return Ok(MasterAuth { hash });
     }
 
