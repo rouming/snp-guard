@@ -4,6 +4,12 @@
 
 mod local_ops;
 
+const HOOK_SCRIPT: &[u8] = include_bytes!("../../scripts/initramfs-tools/hook.sh");
+const ATTEST_ONLINE_SCRIPT: &[u8] =
+    include_bytes!("../../scripts/initramfs-tools/attest-online.sh");
+const ATTEST_OFFLINE_SCRIPT: &[u8] =
+    include_bytes!("../../scripts/initramfs-tools/attest-offline.sh");
+
 use anyhow::{anyhow, bail, Context, Result};
 use boot::grub;
 use boot::sev::{kernel_version_from_path, sev_support_from_config, SevGuestSupport};
@@ -1054,6 +1060,27 @@ fn encrypt_and_copy_rootfs(
     Ok(())
 }
 
+/// Locate the snpguard-client (musl) binary.
+///
+/// In Docker/installed deployments snpguard-client is placed alongside the
+/// snpguard-image binary (e.g. both in /usr/local/bin/).  In local dev builds
+/// it lives in the cargo MUSL target output directory.
+fn find_snpguard_client() -> Result<PathBuf> {
+    let exe_dir = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot get executable directory"))?
+        .to_path_buf();
+
+    // Installed/Docker: snpguard-client is a sibling of the snpguard-image binary.
+    let sibling = exe_dir.join("snpguard-client");
+    if sibling.exists() {
+        return Ok(sibling);
+    }
+
+    // Local dev: snpguard-client is built with MUSL target (matches Makefile build-client).
+    Ok(exe_dir.join("../x86_64-unknown-linux-musl/release/snpguard-client"))
+}
+
 /// Upload snpguard files and scripts into a guest image rootfs
 #[allow(clippy::too_many_arguments)]
 pub fn upload_snpguard_files(
@@ -1063,8 +1090,7 @@ pub fn upload_snpguard_files(
     identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
-    hook_path: &str,
-    local_top_path: &str,
+    attest_script: &[u8],
 ) -> Result<()> {
     // Create directories
     g.mkdir_p("/etc/snpguard")
@@ -1091,11 +1117,11 @@ pub fn upload_snpguard_files(
     g.write("/etc/snpguard/attest.url", attest_url.as_bytes())
         .map_err(|e| anyhow!("Failed to write /etc/snpguard/attest.url: {:?}", e))?;
 
-    // Upload initramfs hook script
-    g.upload(hook_path, "/etc/initramfs-tools/hooks/snpguard")
+    // Write initramfs hook script (embedded at compile time)
+    g.write("/etc/initramfs-tools/hooks/snpguard", HOOK_SCRIPT)
         .map_err(|e| {
             anyhow!(
-                "Failed to upload /etc/initramfs-tools/hooks/snpguard: {:?}",
+                "Failed to write /etc/initramfs-tools/hooks/snpguard: {:?}",
                 e
             )
         })?;
@@ -1107,18 +1133,17 @@ pub fn upload_snpguard_files(
             )
         })?;
 
-    // Upload local-top attestation script
-    g.upload(
-        local_top_path,
+    // Write local-top attestation script (embedded at compile time)
+    g.write(
         "/etc/initramfs-tools/scripts/local-top/snpguard-attest",
+        attest_script,
     )
     .map_err(|e| {
         anyhow!(
-            "Failed to upload /etc/initramfs-tools/scripts/local-top/snpguard-attest: {:?}",
+            "Failed to write /etc/initramfs-tools/scripts/local-top/snpguard-attest: {:?}",
             e
         )
     })?;
-
     g.chmod(
         0o755,
         "/etc/initramfs-tools/scripts/local-top/snpguard-attest",
@@ -1227,8 +1252,7 @@ fn install_snpguard_on_target(
     identity_pub_path: &str,
     vmk_sealed_path: &str,
     attest_url: &str,
-    hook_path: &str,
-    local_top_path: &str,
+    attest_script: &[u8],
 ) -> Result<()> {
     // Convert VMK to string for LUKS
     let luks_key = hex::encode(vmk);
@@ -1330,8 +1354,7 @@ fn install_snpguard_on_target(
         identity_pub_path,
         vmk_sealed_path,
         attest_url,
-        hook_path,
-        local_top_path,
+        attest_script,
     )?;
 
     for cmd in update_cmds {
@@ -1377,10 +1400,11 @@ fn run_convert(
     interactive: bool,
     offline_attestation: bool,
 ) -> Result<()> {
-    let musl_client_path = "target/x86_64-unknown-linux-musl/release/snpguard-client";
+    let musl_client_path = find_snpguard_client()?;
+    let musl_client_path = musl_client_path.to_string_lossy();
 
     // Verify musl client binary is present before doing any expensive work.
-    if !no_hardening && !Path::new(musl_client_path).exists() {
+    if !no_hardening && !Path::new(musl_client_path.as_ref()).exists() {
         bail!(
             "snpguard-client (musl) not found at {musl_client_path}\n\
              Build it first:\n  make build-image"
@@ -1629,16 +1653,15 @@ fn run_convert(
             &vmk,
             &supported_kernels,
             &boot_partition,
-            musl_client_path,
+            &musl_client_path,
             ca_cert_path_str,
             identity_pub_path_str,
             sealed_vmk_path,
             &attest_url_str,
-            "scripts/initramfs-tools/hook.sh",
             if offline_attestation {
-                "scripts/initramfs-tools/attest-offline.sh"
+                ATTEST_OFFLINE_SCRIPT
             } else {
-                "scripts/initramfs-tools/attest-online.sh"
+                ATTEST_ONLINE_SCRIPT
             },
         )?;
     }
