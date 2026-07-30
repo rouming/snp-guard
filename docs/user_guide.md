@@ -93,7 +93,8 @@ On first start, the server generates a master password and prints it to stdout. 
 Configure the client to connect to the attestation server:
 
 ```bash
-cargo run --bin snpguard-client config login \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client config login \
   --url https://${HOSTNAME_OR_IP}:3000 \
   --token ${TOKEN}
 ```
@@ -133,7 +134,8 @@ Download a standard cloud image and convert it to a confidential-ready image. Th
 wget https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 
 # Convert standard Debian to a confidential-ready Debian
-cargo run --bin snpguard-image convert \
+cargo run --release --bin \
+  snpguard-image convert \
   --in-image ./debian-13-genericcloud-amd64.qcow2 \
   --out-image confidential.qcow2 \
   --out-staging ./staging \
@@ -222,7 +224,8 @@ same physical AMD chip under the same launch policy.
 
 ```bash
 # Convert with offline attestation support
-cargo run --bin snpguard-image convert \
+cargo run --release --bin \
+  snpguard-image convert \
   --in-image ./debian-13-genericcloud-amd64.qcow2 \
   --out-image confidential.qcow2 \
   --out-staging ./staging \
@@ -245,7 +248,8 @@ After conversion, the staging directory (`./staging`) contains:
 Register the new image with the server. This uploads the measurements and the encrypted key, and returns the signed launch artifacts.
 
 ```bash
-cargo run --bin snpguard-client manage register \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage register \
   --os-name Debian13-CVM \
   --vcpus 4 --vcpu-type EPYC-Turin \
   --allowed-smt \
@@ -281,7 +285,8 @@ When using `--staging-dir`, the command expects:
 Alternatively, you can provide individual files:
 
 ```bash
-cargo run --bin snpguard-client manage register \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage register \
   --os-name Ubuntu22.04 \
   --enc-unsealing-private-key ./staging/unsealing.key.enc \
   --firmware ./staging/firmware-code.fd \
@@ -316,7 +321,8 @@ This creates a dedicated partition with the label `LAUNCH_ARTIFACTS` containing 
 artifacts (kernel, initrd, ID-Block, Auth-Block) in an A/B directory structure.
 
 ```bash
-cargo run --bin snpguard-image embed \
+cargo run --release --bin \
+  snpguard-image embed \
   --image ./confidential.qcow2 \
   --in-bundle ./launch-artifacts.tar.gz
 ```
@@ -369,16 +375,20 @@ Use the CLI to list and view records:
 
 ```bash
 # List all records
-cargo run --bin snpguard-client manage list
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage list
 
 # List with JSON output
-cargo run --bin snpguard-client manage list --json
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage list --json
 
 # Show record details
-cargo run --bin snpguard-client manage show <record-id>
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage show <record-id>
 
 # Show with JSON output
-cargo run --bin snpguard-client manage show <record-id> --json
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage show <record-id> --json
 ```
 
 Alternatively, use the Web Dashboard at `https://${HOSTNAME_OR_IP}:3000` to view records with:
@@ -391,10 +401,12 @@ Alternatively, use the Web Dashboard at `https://${HOSTNAME_OR_IP}:3000` to view
 
 ```bash
 # Disable a record
-cargo run --bin snpguard-client manage disable <record-id>
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage disable <record-id>
 
 # Enable a record
-cargo run --bin snpguard-client manage enable <record-id>
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage enable <record-id>
 ```
 
 Disabled records will cause attestation requests to fail, but the record remains in the database.
@@ -404,7 +416,8 @@ Disabled records will cause attestation requests to fail, but the record remains
 Export launch artifacts bundle:
 
 ```bash
-cargo run --bin snpguard-client manage export \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage export \
   --id <record-id> \
   --format tar \
   --out-bundle artifacts.tar.gz
@@ -424,7 +437,8 @@ Formats: `tar`, `squash`, or `squashfs` (default: `tar`)
 ### Deleting Records
 
 ```bash
-cargo run --bin snpguard-client manage delete <record-id>
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage delete <record-id>
 ```
 
 This permanently removes the record and all associated artifacts.

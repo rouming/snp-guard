@@ -133,7 +133,8 @@ master password to stdout. Copy it, then:
 Configure the client to connect to the attestation server:
 
 ```bash
-cargo run --bin snpguard-client config login \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client config login \
   --url https://${HOSTNAME_OR_IP}:3000 \
   --token ${TOKEN}
 ```
@@ -151,7 +152,8 @@ initrd.
 wget https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2
 
 # Convert standard Debian to a confidential-ready Debian
-cargo run --bin snpguard-image convert \
+cargo run --release --bin \
+  snpguard-image convert \
   --in-image ./debian-13-genericcloud-amd64.qcow2 \
   --out-image confidential.qcow2 \
   --out-staging ./staging \
@@ -195,7 +197,8 @@ Register the new image with the server. This uploads the measurements
 and the encrypted key, and returns the signed launch artifacts.
 
 ```bash
-cargo run --bin snpguard-client manage register \
+cargo run --release --target x86_64-unknown-linux-musl --bin \
+  snpguard-client manage register \
   --os-name Debian13-CVM \
   --vcpus 4 --vcpu-type EPYC-Turin \
   --allowed-smt \
@@ -215,7 +218,8 @@ confidential image. This creates a dedicated partition with the label
 ID-Block, Auth-Block) in an A/B directory structure.
 
 ```bash
-cargo run --bin snpguard-image embed \
+cargo run --release --bin \
+  snpguard-image embed \
   --image ./confidential.qcow2 \
   --in-bundle ./launch-artifacts.tar.gz
 ```

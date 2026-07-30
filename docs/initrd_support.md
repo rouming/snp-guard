@@ -102,7 +102,8 @@ The complete boot sequence with SnpGuard attestation:
 The hooks are automatically installed when converting an image:
 
 ```bash
-cargo run --bin snpguard-image convert \
+cargo run --release --bin \
+  snpguard-image convert \
   --in-image ./debian-13-genericcloud-amd64.qcow2 \
   --out-image confidential.qcow2 \
   --out-staging ./staging \
