@@ -55,12 +55,17 @@ case "$1" in
     prereqs) prereqs; exit 0 ;;
 esac
 
+# Redirect all output to /dev/kmsg so messages appear on every configured
+# console (tty1, ttyS0, etc.) via the kernel log fan-out, and persist in
+# dmesg for post-mortem inspection.
+exec > /dev/kmsg 2>&1
+
 . /scripts/functions
 
 panic() {
     echo
     echo "PANIC:"
-    echo "PANIC: $*" >&2
+    echo "PANIC: $*"
     echo "PANIC:"
     echo
     exec sh
