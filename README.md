@@ -320,7 +320,7 @@ docker run -d \
   ghcr.io/<owner>/snpguard-server:latest
 
 # Get master password from logs on first start
-docker container logs snp-guard
+docker logs snp-guard
 ```
 
 ## Documentation
