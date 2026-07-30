@@ -85,17 +85,18 @@ jobs:
             ```
 
             ```
+            # Generate TLS certificates once before first start
+            ./scripts/generate-tls-certs.sh --output data/tls --ip ${IP}
+
             docker run -d \
                 --name snp-guard \
                 -p 3000:3000 \
                 -v "$(pwd)/data:/data" \
                 -e DATA_DIR=/data \
+                -e NO_TLS= \
                 --restart unless-stopped \
                 ghcr.io/${{ github.repository_owner }}/snpguard-server:${{ steps.tag.outputs.version }}
-            ```
 
-            Retrieve the master password printed on first start:
-
-            ```
+            # Get master password from logs on first start
             docker logs snp-guard
             ```
