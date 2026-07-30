@@ -78,6 +78,20 @@ If a hostname should be used instead of `${IP}`, please provide the `--dns <HOST
 
 Start the server. The server provides both the Attestation API and the Management Web UI.
 
+**Option A: pre-built Docker image (recommended)**
+
+```bash
+docker run -d \
+  --name snp-guard \
+  -p 3000:3000 \
+  -v "$(pwd)/data:/data" \
+  -e DATA_DIR=/data \
+  --restart unless-stopped \
+  ghcr.io/<owner>/snpguard-server:latest
+```
+
+**Option B: build from source**
+
 ```bash
 make run-server
 ```
