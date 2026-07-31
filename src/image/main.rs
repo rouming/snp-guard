@@ -1426,22 +1426,6 @@ fn run_convert(
             })?;
     }
 
-    // Resolve ingestion public key path
-    let ingestion_key_file = ingestion_public_key
-        .or_else(|| ingestion_key_path().ok())
-        .ok_or_else(|| {
-            anyhow!(
-                "Ingestion public key not provided. Please run 'snpguard-client config login' first or provide --ingestion-public-key"
-            )
-        })?;
-
-    if !ingestion_key_file.exists() {
-        bail!(
-            "Ingestion public key not found at {:?}. Please run 'snpguard-client config login' first or provide --ingestion-public-key",
-            ingestion_key_file
-        );
-    }
-
     if out_staging.exists() && out_image.exists() {
         bail!(
             "Staging directory {:?} and output image file {:?} already exist",
@@ -1459,97 +1443,123 @@ fn run_convert(
     fs::create_dir_all(out_staging)?;
     let mut cleanup_guard = CleanupGuard::new(out_staging.to_path_buf());
 
-    // Generate random 64-byte VMK
-    println!("Generating Volume Master Key (VMK)...");
-    let mut vmk = vec![0u8; 64];
-    let mut rng = OsRng;
-    rng.fill_bytes(&mut vmk);
-    let vmk_path = out_staging.join("vmk.bin");
-    fs::write(&vmk_path, &vmk)?;
-
-    println!("Generating unsealing keypair...");
-    let unsealing_priv_path = out_staging.join("unsealing.key");
-    let unsealing_pub_path = out_staging.join("unsealing.pub");
-    local_ops::generate_keys(&unsealing_priv_path, &unsealing_pub_path)?;
-
-    println!("Sealing VMK with unsealing public key...");
+    let vmk: Vec<u8>;
+    let enc_unsealing_key_path: Option<PathBuf>;
     let sealed_vmk_file = out_staging.join("vmk.sealed");
-    local_ops::encrypt_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_file)?;
 
-    // Remove unsealing public key (not needed after sealing)
-    fs::remove_file(&unsealing_pub_path).context("Failed to remove unsealing public key")?;
+    if !no_hardening {
+        let ingestion_key_file = ingestion_public_key
+            .or_else(|| ingestion_key_path().ok())
+            .ok_or_else(|| {
+                anyhow!(
+                    "Ingestion public key not provided. Please run 'snpguard-client config login' first or provide --ingestion-public-key"
+                )
+            })?;
 
-    println!("Sealing unsealing private key with ingestion public key...");
+        if !ingestion_key_file.exists() {
+            bail!(
+                "Ingestion public key not found at {:?}. Please run 'snpguard-client config login' first or provide --ingestion-public-key",
+                ingestion_key_file
+            );
+        }
 
-    // Load ingestion public key
-    let ingestion_pub_pem_str = fs::read_to_string(&ingestion_key_file).with_context(|| {
-        format!(
-            "Failed to read ingestion public key from {:?}",
-            ingestion_key_file
-        )
-    })?;
+        println!("Generating Volume Master Key (VMK)...");
+        let mut vmk_inner = vec![0u8; 64];
+        let mut rng = OsRng;
+        rng.fill_bytes(&mut vmk_inner);
+        let vmk_path = out_staging.join("vmk.bin");
+        fs::write(&vmk_path, &vmk_inner)?;
 
-    let ingestion_pub_pem =
-        pem_parse(&ingestion_pub_pem_str).context("Failed to parse ingestion public key PEM")?;
+        println!("Generating unsealing keypair...");
+        let unsealing_priv_path = out_staging.join("unsealing.key");
+        let unsealing_pub_path = out_staging.join("unsealing.pub");
+        local_ops::generate_keys(&unsealing_priv_path, &unsealing_pub_path)?;
 
-    if ingestion_pub_pem.tag() != "PUBLIC KEY" {
-        bail!("Invalid ingestion public key PEM tag (expected PUBLIC KEY)");
+        println!("Sealing VMK with unsealing public key...");
+        local_ops::encrypt_file(&unsealing_pub_path, &vmk_path, &sealed_vmk_file)?;
+
+        // Remove unsealing public key (not needed after sealing)
+        fs::remove_file(&unsealing_pub_path).context("Failed to remove unsealing public key")?;
+
+        println!("Sealing unsealing private key with ingestion public key...");
+
+        // Load ingestion public key
+        let ingestion_pub_pem_str = fs::read_to_string(&ingestion_key_file).with_context(|| {
+            format!(
+                "Failed to read ingestion public key from {:?}",
+                ingestion_key_file
+            )
+        })?;
+
+        let ingestion_pub_pem = pem_parse(&ingestion_pub_pem_str)
+            .context("Failed to parse ingestion public key PEM")?;
+
+        if ingestion_pub_pem.tag() != "PUBLIC KEY" {
+            bail!("Invalid ingestion public key PEM tag (expected PUBLIC KEY)");
+        }
+
+        let ingestion_pub_bytes: [u8; 32] = ingestion_pub_pem
+            .contents()
+            .try_into()
+            .map_err(|_| anyhow!("Invalid ingestion public key length (expected 32 bytes)"))?;
+
+        let server_pub = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&ingestion_pub_bytes)
+            .map_err(|e| anyhow!("Failed to create ingestion public key: {}", e))?;
+
+        // Load unsealing private key
+        let unsealing_priv_pem_str = fs::read_to_string(&unsealing_priv_path)
+            .context("Failed to read unsealing private key")?;
+
+        let unsealing_priv_pem = pem_parse(&unsealing_priv_pem_str)
+            .context("Failed to parse unsealing private key PEM")?;
+
+        if unsealing_priv_pem.tag() != "PRIVATE KEY" {
+            bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
+        }
+
+        let unsealing_priv_bytes: [u8; 32] = unsealing_priv_pem
+            .contents()
+            .try_into()
+            .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
+
+        // Encrypt with HPKE
+        let mut rng = OsRng;
+        let (encapped_key, mut sender_ctx) = hpke::setup_sender::<
+            AesGcm256,
+            HkdfSha256,
+            X25519HkdfSha256,
+            _,
+        >(&OpModeS::Base, &server_pub, &[], &mut rng)
+        .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
+
+        let ciphertext = sender_ctx
+            .seal(&unsealing_priv_bytes, &[])
+            .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
+
+        let encapped_bytes = encapped_key.to_bytes();
+        let mut unsealing_key_encrypted =
+            Vec::with_capacity(encapped_bytes.len() + ciphertext.len());
+        unsealing_key_encrypted.extend_from_slice(&encapped_bytes);
+        unsealing_key_encrypted.extend_from_slice(&ciphertext);
+
+        // Save encrypted unsealing key
+        let enc_key_path = out_staging.join("unsealing.key.enc");
+        fs::write(&enc_key_path, &unsealing_key_encrypted)?;
+
+        // Securely delete unencrypted unsealing private key
+        println!("Securely deleting unencrypted unsealing private key...");
+        secure_delete_file(&unsealing_priv_path)?;
+
+        // Securely delete unencrypted VMK
+        println!("Securely deleting unencrypted VMK...");
+        secure_delete_file(&vmk_path)?;
+
+        vmk = vmk_inner;
+        enc_unsealing_key_path = Some(enc_key_path);
+    } else {
+        vmk = Vec::new();
+        enc_unsealing_key_path = None;
     }
-
-    let ingestion_pub_bytes: [u8; 32] = ingestion_pub_pem
-        .contents()
-        .try_into()
-        .map_err(|_| anyhow!("Invalid ingestion public key length (expected 32 bytes)"))?;
-
-    let server_pub = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&ingestion_pub_bytes)
-        .map_err(|e| anyhow!("Failed to create ingestion public key: {}", e))?;
-
-    // Load unsealing private key
-    let unsealing_priv_pem_str =
-        fs::read_to_string(&unsealing_priv_path).context("Failed to read unsealing private key")?;
-
-    let unsealing_priv_pem =
-        pem_parse(&unsealing_priv_pem_str).context("Failed to parse unsealing private key PEM")?;
-
-    if unsealing_priv_pem.tag() != "PRIVATE KEY" {
-        bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
-    }
-
-    let unsealing_priv_bytes: [u8; 32] = unsealing_priv_pem
-        .contents()
-        .try_into()
-        .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
-
-    // Encrypt with HPKE
-    let mut rng = OsRng;
-    let (encapped_key, mut sender_ctx) = hpke::setup_sender::<
-        AesGcm256,
-        HkdfSha256,
-        X25519HkdfSha256,
-        _,
-    >(&OpModeS::Base, &server_pub, &[], &mut rng)
-    .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
-
-    let ciphertext = sender_ctx
-        .seal(&unsealing_priv_bytes, &[])
-        .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
-
-    let encapped_bytes = encapped_key.to_bytes();
-    let mut unsealing_key_encrypted = Vec::with_capacity(encapped_bytes.len() + ciphertext.len());
-    unsealing_key_encrypted.extend_from_slice(&encapped_bytes);
-    unsealing_key_encrypted.extend_from_slice(&ciphertext);
-
-    // Save encrypted unsealing key
-    let enc_unsealing_key_path = out_staging.join("unsealing.key.enc");
-    fs::write(&enc_unsealing_key_path, &unsealing_key_encrypted)?;
-
-    // Securely delete unencrypted unsealing private key
-    println!("Securely deleting unencrypted unsealing private key...");
-    secure_delete_file(&unsealing_priv_path)?;
-
-    // Securely delete unencrypted VMK
-    println!("Securely deleting unencrypted VMK...");
-    secure_delete_file(&vmk_path)?;
 
     println!("Copying the whole source image to target image...");
     fs::copy(in_image, out_image).with_context(|| {
@@ -1664,8 +1674,8 @@ fn run_convert(
                 ATTEST_ONLINE_SCRIPT
             },
         )?;
+        fs::remove_file(sealed_vmk_path).context("Failed to remove sealed VMK")?;
     }
-    fs::remove_file(sealed_vmk_path).context("Failed to remove sealed VMK")?;
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
     let (kernel_data, initrd_data, kernel_params) = extract_boot_data(
@@ -1711,7 +1721,9 @@ fn run_convert(
     println!("Image conversion completed successfully!");
     println!("  Output image: {:?}", out_image);
     println!("  Staging directory: {:?}", out_staging);
-    println!("  Encrypted unsealing key: {:?}", enc_unsealing_key_path);
+    if let Some(ref p) = enc_unsealing_key_path {
+        println!("  Encrypted unsealing key: {:?}", p);
+    }
 
     Ok(())
 }
