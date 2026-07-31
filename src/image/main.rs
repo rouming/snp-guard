@@ -142,13 +142,22 @@ enum Command {
         offline_attestation: bool,
     },
     /// Embed boot artifacts into a QCOW2 image
+    #[command(group(
+        clap::ArgGroup::new("artifact_source")
+            .required(true)
+            .args(["in_bundle", "in_staging"])
+    ))]
     Embed {
         /// Path to the QCOW2 image file
         #[arg(long)]
         image: PathBuf,
-        /// Path to the tar.gz bundle containing boot artifacts
+        /// Path to the tar.gz bundle containing boot artifacts (from 'manage register')
         #[arg(long)]
-        in_bundle: PathBuf,
+        in_bundle: Option<PathBuf>,
+        /// Path to staging directory produced by 'convert --no-hardening'; embeds
+        /// artifacts directly without requiring a registration step or attestation server
+        #[arg(long)]
+        in_staging: Option<PathBuf>,
     },
 }
 
@@ -1799,7 +1808,11 @@ fn run_convert(
 /// partition doesn't exist, it creates a new 512MB partition, formats
 /// it as ext4, and sets the label. Then it wipes the partition and
 /// extracts the bundle contents into a A/B directory structure.
-fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
+fn run_embed(
+    image_path: &Path,
+    bundle_path: Option<&Path>,
+    staging_dir: Option<&Path>,
+) -> Result<()> {
     use guestfs::{AddDriveOptArgs, Handle, MkfsOptArgs};
 
     const LABEL: &str = "LAUNCH_ARTIFACTS";
@@ -1968,15 +1981,38 @@ fn run_embed(image_path: &Path, bundle_path: &Path) -> Result<()> {
         .map_err(|e| anyhow!("Failed to create /A directory: {:?}", e))?;
     g.mkdir("/B")
         .map_err(|e| anyhow!("Failed to create /B directory: {:?}", e))?;
-    use guestfs::TarInOptArgs;
 
-    let bundle_path_str = bundle_path.to_str().unwrap();
-    if bundle_path_str.ends_with("gz") {
-        g.tgz_in(bundle_path.to_str().unwrap(), "/A")
-            .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
-    } else {
-        g.tar_in(bundle_path.to_str().unwrap(), "/A", TarInOptArgs::default())
-            .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
+    match (bundle_path, staging_dir) {
+        (Some(bundle), None) => {
+            use guestfs::TarInOptArgs;
+            let bundle_str = bundle
+                .to_str()
+                .ok_or_else(|| anyhow!("non-UTF8 bundle path: {:?}", bundle))?;
+            if bundle_str.ends_with("gz") {
+                g.tgz_in(bundle_str, "/A")
+                    .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
+            } else {
+                g.tar_in(bundle_str, "/A", TarInOptArgs::default())
+                    .map_err(|e| anyhow!("Failed to extract tarball: {:?}", e))?;
+            }
+        }
+        (None, Some(dir)) => {
+            for entry in fs::read_dir(dir)
+                .with_context(|| format!("Failed to read staging dir {:?}", dir))?
+            {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    let path_str = path
+                        .to_str()
+                        .ok_or_else(|| anyhow!("non-UTF8 path: {:?}", path))?;
+                    g.copy_in(path_str, "/A").map_err(|e| {
+                        anyhow!("Failed to copy {:?} into partition: {:?}", path, e)
+                    })?;
+                }
+            }
+        }
+        _ => unreachable!("clap ArgGroup ensures exactly one source is provided"),
     }
 
     // Create symlink (artifacts -> A)
@@ -2036,6 +2072,10 @@ fn main() -> Result<()> {
             interactive,
             offline_attestation,
         ),
-        Command::Embed { image, in_bundle } => run_embed(&image, &in_bundle),
+        Command::Embed {
+            image,
+            in_bundle,
+            in_staging,
+        } => run_embed(&image, in_bundle.as_deref(), in_staging.as_deref()),
     }
 }
