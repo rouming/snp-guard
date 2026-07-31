@@ -21,6 +21,7 @@ rand = { version = "0.8", features = ["std_rng"] }
 guestfs = "0.1"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
+sev = { version = "7.1.0", default-features = false, features = ["snp"] }
 serde_json = "1"
 flate2 = "1.0"
 cpio = "0.4.1"

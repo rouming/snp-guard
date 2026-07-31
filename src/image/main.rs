@@ -24,6 +24,7 @@ use hpke::{
 use pem::parse as pem_parse;
 use rand::{rngs::OsRng, RngCore};
 use scopeguard::defer;
+use sev::firmware::guest::GuestPolicy;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs;
@@ -140,6 +141,29 @@ enum Command {
         /// successful online attestation, allowing subsequent boots to proceed without network.
         #[arg(long)]
         offline_attestation: bool,
+    },
+    /// Create a minimal launch-config.json in a staging directory for use with
+    /// 'embed --in-staging'. Intended for the --no-hardening workflow where
+    /// no attestation server is involved.
+    MakeLaunchConfig {
+        /// Path to the staging directory produced by 'convert --no-hardening'
+        #[arg(long)]
+        staging_dir: PathBuf,
+        /// Number of vCPUs the VM will be launched with
+        #[arg(long)]
+        vcpus: u32,
+        /// vCPU model (e.g., EPYC-Turin)
+        #[arg(long)]
+        vcpu_type: String,
+        /// Allow SMT (Simultaneous Multi-Threading) in the guest policy
+        #[arg(long)]
+        allowed_smt: bool,
+        /// Allow debugging of the guest
+        #[arg(long)]
+        allowed_debug: bool,
+        /// Allow migration with a Migration Agent
+        #[arg(long)]
+        allowed_migrate_ma: bool,
     },
     /// Embed boot artifacts into a QCOW2 image
     #[command(group(
@@ -1801,6 +1825,37 @@ fn run_convert(
     Ok(())
 }
 
+fn run_make_launch_config(
+    staging_dir: &Path,
+    vcpus: u32,
+    vcpu_type: &str,
+    allowed_smt: bool,
+    allowed_debug: bool,
+    allowed_migrate_ma: bool,
+) -> Result<()> {
+    if !staging_dir.exists() {
+        bail!("Staging directory does not exist: {:?}", staging_dir);
+    }
+
+    let mut policy: GuestPolicy = Default::default();
+    policy.set_smt_allowed(allowed_smt);
+    policy.set_debug_allowed(allowed_debug);
+    policy.set_migrate_ma_allowed(allowed_migrate_ma);
+
+    let config = serde_json::json!({
+        "vcpu-model": vcpu_type,
+        "vcpu-count": vcpus,
+        "guest-policy": format!("0x{:x}", u64::from(policy)),
+    });
+
+    let out_path = staging_dir.join("launch-config.json");
+    let bytes = serde_json::to_vec_pretty(&config).context("Failed to serialize launch config")?;
+    fs::write(&out_path, bytes).with_context(|| format!("Failed to write {:?}", out_path))?;
+
+    println!("Written: {:?}", out_path);
+    Ok(())
+}
+
 /// Embed boot artifacts into a QCOW2 image
 ///
 /// This function implements an idempotent update of a boot partition
@@ -1997,6 +2052,18 @@ fn run_embed(
             }
         }
         (None, Some(dir)) => {
+            let launch_config = dir.join("launch-config.json");
+            if !launch_config.exists() {
+                bail!(
+                    "launch-config.json not found in {:?}\n\
+                     Generate it first with:\n  \
+                     snpguard-image make-launch-config \
+                     --staging-dir {:?} \
+                     --vcpus <N> --vcpu-type <TYPE> [--allowed-smt]",
+                    dir,
+                    dir
+                );
+            }
             for entry in fs::read_dir(dir)
                 .with_context(|| format!("Failed to read staging dir {:?}", dir))?
             {
@@ -2071,6 +2138,21 @@ fn main() -> Result<()> {
             no_hardening,
             interactive,
             offline_attestation,
+        ),
+        Command::MakeLaunchConfig {
+            staging_dir,
+            vcpus,
+            vcpu_type,
+            allowed_smt,
+            allowed_debug,
+            allowed_migrate_ma,
+        } => run_make_launch_config(
+            &staging_dir,
+            vcpus,
+            &vcpu_type,
+            allowed_smt,
+            allowed_debug,
+            allowed_migrate_ma,
         ),
         Command::Embed {
             image,
