@@ -1240,6 +1240,99 @@ fn configure_boot_for_encrypted_root(g: &guestfs::Handle) -> Result<()> {
     Ok(())
 }
 
+/// Returns the space-joined list of linux-modules-extra-{version} package
+/// names for each unique kernel version found in supported_kernels.
+/// Returns an empty string when supported_kernels is empty.
+fn compute_extra_modules_pkg(supported_kernels: &[String]) -> Result<String> {
+    let mut seen = HashSet::new();
+    for kernel in supported_kernels {
+        let version = kernel_version_from_path(kernel)
+            .map_err(|e| anyhow!("Failed to extract kernel version: {}", e))?;
+        seen.insert(version);
+    }
+    Ok(seen
+        .iter()
+        .map(|s| format!("linux-modules-extra-{s}"))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+/// Runs apt-get dry-run to verify pkg availability, then installs it.
+fn apt_install_with_dry_run(g: &guestfs::Handle, pkg: &str) -> Result<()> {
+    g.sh(&format!("apt-get install --dry-run -y {}", pkg))
+        .map_err(|_| {
+            anyhow!(
+                "{} is not available in apt. \
+                 The kernel in this image is likely outdated: its extra-modules \
+                 package is no longer in the repository. \
+                 Please provide a newer base image.",
+                pkg
+            )
+        })?;
+    g.sh(&format!("apt install -y {}", pkg))
+        .map_err(|e| anyhow!("Failed to install {}: {:?}", pkg, e))?;
+    Ok(())
+}
+
+/// Regenerates initramfs and rewrites the grub configuration.
+fn regenerate_initramfs(g: &guestfs::Handle) -> Result<()> {
+    for cmd in ["update-initramfs -u -k all", "update-grub"] {
+        g.sh(cmd)
+            .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+    }
+    Ok(())
+}
+
+/// Installs required packages and regenerates initramfs/grub for a
+/// no-hardening (unencrypted) target image. Skips LUKS, cryptsetup,
+/// encrypted-root boot configuration, and snpguard hooks.
+fn prepare_no_hardening_target(
+    g: &guestfs::Handle,
+    target_rootfs: &str,
+    supported_kernels: &[String],
+    boot_partition: &BootPartition,
+) -> Result<()> {
+    let dist_family = get_dist_family(g, target_rootfs)?;
+
+    g.mount(target_rootfs, "/")
+        .map_err(|e| anyhow!("Failed to mount {}: {:?}", target_rootfs, e))?;
+    defer! {
+        if let Err(e) = g.umount_all() {
+            println!("WARN: Failed to umount all: {:?}", e);
+        }
+    }
+
+    if let BootPartition::Boot(partnum) = boot_partition {
+        let boot_dev = find_partition_dev(g, target_rootfs, *partnum)?;
+        g.mount(&boot_dev, "/boot")
+            .map_err(|e| anyhow!("Failed to mount boot partition {}: {:?}", boot_dev, e))?;
+    }
+
+    match dist_family {
+        DistroFamily::Debian => {}
+        DistroFamily::Ubuntu => {
+            let pkg = compute_extra_modules_pkg(supported_kernels)?;
+            if !pkg.is_empty() {
+                for cmd in [
+                    // --nohook resolv.conf: the appliance nameserver (1.1.1.1) is
+                    // already in /etc/resolv.conf; dhcpcd would overwrite it with
+                    // the DHCP-provided DNS, so we suppress that hook.
+                    "dhcpcd -1 --nohook resolv.conf eth0",
+                    "apt update -y",
+                ] {
+                    g.sh(cmd)
+                        .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+                }
+                apt_install_with_dry_run(g, &pkg)?;
+            }
+        }
+        DistroFamily::RedHat => bail!("RedHat distributions are not supported at the moment"),
+    }
+
+    regenerate_initramfs(g)?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn install_snpguard_on_target(
     g: &guestfs::Handle,
@@ -1285,60 +1378,31 @@ fn install_snpguard_on_target(
             .map_err(|e| anyhow!("Failed to mount boot partition {}: {:?}", boot_dev, e))?;
     }
 
-    // Installation and update commands
-    // Compute extra kernel module packages for Ubuntu before the match so it
-    // is available for the separate install step below.
     let extra_modules_pkg = if dist_family == DistroFamily::Ubuntu {
-        let mut seen = HashSet::new();
-        for kernel in supported_kernels {
-            let version = kernel_version_from_path(kernel)
-                .map_err(|e| anyhow!("Failed to extract kernel version: {}", e))?;
-            seen.insert(version);
-        }
-        seen.iter()
-            .map(|s| format!("linux-modules-extra-{s}"))
-            .collect::<Vec<_>>()
-            .join(" ")
+        compute_extra_modules_pkg(supported_kernels)?
     } else {
         String::new()
     };
 
-    let (install_cmds, update_cmds): (Vec<&str>, Vec<&str>) = match dist_family {
-        DistroFamily::Debian | DistroFamily::Ubuntu => (
-            vec![
+    match dist_family {
+        DistroFamily::Debian | DistroFamily::Ubuntu => {
+            for cmd in [
                 // --nohook resolv.conf: the appliance nameserver (1.1.1.1) is
                 // already in /etc/resolv.conf; dhcpcd would overwrite it with
                 // the DHCP-provided DNS, so we suppress that hook.
                 "dhcpcd -1 --nohook resolv.conf eth0",
                 "apt update -y",
                 "apt install -y cryptsetup cryptsetup-initramfs",
-            ],
-            vec!["update-initramfs -u -k all", "update-grub"],
-        ),
+            ] {
+                g.sh(cmd)
+                    .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
+            }
+        }
         DistroFamily::RedHat => bail!("RedHat distributions are not supported at the moment"),
-    };
-
-    for cmd in install_cmds {
-        g.sh(cmd)
-            .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
     }
 
     if !extra_modules_pkg.is_empty() {
-        g.sh(&format!(
-            "apt-get install --dry-run -y {}",
-            extra_modules_pkg
-        ))
-        .map_err(|_| {
-            anyhow!(
-                "{} is not available in apt. \
-                 The kernel in this image is likely outdated: its extra-modules \
-                 package is no longer in the repository. \
-                 Please provide a newer base image.",
-                extra_modules_pkg
-            )
-        })?;
-        g.sh(&format!("apt install -y {}", extra_modules_pkg))
-            .map_err(|e| anyhow!("Failed to install {}: {:?}", extra_modules_pkg, e))?;
+        apt_install_with_dry_run(g, &extra_modules_pkg)?;
     }
 
     // Configure grub, fstab for the encrypted root.
@@ -1357,10 +1421,7 @@ fn install_snpguard_on_target(
         attest_script,
     )?;
 
-    for cmd in update_cmds {
-        g.sh(cmd)
-            .map_err(|e| anyhow!("Failed to execute '{}': {:?}", cmd, e))?;
-    }
+    regenerate_initramfs(g)?;
 
     Ok(())
 }
@@ -1675,6 +1736,9 @@ fn run_convert(
             },
         )?;
         fs::remove_file(sealed_vmk_path).context("Failed to remove sealed VMK")?;
+    } else {
+        println!("Preparing no-hardening target (extra modules, initramfs, grub)...");
+        prepare_no_hardening_target(&g, &target_rootfs, &supported_kernels, &boot_partition)?;
     }
 
     println!("Extract boot artifacts (kernel, initrd, params) from target image");
