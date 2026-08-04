@@ -60,6 +60,7 @@ pub async fn master_auth_middleware(
         let cookie = Cookie::build((SESSION_COOKIE, session))
             .path("/")
             .http_only(true)
+            .secure(true)
             .same_site(cookie::SameSite::Lax)
             .build();
 
@@ -136,6 +137,7 @@ pub fn clear_session_cookie() -> String {
     Cookie::build((SESSION_COOKIE, ""))
         .path("/")
         .http_only(true)
+        .secure(true)
         .same_site(cookie::SameSite::Lax)
         .max_age(cookie::time::Duration::seconds(0))
         .build()

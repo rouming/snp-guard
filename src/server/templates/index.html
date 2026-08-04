@@ -32,7 +32,9 @@
                     {% endif %}
                 </td>
                 <td class="py-4 px-6 text-right">
-                    <a href="/delete/{{ vm.id }}" class="text-red-600 hover:underline font-semibold text-sm">Delete</a>
+                    <form method="post" action="/delete/{{ vm.id }}" style="display:inline">
+                        <button type="submit" class="text-red-600 hover:underline font-semibold text-sm">Delete</button>
+                    </form>
                 </td>
             </tr>
         {% endfor %}

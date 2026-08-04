@@ -134,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/login", get(web::login_form).post(web::login_submit))
         .route("/create", get(web::create_form).post(web::create_action))
         .route("/view/:id", get(web::view_record))
-        .route("/delete/:id", get(web::delete_action))
+        .route("/delete/:id", post(web::delete_action))
         .route("/download/:id/:file", get(web::download_artifact))
         .route("/logout", get(web::logout))
         .route("/toggle/:id", post(web::toggle_enabled))
