@@ -1269,7 +1269,13 @@ fn run_derive_key(
     Ok(())
 }
 
-async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd) -> Result<()> {
+struct ManageCtx {
+    client: reqwest::Client,
+    base: String,
+    token: String,
+}
+
+fn build_manage_ctx(url: Option<&str>, ca_cert: Option<&str>) -> Result<ManageCtx> {
     let cfg = load_config()?;
     let token = cfg
         .token
@@ -1297,6 +1303,212 @@ async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd)
     });
 
     let client = build_client_maybe_pinned(ca_path.as_deref())?;
+    Ok(ManageCtx {
+        client,
+        base,
+        token,
+    })
+}
+
+fn encrypt_unsealing_key_hpke(plain_key_path: &Path) -> Result<Vec<u8>> {
+    // Encrypt plain key with ingestion public key
+    let unsealing_key_pem_str = fs::read_to_string(plain_key_path).with_context(|| {
+        format!(
+            "Failed to read unsealing private key from {:?}",
+            plain_key_path
+        )
+    })?;
+
+    let unsealing_key_pem =
+        pem::parse(&unsealing_key_pem_str).context("Failed to parse unsealing private key PEM")?;
+    if unsealing_key_pem.tag() != "PRIVATE KEY" {
+        bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
+    }
+    let unsealing_key_bytes: [u8; 32] = unsealing_key_pem
+        .contents()
+        .try_into()
+        .map_err(|_| anyhow!("Invalid unsealing private key length (expected 32 bytes)"))?;
+
+    // Read ingestion public key from saved config (stored during login)
+    let ingestion_key_path = ingestion_key_dest_path()?;
+    let ingestion_pub_pem = fs::read_to_string(&ingestion_key_path).with_context(|| {
+        format!(
+            "Failed to read ingestion public key from {:?}. Please run 'config login' first.",
+            ingestion_key_path
+        )
+    })?;
+
+    let pub_pem_parsed =
+        pem::parse(&ingestion_pub_pem).context("Failed to parse ingestion public key PEM")?;
+    if pub_pem_parsed.tag() != "PUBLIC KEY" {
+        bail!("Invalid ingestion public key PEM tag");
+    }
+    let public_bytes: [u8; 32] = pub_pem_parsed
+        .contents()
+        .try_into()
+        .map_err(|_| anyhow!("Invalid public key length"))?;
+
+    let server_pub = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&public_bytes)
+        .map_err(|e| anyhow!("Failed to create public key: {}", e))?;
+
+    let mut rng = OsRng;
+    let (encapped_key, mut sender_ctx) = hpke::setup_sender::<
+        AesGcm256,
+        HkdfSha256,
+        X25519HkdfSha256,
+        _,
+    >(&OpModeS::Base, &server_pub, &[], &mut rng)
+    .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
+
+    let ciphertext = sender_ctx
+        .seal(&unsealing_key_bytes, &[])
+        .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
+
+    let encapped_bytes = encapped_key.to_bytes();
+    let mut encrypted = Vec::with_capacity(encapped_bytes.len() + ciphertext.len());
+    encrypted.extend_from_slice(&encapped_bytes);
+    encrypted.extend_from_slice(&ciphertext);
+    Ok(encrypted)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn manage_register(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+    os_name: String,
+    unsealing_private_key: Option<PathBuf>,
+    enc_unsealing_private_key: Option<PathBuf>,
+    vcpus: u32,
+    vcpu_type: String,
+    allowed_debug: bool,
+    allowed_migrate_ma: bool,
+    allowed_smt: bool,
+    min_tcb_bootloader: u32,
+    min_tcb_tee: u32,
+    min_tcb_snp: u32,
+    min_tcb_microcode: u32,
+    staging_dir: Option<PathBuf>,
+    firmware: Option<PathBuf>,
+    kernel: Option<PathBuf>,
+    initrd: Option<PathBuf>,
+    kernel_params: Option<String>,
+    disable: bool,
+    out_bundle: Option<PathBuf>,
+) -> Result<()> {
+    let mut firmware_data = None;
+    let mut kernel_data = None;
+    let mut initrd_data = None;
+    let mut params = None;
+    let mut staging_enc_key = None;
+
+    // Read from staging directory if provided
+    if let Some(ref staging_path) = staging_dir {
+        let (fw, k, i, p, enc_key) = read_staging_dir(staging_path)?;
+        firmware_data = fw;
+        kernel_data = k;
+        initrd_data = i;
+        params = p;
+        staging_enc_key = enc_key;
+    }
+
+    // Override with explicit options if provided
+    if let Some(path) = firmware {
+        firmware_data = Some(fs::read(path)?);
+    }
+    if let Some(path) = kernel {
+        kernel_data = Some(fs::read(path)?);
+    }
+    if let Some(path) = initrd {
+        initrd_data = Some(fs::read(path)?);
+    }
+    if let Some(p) = kernel_params {
+        params = Some(p);
+    }
+
+    if firmware_data.is_none() || kernel_data.is_none() || initrd_data.is_none() {
+        bail!("firmware, kernel, and initrd are required (either in staging directory or as --firmware/--kernel/--initrd)");
+    }
+
+    let params = params.unwrap_or_else(|| "console=ttyS0".to_string());
+
+    // Handle unsealing key: either plain or encrypted
+    let unsealing_key_encrypted = if let Some(enc_key_path) = enc_unsealing_private_key {
+        // Use provided encrypted key directly
+        fs::read(enc_key_path)?
+    } else if let Some(plain_key_path) = unsealing_private_key {
+        encrypt_unsealing_key_hpke(&plain_key_path)?
+    } else if let Some(key) = staging_enc_key {
+        // Use encrypted key from staging directory
+        key
+    } else {
+        bail!("Either --unsealing-private-key or --enc-unsealing-private-key must be provided, or unsealing.key.enc must be in --staging-dir");
+    };
+
+    let req = CreateRecordRequest {
+        os_name,
+        firmware: firmware_data.unwrap_or_default(),
+        kernel: kernel_data.unwrap_or_default(),
+        initrd: initrd_data.unwrap_or_default(),
+        kernel_params: params,
+        unsealing_private_key_encrypted: unsealing_key_encrypted,
+        vcpus,
+        vcpu_type,
+        allowed_debug,
+        allowed_migrate_ma,
+        allowed_smt,
+        min_tcb_bootloader,
+        min_tcb_tee,
+        min_tcb_snp,
+        min_tcb_microcode,
+    };
+
+    let mut buf = Vec::new();
+    req.encode(&mut buf)?;
+    let resp = client
+        .post(format!("{}/v1/records", base))
+        .bearer_auth(token)
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
+        .send()
+        .await?;
+    let resp = ensure_success(resp, "register").await?;
+    let bytes = resp.bytes().await?;
+    let created = CreateRecordResponse::decode(&bytes[..])?;
+    if let Some(err) = created.error_message {
+        bail!("register failed: {}", err);
+    }
+    let id = created.id;
+    if id.is_empty() {
+        bail!("register failed: empty id returned");
+    }
+    if disable {
+        toggle(client, base, token, &id, false).await?;
+    }
+
+    // If --out-bundle is provided, export the bundle
+    if let Some(bundle_path) = out_bundle {
+        let endpoint = "export/tar"; // Default to tar format
+        let resp = client
+            .get(format!("{}/v1/records/{}/{}", base, id, endpoint))
+            .bearer_auth(token)
+            .send()
+            .await?;
+        let resp = ensure_success(resp, "export").await?;
+        let bytes = resp.bytes().await?;
+        fs::write(&bundle_path, &bytes)?;
+    }
+
+    println!("{id}");
+    Ok(())
+}
+
+async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd) -> Result<()> {
+    let ManageCtx {
+        client,
+        base,
+        token,
+    } = build_manage_ctx(url, ca_cert)?;
     match action {
         ManageCmd::List { json } => {
             let resp = client
@@ -1394,122 +1606,13 @@ async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd)
             disable,
             out_bundle,
         } => {
-            let mut firmware_data = None;
-            let mut kernel_data = None;
-            let mut initrd_data = None;
-            let mut params = None;
-            let mut staging_enc_key = None;
-
-            // Read from staging directory if provided
-            if let Some(ref staging_path) = staging_dir {
-                let (fw, k, i, p, enc_key) = read_staging_dir(staging_path)?;
-                firmware_data = fw;
-                kernel_data = k;
-                initrd_data = i;
-                params = p;
-                staging_enc_key = enc_key;
-            }
-
-            // Override with explicit options if provided
-            if let Some(path) = firmware {
-                firmware_data = Some(fs::read(path)?);
-            }
-            if let Some(path) = kernel {
-                kernel_data = Some(fs::read(path)?);
-            }
-            if let Some(path) = initrd {
-                initrd_data = Some(fs::read(path)?);
-            }
-            if let Some(p) = kernel_params {
-                params = Some(p);
-            }
-
-            if firmware_data.is_none() || kernel_data.is_none() || initrd_data.is_none() {
-                bail!("firmware, kernel, and initrd are required (either in staging directory or as --firmware/--kernel/--initrd)");
-            }
-
-            let params = params.unwrap_or_else(|| "console=ttyS0".to_string());
-
-            // Handle unsealing key: either plain or encrypted
-            let unsealing_key_encrypted = if let Some(enc_key_path) = enc_unsealing_private_key {
-                // Use provided encrypted key directly
-                fs::read(enc_key_path)?
-            } else if let Some(plain_key_path) = unsealing_private_key {
-                // Encrypt plain key with ingestion public key
-                let unsealing_key_pem_str =
-                    fs::read_to_string(&plain_key_path).with_context(|| {
-                        format!(
-                            "Failed to read unsealing private key from {:?}",
-                            plain_key_path
-                        )
-                    })?;
-
-                let unsealing_key_pem = pem::parse(&unsealing_key_pem_str)
-                    .context("Failed to parse unsealing private key PEM")?;
-                if unsealing_key_pem.tag() != "PRIVATE KEY" {
-                    bail!("Invalid unsealing private key PEM tag (expected PRIVATE KEY)");
-                }
-                let unsealing_key_bytes: [u8; 32] =
-                    unsealing_key_pem.contents().try_into().map_err(|_| {
-                        anyhow!("Invalid unsealing private key length (expected 32 bytes)")
-                    })?;
-
-                // Read ingestion public key from saved config (stored during login)
-                let ingestion_key_path = ingestion_key_dest_path()?;
-                let ingestion_pub_pem = fs::read_to_string(&ingestion_key_path)
-                    .with_context(|| {
-                        format!(
-                            "Failed to read ingestion public key from {:?}. Please run 'config login' first.",
-                            ingestion_key_path
-                        )
-                    })?;
-
-                let pub_pem_parsed = pem::parse(&ingestion_pub_pem)
-                    .context("Failed to parse ingestion public key PEM")?;
-                if pub_pem_parsed.tag() != "PUBLIC KEY" {
-                    bail!("Invalid ingestion public key PEM tag");
-                }
-                let public_bytes: [u8; 32] = pub_pem_parsed
-                    .contents()
-                    .try_into()
-                    .map_err(|_| anyhow!("Invalid public key length"))?;
-
-                let server_pub = <X25519HkdfSha256 as Kem>::PublicKey::from_bytes(&public_bytes)
-                    .map_err(|e| anyhow!("Failed to create public key: {}", e))?;
-
-                let mut rng = OsRng;
-                let (encapped_key, mut sender_ctx) =
-                    hpke::setup_sender::<AesGcm256, HkdfSha256, X25519HkdfSha256, _>(
-                        &OpModeS::Base,
-                        &server_pub,
-                        &[],
-                        &mut rng,
-                    )
-                    .map_err(|e| anyhow!("HPKE setup failed: {}", e))?;
-
-                let ciphertext = sender_ctx
-                    .seal(&unsealing_key_bytes, &[])
-                    .map_err(|e| anyhow!("HPKE seal failed: {}", e))?;
-
-                let encapped_bytes = encapped_key.to_bytes();
-                let mut encrypted = Vec::with_capacity(encapped_bytes.len() + ciphertext.len());
-                encrypted.extend_from_slice(&encapped_bytes);
-                encrypted.extend_from_slice(&ciphertext);
-                encrypted
-            } else if let Some(key) = staging_enc_key {
-                // Use encrypted key from staging directory
-                key
-            } else {
-                bail!("Either --unsealing-private-key or --enc-unsealing-private-key must be provided, or unsealing.key.enc must be in --staging-dir");
-            };
-
-            let req = CreateRecordRequest {
+            manage_register(
+                &client,
+                &base,
+                &token,
                 os_name,
-                firmware: firmware_data.unwrap_or_default(),
-                kernel: kernel_data.unwrap_or_default(),
-                initrd: initrd_data.unwrap_or_default(),
-                kernel_params: params,
-                unsealing_private_key_encrypted: unsealing_key_encrypted,
+                unsealing_private_key,
+                enc_unsealing_private_key,
                 vcpus,
                 vcpu_type,
                 allowed_debug,
@@ -1519,45 +1622,15 @@ async fn run_manage(url: Option<&str>, ca_cert: Option<&str>, action: ManageCmd)
                 min_tcb_tee,
                 min_tcb_snp,
                 min_tcb_microcode,
-            };
-
-            let mut buf = Vec::new();
-            req.encode(&mut buf)?;
-            let resp = client
-                .post(format!("{}/v1/records", base))
-                .bearer_auth(&token)
-                .header("Content-Type", "application/x-protobuf")
-                .body(buf)
-                .send()
-                .await?;
-            let resp = ensure_success(resp, "register").await?;
-            let bytes = resp.bytes().await?;
-            let created = CreateRecordResponse::decode(&bytes[..])?;
-            if let Some(err) = created.error_message {
-                bail!("register failed: {}", err);
-            }
-            let id = created.id;
-            if id.is_empty() {
-                bail!("register failed: empty id returned");
-            }
-            if disable {
-                toggle(&client, &base, &token, &id, false).await?;
-            }
-
-            // If --out-bundle is provided, export the bundle
-            if let Some(bundle_path) = out_bundle {
-                let endpoint = "export/tar"; // Default to tar format
-                let resp = client
-                    .get(format!("{}/v1/records/{}/{}", base, id, endpoint))
-                    .bearer_auth(&token)
-                    .send()
-                    .await?;
-                let resp = ensure_success(resp, "export").await?;
-                let bytes = resp.bytes().await?;
-                fs::write(&bundle_path, &bytes)?;
-            }
-
-            println!("{id}");
+                staging_dir,
+                firmware,
+                kernel,
+                initrd,
+                kernel_params,
+                disable,
+                out_bundle,
+            )
+            .await?
         }
     }
     Ok(())
