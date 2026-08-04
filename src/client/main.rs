@@ -1182,7 +1182,10 @@ fn write_artifacts_ab(
         .with_context(|| format!("Failed to create slot directory {:?}", slot_dir))?;
 
     for artifact in local_artifacts.iter().chain(server_artifacts.iter()) {
-        let dest = slot_dir.join(&artifact.filename);
+        let name = Path::new(&artifact.filename)
+            .file_name()
+            .ok_or_else(|| anyhow!("Invalid artifact filename: {:?}", artifact.filename))?;
+        let dest = slot_dir.join(name);
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create(true)
