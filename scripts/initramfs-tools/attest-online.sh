@@ -72,8 +72,12 @@ configure_networking || panic "snpguard attest: networking failed"
 # Check for the config file created by ipconfig
 NETCONF="/run/net-$DEVICE.conf"
 if [ -f "$NETCONF" ]; then
-    # Source the variables (IPV4GATEWAY, IPV4NETMASK, etc.)
-    . "$NETCONF"
+    # Parse only the two fields we need; strip every non-dotted-decimal character
+    # so that DHCP-injected shell metacharacters have no effect.  Sourcing the
+    # file directly would let a malicious DHCP server run arbitrary shell code
+    # before the attestation handshake.
+    IPV4NETMASK="$(sed -n 's/^IPV4NETMASK=//p' "$NETCONF" | head -1 | tr -cd '0-9.')"
+    IPV4GATEWAY="$(sed -n 's/^IPV4GATEWAY=//p' "$NETCONF" | head -1 | tr -cd '0-9.')"
 
     if [ "$IPV4NETMASK" = "255.255.255.255" ] && [ -n "$IPV4GATEWAY" ]; then
         # Standard 'ipconfig' can fail with "SIOCADDRT: Network is
