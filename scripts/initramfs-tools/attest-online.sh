@@ -39,6 +39,7 @@ exec > /dev/kmsg 2>&1
 . /scripts/functions
 
 panic() {
+    unset VMK DERIVE_KEY
     echo
     echo "PANIC:"
     echo "PANIC: $*"
