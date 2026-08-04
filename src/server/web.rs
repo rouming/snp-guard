@@ -6,10 +6,12 @@ use crate::artifacts;
 use crate::auth;
 use crate::ingestion_key;
 use crate::service_core::{self, ServiceState, TokenInfo};
+use crate::session_store::SessionStore;
 use askama::Template;
 use axum::{
     body::Body,
     extract::{Extension, Form, Multipart, Path, Query},
+    http::HeaderMap,
     response::{Html, IntoResponse, Redirect},
 };
 use chrono::Duration;
@@ -94,16 +96,15 @@ pub struct LoginForm {
 
 pub async fn login_submit(
     Extension(master): Extension<Arc<crate::master_password::MasterAuth>>,
+    Extension(sessions): Extension<Arc<SessionStore>>,
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
     if crate::auth::verify_password(&master, &form.password) {
-        let session = crate::auth::issue_session(&master);
+        let token = sessions.issue();
         let mut resp = Redirect::to("/").into_response();
         resp.headers_mut().insert(
             axum::http::header::SET_COOKIE,
-            format!("master_session={}; Path=/; HttpOnly; SameSite=Lax", session)
-                .parse()
-                .unwrap(),
+            auth::session_set_cookie(&token).parse().unwrap(),
         );
         resp
     } else {
@@ -491,7 +492,13 @@ pub async fn revoke_token(
     }
 }
 
-pub async fn logout() -> impl IntoResponse {
+pub async fn logout(
+    Extension(sessions): Extension<Arc<SessionStore>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Some(token) = auth::extract_session_token(&headers) {
+        sessions.revoke(&token);
+    }
     let mut resp = Redirect::to("/login").into_response();
     resp.headers_mut().append(
         axum::http::header::SET_COOKIE,

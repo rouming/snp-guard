@@ -43,6 +43,7 @@ mod master_password;
 mod nonce;
 mod rest_api;
 mod service_core;
+mod session_store;
 mod snpguest_wrapper;
 mod web;
 
@@ -125,6 +126,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &data_paths.master_password_hash,
     )?);
 
+    // Session store for the web management UI
+    let sessions = Arc::new(session_store::SessionStore::new());
+
     // REST API router
     let rest_router = rest_api::router(service_state.clone(), master_auth.clone());
 
@@ -144,6 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(service_state.clone()))
         .layer(Extension(master_auth.clone()))
         .layer(middleware::from_fn(auth::master_auth_middleware))
+        .layer(Extension(sessions.clone()))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES)) // allow large multipart uploads
         .layer(TraceLayer::new_for_http());
 

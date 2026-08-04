@@ -14,14 +14,15 @@ use cookie::Cookie;
 use std::sync::Arc;
 
 use argon2::{password_hash::PasswordVerifier, Argon2, PasswordHash};
-use ring::hmac;
 
 use crate::master_password::MasterAuth;
+use crate::session_store::SessionStore;
 
-const SESSION_COOKIE: &str = "master_session";
+pub const SESSION_COOKIE: &str = "master_session";
 
 pub async fn master_auth_middleware(
     Extension(master): Extension<Arc<MasterAuth>>,
+    Extension(sessions): Extension<Arc<SessionStore>>,
     request: Request<Body>,
     next: Next,
 ) -> Response<Body> {
@@ -40,7 +41,7 @@ pub async fn master_auth_middleware(
             let mut ok = false;
             for c in cookie::Cookie::split_parse(cookie_str).flatten() {
                 if c.name() == SESSION_COOKIE {
-                    ok = validate_session(&master, c.value());
+                    ok = sessions.validate(c.value());
                     break;
                 }
             }
@@ -56,8 +57,8 @@ pub async fn master_auth_middleware(
 
     if authorized {
         // Issue a session cookie for subsequent requests
-        let session = issue_session(&master);
-        let cookie = Cookie::build((SESSION_COOKIE, session))
+        let token = sessions.issue();
+        let cookie = Cookie::build((SESSION_COOKIE, token))
             .path("/")
             .http_only(true)
             .secure(true)
@@ -127,10 +128,15 @@ pub fn verify_password(master: &MasterAuth, supplied_password: &str) -> bool {
     }
 }
 
-pub fn issue_session(master: &MasterAuth) -> String {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, master.hash.as_bytes());
-    let tag = hmac::sign(&key, b"master-session");
-    base64::engine::general_purpose::STANDARD.encode(tag.as_ref())
+/// Build a Set-Cookie header value for a session token.
+pub fn session_set_cookie(token: &str) -> String {
+    Cookie::build((SESSION_COOKIE, token.to_owned()))
+        .path("/")
+        .http_only(true)
+        .secure(true)
+        .same_site(cookie::SameSite::Lax)
+        .build()
+        .to_string()
 }
 
 pub fn clear_session_cookie() -> String {
@@ -144,11 +150,13 @@ pub fn clear_session_cookie() -> String {
         .to_string()
 }
 
-fn validate_session(master: &MasterAuth, val: &str) -> bool {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, master.hash.as_bytes());
-    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(val) {
-        hmac::verify(&key, b"master-session", &bytes).is_ok()
-    } else {
-        false
+/// Extract the session token value from a Cookie header, if present.
+pub fn extract_session_token(headers: &HeaderMap) -> Option<String> {
+    let cookie_str = headers.get(header::COOKIE)?.to_str().ok()?;
+    for c in cookie::Cookie::split_parse(cookie_str).flatten() {
+        if c.name() == SESSION_COOKIE {
+            return Some(c.value().to_owned());
+        }
     }
+    None
 }
