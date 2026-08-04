@@ -163,7 +163,7 @@ async fn verify_request_common(
         .one(db)
         .await
         .map_err(|_| "Database error".to_string())?
-        .ok_or_else(|| "No matching registration found".to_string())?;
+        .ok_or_else(|| "Attestation failed".to_string())?;
 
     // Find attestation record by image_id within this registration
     let attestation_record = vm::Entity::find()
@@ -172,7 +172,7 @@ async fn verify_request_common(
         .one(db)
         .await
         .map_err(|_| "Database error".to_string())?
-        .ok_or_else(|| "No matching attestation record found".to_string())?;
+        .ok_or_else(|| "Attestation failed".to_string())?;
 
     verify_vm_policy(&registration, &attestation_record, &report)?;
 
